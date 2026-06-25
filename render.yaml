@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: turkarta-operations
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: LEADS_BOT_TOKEN
+        sync: false
+      - key: SUPPORT_BOT_TOKEN
+        sync: false
+      - key: LEADS_CHAT_ID
+        sync: false
+      - key: SUPPORT_CHAT_ID
+        sync: false
+      - key: SUPPORT_FORUM
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SUPABASE_WEBHOOK_SECRET
+        sync: false
+        # ^ shared secret the Lovable form/edge-function sends as X-Webhook-Secret
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: ROSTER
+        sync: false
