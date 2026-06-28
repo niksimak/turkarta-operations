@@ -162,6 +162,37 @@ export async function createWebTicket(input: {
   return ticket;
 }
 
+const WELCOME_REQUEST = "🆕 Новый пользователь — нужна помощь с онбордингом";
+const WELCOME_MESSAGE =
+  "Привет! 👋 Я из поддержки Turkarta — на связи, если что-то понадобится. " +
+  "Помогу пройти онбординг и пополнить карту.";
+
+/**
+ * Proactive onboarding welcome: open a web ticket seeded with a greeting from
+ * support, so a new signup sees an agent message and an operator gets a card.
+ * Deduped — a user who already has an open ticket isn't re-welcomed.
+ */
+export async function createWelcomeTicket(input: {
+  web_user_id: string;
+  user_name: string | null;
+  email: string | null;
+  device: string | null;
+}): Promise<Ticket> {
+  const ticket = await db.openWebTicket({
+    web_user_id: input.web_user_id,
+    user_name: input.user_name,
+    source: "web-onboarding",
+    request: WELCOME_REQUEST,
+    email: input.email,
+    device: input.device,
+  });
+  if (!ticket.tg_message_id) {
+    await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE);
+    await postTicketCard(ticket);
+  }
+  return ticket;
+}
+
 /** A web user sent a message: log it and relay into the ops thread if claimed. */
 export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
   await db.addMessage(ticket.id, "user", body);

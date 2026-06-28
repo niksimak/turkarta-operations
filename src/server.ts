@@ -3,7 +3,13 @@ import { webhookCallback } from "grammy";
 import { z } from "zod";
 import { config } from "./config.js";
 import { leadsBot, postLead } from "./bots/leads.js";
-import { supportBot, createAppTicket, createWebTicket, pushWebUserMessage } from "./bots/support.js";
+import {
+  supportBot,
+  createAppTicket,
+  createWebTicket,
+  createWelcomeTicket,
+  pushWebUserMessage,
+} from "./bots/support.js";
 import * as db from "./db.js";
 
 export const app = new Hono();
@@ -140,6 +146,28 @@ app.post("/api/support/web/open", async (c) => {
     request: d.request,
   });
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+});
+
+// Proactive onboarding welcome: open a ticket seeded with a support greeting.
+const WebWelcomePayload = z.object({
+  web_user_id: z.string().min(1),
+  name: z.string().nullish(),
+  email: z.string().nullish(),
+  device: z.string().nullish(),
+});
+
+app.post("/api/support/web/welcome", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const parsed = WebWelcomePayload.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const d = parsed.data;
+  const ticket = await createWelcomeTicket({
+    web_user_id: d.web_user_id,
+    user_name: d.name ?? null,
+    email: d.email ?? null,
+    device: d.device ?? null,
+  });
+  return c.json({ ok: true, ticketId: ticket.id });
 });
 
 // Web user sends a message into their open ticket.
