@@ -54,12 +54,16 @@ export async function registerWebhooks(): Promise<void> {
   const base = config.PUBLIC_BASE_URL.replace(/\/$/, "");
   await leadsBot.api.setWebhook(`${base}${TG_LEADS_PATH}`, {
     secret_token: config.TELEGRAM_WEBHOOK_SECRET,
-    drop_pending_updates: true,
+    // false: on Render free tier the service cold-starts on the incoming webhook,
+    // so keep the queued update that woke us instead of dropping it.
+    drop_pending_updates: false,
     allowed_updates: ["message", "callback_query"],
   });
   await supportBot.api.setWebhook(`${base}${TG_SUPPORT_PATH}`, {
     secret_token: config.TELEGRAM_WEBHOOK_SECRET,
-    drop_pending_updates: true,
+    // false: on Render free tier the service cold-starts on the incoming webhook,
+    // so keep the queued update that woke us instead of dropping it.
+    drop_pending_updates: false,
     allowed_updates: ["message", "callback_query"],
   });
 }

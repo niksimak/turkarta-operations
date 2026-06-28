@@ -2,7 +2,7 @@ services:
   - type: web
     name: turkarta-operations
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /health
     envVars:
       - key: LEADS_BOT_TOKEN
