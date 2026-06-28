@@ -23,8 +23,15 @@ app.post(
 );
 
 // Inbound lead from the Lovable landing form.
+// Field names vary by form, so accept common aliases and normalize below.
 const LeadPayload = z.object({
   name: z.string().nullish(),
+  company: z.string().nullish(),
+  phone: z.string().nullish(),
+  tg_username: z.string().nullish(),
+  telegram: z.string().nullish(), // alias for tg_username
+  tg: z.string().nullish(), //       alias for tg_username
+  username: z.string().nullish(), // alias for tg_username
   contact: z.string().nullish(),
   message: z.string().nullish(),
   source: z.string().nullish(),
@@ -39,12 +46,16 @@ app.post("/webhooks/leads", async (c) => {
   const raw = body?.record ?? body;
   const parsed = LeadPayload.safeParse(raw);
   if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const d = parsed.data;
 
   await postLead({
-    name: parsed.data.name ?? null,
-    contact: parsed.data.contact ?? null,
-    message: parsed.data.message ?? null,
-    source: parsed.data.source ?? "lovable-landing",
+    name: d.name ?? null,
+    company: d.company ?? null,
+    phone: d.phone ?? null,
+    tg_username: d.tg_username ?? d.telegram ?? d.tg ?? d.username ?? null,
+    contact: d.contact ?? null,
+    message: d.message ?? null,
+    source: d.source ?? "lovable-landing",
   });
   return c.json({ ok: true });
 });

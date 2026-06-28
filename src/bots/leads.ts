@@ -2,7 +2,7 @@ import { Bot } from "grammy";
 import { config, memberFor, rosterIds } from "../config.js";
 import * as cards from "../cards.js";
 import * as db from "../db.js";
-import type { Lead } from "../db.js";
+import type { Lead, LeadInput } from "../db.js";
 
 export const leadsBot = new Bot(config.LEADS_BOT_TOKEN);
 
@@ -15,9 +15,7 @@ leadsBot.command("id", (ctx) =>
 );
 
 /** Persist + post a fresh lead card to the ops group. */
-export async function postLead(
-  input: Pick<Lead, "name" | "contact" | "message" | "source">,
-): Promise<Lead> {
+export async function postLead(input: LeadInput): Promise<Lead> {
   const lead = await db.insertLead(input);
   const msg = await leadsBot.api.sendMessage(config.LEADS_CHAT_ID, cards.leadCard(lead), {
     reply_markup: cards.claimKb("leads", lead.id),

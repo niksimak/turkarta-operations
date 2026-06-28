@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import postgres from "postgres";
@@ -11,11 +11,19 @@ if (!url) {
 }
 
 const sql = postgres(url);
-const file = join(here, "..", "migrations", "0001_init.sql");
+const dir = join(here, "..", "migrations");
+
+// Run every *.sql in lexical order. Migrations are written idempotently
+// (create … if not exists / add column if not exists) so re-running is safe.
+const files = readdirSync(dir)
+  .filter((f) => f.endsWith(".sql"))
+  .sort();
 
 try {
-  await sql.unsafe(readFileSync(file, "utf8"));
-  console.log("migration applied:", file);
+  for (const file of files) {
+    await sql.unsafe(readFileSync(join(dir, file), "utf8"));
+    console.log("migration applied:", file);
+  }
 } finally {
   await sql.end();
 }

@@ -12,25 +12,38 @@ const esc = escapeHtml;
 
 // ---- Leads ---------------------------------------------------------------
 
-export function leadCard(l: Lead): string {
+/** A "<b>Label:</b> value\n" line, or "" when the value is empty. */
+function row(label: string, value: string | null | undefined): string {
+  return value ? `<b>${label}:</b> ${esc(value)}\n` : "";
+}
+
+/** Normalize a Telegram handle for display: ensure a single leading "@". */
+function tgHandle(value: string | null): string | null {
+  if (!value) return null;
+  const h = value.trim().replace(/^@+/, "");
+  return h ? `@${h}` : null;
+}
+
+/** Shared field block for a lead, omitting empty fields. */
+function leadFields(l: Lead): string {
   return (
-    "🆕 <b>New lead</b>\n" +
-    `<b>Name:</b> ${esc(l.name)}\n` +
-    `<b>Contact:</b> ${esc(l.contact)}\n` +
-    `<b>Message:</b> ${esc(l.message)}\n` +
-    `<b>Source:</b> ${esc(l.source)}\n\n` +
-    rosterPing()
+    row("Name", l.name) +
+    row("Company", l.company) +
+    row("Phone", l.phone) +
+    row("Telegram", tgHandle(l.tg_username)) +
+    row("Contact", l.contact) +
+    row("Message", l.message) +
+    row("Source", l.source)
   );
+}
+
+export function leadCard(l: Lead): string {
+  return "🆕 <b>New lead</b>\n" + leadFields(l) + "\n" + rosterPing();
 }
 
 export function leadClaimedCard(l: Lead, byName: string): string {
   return (
-    "🟢 <b>Lead — allocated</b>\n" +
-    `<b>Name:</b> ${esc(l.name)}\n` +
-    `<b>Contact:</b> ${esc(l.contact)}\n` +
-    `<b>Message:</b> ${esc(l.message)}\n` +
-    `<b>Source:</b> ${esc(l.source)}\n\n` +
-    `👤 Taken by <b>${esc(byName)}</b>`
+    "🟢 <b>Lead — allocated</b>\n" + leadFields(l) + `\n👤 Taken by <b>${esc(byName)}</b>`
   );
 }
 
