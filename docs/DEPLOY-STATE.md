@@ -25,16 +25,26 @@ self-registered; `/health` green; `/webhooks/leads` smoke-tested (card posted to
   email, device, request (req). Header `X-Webhook-Secret` (`APP_WEBHOOK_SECRET`, falls
   back to `SUPABASE_WEBHOOK_SECRET`). See `docs/SUPPORT.md`.
 
-### Support ticket system (v2, live 2026-06-28)
-Bot guided intake (request → email/skip, DB-persisted) + app webhook. Operator card:
-Take → category (tech/bug/feature) + status (Awaiting/Resolve). 'awaiting' = parked-open.
-Text+media relay both ways; undelivered user replies flag in the thread. Full doc:
-`docs/SUPPORT.md`. DB cols added via migration 0004.
+### Support ticket system (live 2026-06-28)
+Three intake channels → one operator workflow in the TG channel.
+- **Bot**: guided intake (request → email/skip, DB-persisted via intake_step).
+- **Mini App**: `POST /webhooks/support` (telegram channel; relays via bot DM).
+- **Web PWA**: `channel='web'` tickets (no telegram id). Operator replies route to a
+  durable `support_messages` log the web app **polls** (server-to-server, proxied by
+  the web FastAPI backend with `user.id` as `web_user_id`). Endpoints:
+  `POST /api/support/web/open`, `POST /api/support/web/message`,
+  `GET /api/support/web/messages?web_user_id&since=<seq>` (integer cursor).
+Operator card: Take → category (tech/bug/feature) + status (Awaiting/Resolve);
+'awaiting' = parked-open. Text+media relay both ways (web = text; media TG-only).
+Migrations 0004–0007. Full doc: `docs/SUPPORT.md`.
 
 ### Remaining
 - **Wire Lovable form → `/webhooks/leads`** (see `docs/LOVABLE_SETUP.md`, URL filled in).
 - **Wire Mini App → `/webhooks/support`** + route app users through the bot deep link so
   relay works (see `docs/SUPPORT.md`). Optionally set a dedicated `APP_WEBHOOK_SECRET` on Render.
+- **Wire Web PWA → `/api/support/web/*`**: add 3 thin proxy routes in `apps/api`
+  (turkarta repo) behind web-auth that forward to ops with `X-Webhook-Secret` +
+  `user.id`, and a chat UI in `apps/webapp` that polls every ~3-5s. Sketch in `docs/SUPPORT.md`.
 - Fill `ROSTER` (env on Render) with teammates' tg_ids (via `/id`) to enable @-pings
   + claim gating. Currently empty = anyone can claim, no mention ping.
 
