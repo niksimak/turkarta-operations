@@ -1,3 +1,5 @@
 packages: []
+# Approve esbuild's install script (pulled in via tsx) for local installs.
+# The Docker build uses --ignore-scripts and does not rely on this.
 allowBuilds:
   esbuild: true
