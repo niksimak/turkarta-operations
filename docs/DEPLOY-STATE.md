@@ -23,7 +23,7 @@ self-registered; `/health` green; `/webhooks/leads` smoke-tested (card posted to
   email, tg_username (+aliases), message, contact, source. Header `X-Webhook-Secret`.
 - `POST /webhooks/support` — Mini App → support ticket. Fields: tg (req), username, name,
   email, device, request (req). Header `X-Webhook-Secret` (`APP_WEBHOOK_SECRET`, falls
-  back to `SUPABASE_WEBHOOK_SECRET`). See `docs/SUPPORT.md`.
+  back to `LEADS_WEBHOOK_SECRET`). See `docs/SUPPORT.md`.
 
 ### Support ticket system (live 2026-06-28)
 Three intake channels → one operator workflow in the TG channel.
@@ -41,9 +41,13 @@ Operator card: Take → category (tech/bug/feature) + status (Awaiting/Resolve);
 Migrations 0004–0007. Full doc: `docs/SUPPORT.md`.
 
 **Web app integration (2026-06-28):** the turkarta repo side (FastAPI proxy
-`/api/web/support/*`, React chat screen, proactive welcome on signup) is built on
-branch `feat/web-support-chat` → **PR niksimak/turkarta#90**. Needs `OPS_WEBHOOK_SECRET`
-set on the dev API to go live.
+`/api/web/support/*`, React chat screen, proactive welcome on signup) — **PR
+niksimak/turkarta#90 MERGED to main/dev**. Needs `OPS_WEBHOOK_SECRET` set on the dev
+API (= this service's `LEADS_WEBHOOK_SECRET`) to go live.
+
+**Webhook secret renamed (2026-06-28):** `SUPABASE_WEBHOOK_SECRET` → `LEADS_WEBHOOK_SECRET`
+(it was never a Supabase resource — just the shared `x-webhook-secret` string; misleading
+name from the scaffold). Renamed in code + Render env (same value). The DB is **Neon only**.
 
 ### Remaining
 - **Wire Lovable form → `/webhooks/leads`** (see `docs/LOVABLE_SETUP.md`, URL filled in).

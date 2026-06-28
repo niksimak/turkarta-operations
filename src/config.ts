@@ -21,10 +21,12 @@ const Env = z.object({
   DATABASE_URL: z.string().min(1),
   PUBLIC_BASE_URL: z.string().url(),
 
-  SUPABASE_WEBHOOK_SECRET: z.string().min(1),
+  // Shared secret guarding the inbound webhooks (Lovable leads + app fallback),
+  // sent as the `x-webhook-secret` header. Not a Supabase resource — just a name.
+  LEADS_WEBHOOK_SECRET: z.string().min(1),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
-  // Secret the Mini App sends to POST /webhooks/support. Optional: falls back to
-  // SUPABASE_WEBHOOK_SECRET so the endpoint works before a dedicated one is set.
+  // Secret the Mini App / web app sends to the support webhooks. Optional: falls
+  // back to LEADS_WEBHOOK_SECRET so the endpoints work before a dedicated one is set.
   APP_WEBHOOK_SECRET: z.string().optional(),
 
   ROSTER: z

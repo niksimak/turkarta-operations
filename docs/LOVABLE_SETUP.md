@@ -10,7 +10,7 @@ Instead, the landing sends each submission to this service's `/webhooks/leads` e
 Headers:
 ```
 Content-Type: application/json
-X-Webhook-Secret: <SUPABASE_WEBHOOK_SECRET from .env>
+X-Webhook-Secret: <LEADS_WEBHOOK_SECRET from .env>
 ```
 
 Body:

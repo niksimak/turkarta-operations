@@ -20,7 +20,7 @@ so it posts a fully-structured ticket — no Q&A.
 POST https://turkarta-operations.onrender.com/webhooks/support
 Headers:
   Content-Type: application/json
-  X-Webhook-Secret: <APP_WEBHOOK_SECRET, falls back to SUPABASE_WEBHOOK_SECRET>
+  X-Webhook-Secret: <APP_WEBHOOK_SECRET, falls back to LEADS_WEBHOOK_SECRET>
 Body:
 {
   "tg":      123456789,                       // REQUIRED — end-user telegram id

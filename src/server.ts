@@ -46,7 +46,7 @@ const LeadPayload = z.object({
 });
 
 app.post("/webhooks/leads", async (c) => {
-  if (c.req.header("x-webhook-secret") !== config.SUPABASE_WEBHOOK_SECRET) {
+  if (c.req.header("x-webhook-secret") !== config.LEADS_WEBHOOK_SECRET) {
     return c.json({ error: "forbidden" }, 403);
   }
   const body = await c.req.json().catch(() => null);
@@ -81,7 +81,7 @@ const SupportPayload = z.object({
 });
 
 app.post("/webhooks/support", async (c) => {
-  const expected = config.APP_WEBHOOK_SECRET ?? config.SUPABASE_WEBHOOK_SECRET;
+  const expected = config.APP_WEBHOOK_SECRET ?? config.LEADS_WEBHOOK_SECRET;
   if (c.req.header("x-webhook-secret") !== expected) {
     return c.json({ error: "forbidden" }, 403);
   }
@@ -111,7 +111,7 @@ app.post("/webhooks/support", async (c) => {
 // passing the app's user.id as web_user_id. The frontend never calls these directly.
 
 function appAuthed(c: Context): boolean {
-  const expected = config.APP_WEBHOOK_SECRET ?? config.SUPABASE_WEBHOOK_SECRET;
+  const expected = config.APP_WEBHOOK_SECRET ?? config.LEADS_WEBHOOK_SECRET;
   return c.req.header("x-webhook-secret") === expected;
 }
 
