@@ -5,7 +5,7 @@ Instead, the landing sends each submission to this service's `/webhooks/leads` e
 
 ## The contract
 
-`POST https://<your-render-url>/webhooks/leads`
+`POST https://turkarta-operations.onrender.com/webhooks/leads`
 
 Headers:
 ```
@@ -30,7 +30,7 @@ Paste this into Lovable's AI chat:
 
 > Add a backend edge function `notify-lead` that runs whenever a new row is inserted
 > into the leads table (or is called from the contact form's submit handler). It should
-> send a POST request to `https://<your-render-url>/webhooks/leads` with header
+> send a POST request to `https://turkarta-operations.onrender.com/webhooks/leads` with header
 > `X-Webhook-Secret: <SECRET>` and a JSON body `{ name, contact, message, source: "lovable-landing" }`
 > built from the submitted fields. Store the secret as a backend env var, never in client code.
 > Keep saving the submission to the database as before.
@@ -40,7 +40,7 @@ Paste this into Lovable's AI chat:
 If edge functions aren't available, add to the form's `onSubmit` (after the DB insert):
 
 ```ts
-await fetch("https://<your-render-url>/webhooks/leads", {
+await fetch("https://turkarta-operations.onrender.com/webhooks/leads", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",

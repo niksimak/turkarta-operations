@@ -2,7 +2,29 @@
 
 _Last updated: 2026-06-28_
 
-## Status: scaffold complete + relay hardened, not yet deployed
+## Status: DEPLOYED + LIVE on Render (free tier) — 2026-06-28
+
+Service `srv-d90g7t4m0tmc73dpi000` → **https://turkarta-operations.onrender.com**
+(Render workspace "Turkarta", region frankfurt, plan **free**). Both bot webhooks
+self-registered; `/health` green; `/webhooks/leads` smoke-tested (card posted to the
+Лиды group). DB = Neon project `turkarta-ops` (calm-rain-98006074), schema migrated.
+
+**Live infra (2026-06-28):**
+- Bots: `@turkarta_partners_bot` (leads) + `@turkarta_support_bot` (support, privacy OFF).
+- Chat IDs: LEADS `-5387327159` (group) · SUPPORT `-1004370996267` (forum supergroup).
+- Repo is **PUBLIC** (no secrets committed) so Render could fetch it. To re-private:
+  grant the Render GitHub App access at https://github.com/settings/installations,
+  then `gh repo edit niksimak/turkarta-operations --visibility private`.
+- Deploy build needed two fixes: Docker `--ignore-scripts` (pnpm 11 esbuild) +
+  declared `@types/node`. Auto-deploy on push isn't wired; trigger via API/dashboard.
+
+### Remaining
+- **Wire Lovable form → `/webhooks/leads`** (see `docs/LOVABLE_SETUP.md`, URL filled in).
+- Fill `ROSTER` (env on Render) with teammates' tg_ids (via `/id`) to enable @-pings
+  + claim gating. Currently empty = anyone can claim, no mention ping.
+
+---
+## (historical) Status: scaffold complete + relay hardened, not yet deployed
 
 TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clean
 (`pnpm typecheck` + `pnpm build` both pass). Committed, not yet deployed.
