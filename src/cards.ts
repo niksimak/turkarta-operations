@@ -54,8 +54,12 @@ export function claimKb(table: string, id: string): InlineKeyboard {
 
 // ---- Support -------------------------------------------------------------
 
-function userHandle(t: Ticket): string {
-  return t.user_username ? `@${t.user_username}` : esc(t.user_name);
+function fromLine(t: Ticket): string {
+  if (t.channel === "web") {
+    return `${esc(t.user_name) === "—" ? "Web user" : esc(t.user_name)} · 🌐 web`;
+  }
+  const handle = t.user_username ? `@${t.user_username}` : esc(t.user_name);
+  return `${handle} (id <code>${t.user_tg}</code>)`;
 }
 
 const CATEGORY_LABEL: Record<TicketCategory, string> = {
@@ -74,7 +78,7 @@ const STATUS_LABEL: Record<Ticket["status"], string> = {
 /** Shared field block for a support ticket, omitting empty fields. */
 function ticketFields(t: Ticket): string {
   return (
-    `<b>From:</b> ${userHandle(t)} (id <code>${t.user_tg}</code>)\n` +
+    `<b>From:</b> ${fromLine(t)}\n` +
     row("Email", t.email) +
     row("Device", t.device) +
     row("Source", t.source) +

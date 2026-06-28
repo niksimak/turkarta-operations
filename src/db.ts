@@ -24,9 +24,13 @@ export interface Lead {
 
 export type TicketCategory = "tech_issue" | "bug_report" | "feature_request";
 
+export type TicketChannel = "telegram" | "web";
+
 export interface Ticket {
   id: string;
-  user_tg: number;
+  channel: TicketChannel;
+  user_tg: number | null; // null for web-channel tickets
+  web_user_id: string | null; // the main app's user.id, for web tickets
   user_username: string | null;
   user_name: string | null;
   source: string | null;
@@ -186,4 +190,85 @@ export async function resolveTicket(id: string, byTg: number): Promise<Ticket | 
      where id = ${id} and claimed_by_tg = ${byTg} and status in ('allocated','awaiting')
     returning *`;
   return rows[0] ?? null;
+}
+
+export async function getTicket(id: string): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`select * from support_requests where id = ${id}`;
+  return rows[0] ?? null;
+}
+
+// ---- web channel ---------------------------------------------------------
+
+/** Create (or return the existing open) web-channel ticket for an app user.id. */
+export async function openWebTicket(t: {
+  web_user_id: string;
+  user_name: string | null;
+  source: string;
+  request: string;
+  email?: string | null;
+  device?: string | null;
+}): Promise<Ticket> {
+  const [row] = await sql<Ticket[]>`
+    insert into support_requests
+      (channel, web_user_id, user_name, source, first_message, email, device)
+    values ('web', ${t.web_user_id}, ${t.user_name}, ${t.source},
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null})
+    on conflict (web_user_id)
+      where web_user_id is not null and status in ('new','allocated','awaiting')
+      do update set first_message = support_requests.first_message
+    returning *`;
+  return row!;
+}
+
+/** The current open web ticket for a user, if any. */
+export async function ticketByWebUser(webUserId: string): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    select * from support_requests
+     where web_user_id = ${webUserId} and ${OPEN}
+     order by created_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
+/** Most recent web ticket (any status) — for polling so the user sees closure too. */
+export async function latestTicketByWebUser(webUserId: string): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    select * from support_requests
+     where web_user_id = ${webUserId}
+     order by created_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
+// ---- conversation log (web channel) --------------------------------------
+
+export interface Message {
+  id: string;
+  ticket_id: string;
+  sender: "user" | "agent" | "system";
+  body: string;
+  created_at: string;
+}
+
+export async function addMessage(
+  ticketId: string,
+  sender: Message["sender"],
+  body: string,
+): Promise<Message> {
+  const [row] = await sql<Message[]>`
+    insert into support_messages (ticket_id, sender, body)
+    values (${ticketId}, ${sender}, ${body})
+    returning *`;
+  return row!;
+}
+
+/** Messages for a ticket newer than `since` (ISO timestamp); all if omitted. */
+export async function messagesSince(
+  ticketId: string,
+  since?: string | null,
+): Promise<Message[]> {
+  return sql<Message[]>`
+    select * from support_messages
+     where ticket_id = ${ticketId}
+       ${since ? sql`and created_at > ${since}` : sql``}
+     order by created_at asc
+     limit 200`;
 }

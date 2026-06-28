@@ -102,7 +102,7 @@ export async function createAppTicket(input: {
   return ticket;
 }
 
-/** Deliver something to the end user; on failure, flag it in the ops thread. */
+/** Deliver something to a Telegram user; on failure, flag it in the ops thread. */
 async function deliverToUser(
   ctx: Context,
   ticket: Ticket,
@@ -120,6 +120,56 @@ async function deliverToUser(
         )
         .catch(() => {});
     }
+  }
+}
+
+/**
+ * Channel-aware notice to the user. Telegram → bot DM; web → append to the
+ * conversation log as a 'system' message the app will poll.
+ */
+async function notifyUser(ctx: Context, ticket: Ticket, text: string): Promise<void> {
+  if (ticket.channel === "web") {
+    await db.addMessage(ticket.id, "system", text);
+    return;
+  }
+  if (ticket.user_tg == null) return;
+  await deliverToUser(ctx, ticket, () => ctx.api.sendMessage(ticket.user_tg!, text));
+}
+
+// ---- web channel (called by the in-app webhook proxy) --------------------
+
+/** Open (or dedupe) a web-channel ticket and post its card. */
+export async function createWebTicket(input: {
+  web_user_id: string;
+  user_name: string | null;
+  email: string | null;
+  device: string | null;
+  request: string;
+}): Promise<Ticket> {
+  const ticket = await db.openWebTicket({
+    web_user_id: input.web_user_id,
+    user_name: input.user_name,
+    source: "web",
+    request: input.request,
+    email: input.email,
+    device: input.device,
+  });
+  if (!ticket.tg_message_id) await postTicketCard(ticket);
+  return ticket;
+}
+
+/** A web user sent a message: log it and relay into the ops thread if claimed. */
+export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
+  await db.addMessage(ticket.id, "user", body);
+  if (ticket.thread_id != null) {
+    const who = ticket.user_name || "Web user";
+    await supportBot.api
+      .sendMessage(
+        config.SUPPORT_CHAT_ID,
+        `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(body)}`,
+        { message_thread_id: ticket.thread_id, parse_mode: "HTML" },
+      )
+      .catch(() => {});
   }
 }
 
@@ -183,11 +233,10 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
   await safeEditCard(ctx, won);
   await ctx.answerCallbackQuery({ text: "Ticket is yours 👍" });
 
-  await deliverToUser(ctx, won, () =>
-    ctx.api.sendMessage(
-      won.user_tg,
-      "✅ Оператор подключился. Пишите здесь — ответим в этом чате.\n✅ An operator has joined. Just write here.",
-    ),
+  await notifyUser(
+    ctx,
+    won,
+    "✅ Оператор подключился. Пишите здесь — ответим в этом чате.\n✅ An operator has joined. Just write here.",
   );
 });
 
@@ -235,9 +284,7 @@ supportBot.callbackQuery(/^resolve:(.+)$/, async (ctx) => {
   }
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
   await ctx.answerCallbackQuery({ text: "Resolved ✅" });
-  await deliverToUser(ctx, closed, () =>
-    ctx.api.sendMessage(closed.user_tg, "Обращение закрыто. Спасибо! / Ticket closed. Thank you!"),
-  );
+  await notifyUser(ctx, closed, "Обращение закрыто. Спасибо! / Ticket closed. Thank you!");
 
   // Tidy the support group: close the relay topic so it drops out of the active list.
   if (config.SUPPORT_FORUM && closed.thread_id != null) {
@@ -314,16 +361,26 @@ supportBot.on("message", async (ctx, next) => {
   const ticket = await db.ticketByThread(msg.message_thread_id);
   if (!ticket) return;
 
+  // Web channel: store the reply for the app to poll (media isn't relayable to web).
+  if (ticket.channel === "web") {
+    const body = msg.text ?? "[оператор отправил вложение — доступно только в Telegram]";
+    await db.addMessage(ticket.id, "agent", body);
+    return;
+  }
+
+  // Telegram channel: live relay (text + media) to the user's DM.
+  if (ticket.user_tg == null) return;
+  const userTg = ticket.user_tg;
   if (msg.text) {
     await deliverToUser(ctx, ticket, () =>
-      ctx.api.sendMessage(ticket.user_tg, `🛟 <b>Поддержка:</b> ${escapeHtml(msg.text!)}`, {
+      ctx.api.sendMessage(userTg, `🛟 <b>Поддержка:</b> ${escapeHtml(msg.text!)}`, {
         parse_mode: "HTML",
       }),
     );
   } else {
     await deliverToUser(ctx, ticket, async () => {
-      await ctx.api.sendMessage(ticket.user_tg, "🛟 <b>Поддержка:</b>", { parse_mode: "HTML" });
-      await ctx.api.copyMessage(ticket.user_tg, ctx.chat.id, msg.message_id);
+      await ctx.api.sendMessage(userTg, "🛟 <b>Поддержка:</b>", { parse_mode: "HTML" });
+      await ctx.api.copyMessage(userTg, ctx.chat.id, msg.message_id);
     });
   }
 });

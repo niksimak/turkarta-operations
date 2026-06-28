@@ -1,9 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { webhookCallback } from "grammy";
 import { z } from "zod";
 import { config } from "./config.js";
 import { leadsBot, postLead } from "./bots/leads.js";
-import { supportBot, createAppTicket } from "./bots/support.js";
+import { supportBot, createAppTicket, createWebTicket, pushWebUserMessage } from "./bots/support.js";
+import * as db from "./db.js";
 
 export const app = new Hono();
 
@@ -97,6 +98,83 @@ app.post("/webhooks/support", async (c) => {
     request: d.request,
   });
   return c.json({ ok: true, ticketId: ticket.id });
+});
+
+// ---- Web in-app chat (server-to-server; called by the web app's backend) ----
+// The web backend authenticates the user and proxies here with the shared secret,
+// passing the app's user.id as web_user_id. The frontend never calls these directly.
+
+function appAuthed(c: Context): boolean {
+  const expected = config.APP_WEBHOOK_SECRET ?? config.SUPABASE_WEBHOOK_SECRET;
+  return c.req.header("x-webhook-secret") === expected;
+}
+
+const serializeMessages = (msgs: db.Message[]) =>
+  msgs.map((m) => ({ id: m.id, sender: m.sender, body: m.body, at: m.created_at }));
+
+// Open (or return the existing open) web ticket.
+const WebOpenPayload = z.object({
+  web_user_id: z.string().min(1),
+  name: z.string().nullish(),
+  email: z.string().nullish(),
+  device: z.string().nullish(),
+  request: z.string().min(1),
+  message: z.string().nullish(), // alias for request
+});
+
+app.post("/api/support/web/open", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const body = await c.req.json().catch(() => null);
+  if (body && typeof body === "object" && body.request == null && body.message != null) {
+    body.request = body.message;
+  }
+  const parsed = WebOpenPayload.safeParse(body);
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const d = parsed.data;
+
+  const ticket = await createWebTicket({
+    web_user_id: d.web_user_id,
+    user_name: d.name ?? null,
+    email: d.email ?? null,
+    device: d.device ?? null,
+    request: d.request,
+  });
+  return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+});
+
+// Web user sends a message into their open ticket.
+const WebMessagePayload = z.object({
+  web_user_id: z.string().min(1),
+  body: z.string().min(1),
+});
+
+app.post("/api/support/web/message", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const parsed = WebMessagePayload.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+
+  const ticket = await db.ticketByWebUser(parsed.data.web_user_id);
+  if (!ticket) return c.json({ error: "no open ticket" }, 404);
+  await pushWebUserMessage(ticket, parsed.data.body);
+  return c.json({ ok: true });
+});
+
+// Web app polls for new messages + ticket status.
+app.get("/api/support/web/messages", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const webUserId = c.req.query("web_user_id");
+  if (!webUserId) return c.json({ error: "web_user_id required" }, 422);
+  const since = c.req.query("since") ?? null;
+
+  const ticket = await db.latestTicketByWebUser(webUserId);
+  if (!ticket) return c.json({ ticketId: null, status: null, messages: [] });
+  const messages = await db.messagesSince(ticket.id, since);
+  return c.json({
+    ticketId: ticket.id,
+    status: ticket.status,
+    category: ticket.category,
+    messages: serializeMessages(messages),
+  });
 });
 
 /** Register Telegram webhooks on boot. */
