@@ -260,15 +260,21 @@ export async function addMessage(
   return row!;
 }
 
-/** Messages for a ticket newer than `since` (ISO timestamp); all if omitted. */
+/**
+ * Messages for a ticket newer than `since`; all if omitted. `created_at` is cast
+ * to text so the full microsecond precision survives JSON — letting the caller use
+ * the returned `at` verbatim as an exclusive cursor (a JS Date would truncate to ms
+ * and re-return the boundary message on every poll).
+ */
 export async function messagesSince(
   ticketId: string,
   since?: string | null,
 ): Promise<Message[]> {
   return sql<Message[]>`
-    select * from support_messages
+    select id, ticket_id, sender, body, created_at::text as created_at
+      from support_messages
      where ticket_id = ${ticketId}
-       ${since ? sql`and created_at > ${since}` : sql``}
+       ${since ? sql`and created_at > ${since}::timestamptz` : sql``}
      order by created_at asc
      limit 200`;
 }
