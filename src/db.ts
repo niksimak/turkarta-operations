@@ -22,14 +22,20 @@ export interface Lead {
   tg_message_id: number | null;
 }
 
+export type TicketCategory = "tech_issue" | "bug_report" | "feature_request";
+
 export interface Ticket {
   id: string;
   user_tg: number;
   user_username: string | null;
   user_name: string | null;
   source: string | null;
-  first_message: string | null;
-  status: "new" | "allocated" | "resolved";
+  first_message: string | null; // the user's request text
+  email: string | null;
+  device: string | null;
+  category: TicketCategory | null;
+  intake_step: string | null; // 'email' while the bot is still collecting; null = done
+  status: "new" | "allocated" | "awaiting" | "resolved";
   claimed_by: string | null;
   claimed_by_tg: number | null;
   tg_chat_id: number | null;
@@ -93,26 +99,50 @@ export async function setCard(
 
 // ---- support relay helpers ----------------------------------------------
 
-export async function openTicket(t: {
+/** "Open" = unresolved: parked (awaiting) tickets still route relay + block new ones. */
+const OPEN = sql`status in ('new','allocated','awaiting')`;
+
+export interface OpenTicketInput {
   user_tg: number;
   user_username: string | null;
   user_name: string | null;
   source: string;
-  first_message: string;
-}): Promise<Ticket> {
+  request: string;
+  email?: string | null;
+  device?: string | null;
+  intake_step?: string | null;
+}
+
+/**
+ * Create (or return the existing open) ticket for a user. Used by both the bot
+ * intake and the in-app webhook. One open ticket per user is enforced by a partial
+ * unique index; the on-conflict path returns the existing row unchanged.
+ */
+export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
-    insert into support_requests (user_tg, user_username, user_name, source, first_message)
-    values (${t.user_tg}, ${t.user_username}, ${t.user_name}, ${t.source}, ${t.first_message})
-    on conflict (user_tg) where status in ('new','allocated')
+    insert into support_requests
+      (user_tg, user_username, user_name, source, first_message, email, device, intake_step)
+    values (${t.user_tg}, ${t.user_username}, ${t.user_name}, ${t.source},
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.intake_step ?? null})
+    on conflict (user_tg) where status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
     returning *`;
   return row!;
 }
 
+/** Finish bot intake: store the (optional) email and clear the intake gate. */
+export async function finishIntake(id: string, email: string | null): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    update support_requests set email = ${email}, intake_step = null
+     where id = ${id}
+    returning *`;
+  return rows[0] ?? null;
+}
+
 export async function ticketByUser(userTg: number): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     select * from support_requests
-     where user_tg = ${userTg} and status in ('new','allocated')
+     where user_tg = ${userTg} and ${OPEN}
      order by created_at desc limit 1`;
   return rows[0] ?? null;
 }
@@ -120,7 +150,7 @@ export async function ticketByUser(userTg: number): Promise<Ticket | null> {
 export async function ticketByThread(threadId: number): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     select * from support_requests
-     where thread_id = ${threadId} and status in ('new','allocated')
+     where thread_id = ${threadId} and ${OPEN}
      order by created_at desc limit 1`;
   return rows[0] ?? null;
 }
@@ -129,10 +159,31 @@ export async function setThread(id: string, threadId: number): Promise<void> {
   await sql`update support_requests set thread_id = ${threadId} where id = ${id}`;
 }
 
+/** Operator tags the ticket's category. Returns the updated row. */
+export async function setCategory(
+  id: string,
+  category: TicketCategory,
+): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    update support_requests set category = ${category}
+     where id = ${id} and ${OPEN}
+    returning *`;
+  return rows[0] ?? null;
+}
+
+/** Park a taken ticket as 'awaiting' (still open). Only the assigned agent may. */
+export async function awaitTicket(id: string, byTg: number): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    update support_requests set status = 'awaiting'
+     where id = ${id} and claimed_by_tg = ${byTg} and status in ('allocated','awaiting')
+    returning *`;
+  return rows[0] ?? null;
+}
+
 export async function resolveTicket(id: string, byTg: number): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     update support_requests set status = 'resolved', resolved_at = now()
-     where id = ${id} and status = 'allocated' and claimed_by_tg = ${byTg}
+     where id = ${id} and claimed_by_tg = ${byTg} and status in ('allocated','awaiting')
     returning *`;
   return rows[0] ?? null;
 }

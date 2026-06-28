@@ -1,6 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { rosterPing } from "./config.js";
-import type { Lead, Ticket } from "./db.js";
+import type { Lead, Ticket, TicketCategory } from "./db.js";
 
 // callback_data:  "claim:<table>:<id>"  /  "resolve:<id>"
 
@@ -58,28 +58,66 @@ function userHandle(t: Ticket): string {
   return t.user_username ? `@${t.user_username}` : esc(t.user_name);
 }
 
-export function supportCard(t: Ticket): string {
+const CATEGORY_LABEL: Record<TicketCategory, string> = {
+  tech_issue: "🔧 Tech issue",
+  bug_report: "🐞 Bug report",
+  feature_request: "💡 Feature request",
+};
+
+const STATUS_LABEL: Record<Ticket["status"], string> = {
+  new: "🆕 New",
+  allocated: "🟢 In progress",
+  awaiting: "⏳ Awaiting resolution",
+  resolved: "✅ Resolved",
+};
+
+/** Shared field block for a support ticket, omitting empty fields. */
+function ticketFields(t: Ticket): string {
   return (
-    "🎫 <b>New support request</b>\n" +
     `<b>From:</b> ${userHandle(t)} (id <code>${t.user_tg}</code>)\n` +
-    `<b>Source:</b> ${esc(t.source)}\n` +
-    `<b>Message:</b> ${esc(t.first_message)}\n\n` +
-    rosterPing()
+    row("Email", t.email) +
+    row("Device", t.device) +
+    row("Source", t.source) +
+    row("Request", t.first_message)
   );
 }
 
+export function supportCard(t: Ticket): string {
+  return "🎫 <b>New support request</b>\n" + ticketFields(t) + "\n" + rosterPing();
+}
+
+/** Card shown after an operator takes the ticket; reflects category + status. */
 export function supportClaimedCard(t: Ticket, byName: string): string {
   return (
-    "🟢 <b>Support — in progress</b>\n" +
-    `<b>From:</b> ${userHandle(t)} (id <code>${t.user_tg}</code>)\n` +
-    `<b>Message:</b> ${esc(t.first_message)}\n\n` +
-    `👤 Handled by <b>${esc(byName)}</b>\n` +
+    `${STATUS_LABEL[t.status]} <b>· Support</b>\n` +
+    ticketFields(t) +
+    row("Category", t.category ? CATEGORY_LABEL[t.category] : null) +
+    `\n👤 Handled by <b>${esc(byName)}</b>\n` +
     "Reply in this thread to talk to the user."
   );
 }
 
-export function supportKb(id: string, resolvable = false): InlineKeyboard {
-  return resolvable
-    ? new InlineKeyboard().text("✅ Закрыть / Resolve", `resolve:${id}`)
-    : new InlineKeyboard().text("✋ Взять / Take", `claim:support_requests:${id}`);
+/** "Take" button for an unclaimed ticket. */
+export function supportClaimKb(id: string): InlineKeyboard {
+  return new InlineKeyboard().text("✋ Взять / Take", `claim:support_requests:${id}`);
+}
+
+/**
+ * Operator controls for a taken ticket: a category row (selected one marked ✓)
+ * and a status row (Awaiting / Resolve).
+ */
+export function supportManageKb(t: Ticket): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const cats: [TicketCategory, string][] = [
+    ["tech_issue", "🔧 Tech"],
+    ["bug_report", "🐞 Bug"],
+    ["feature_request", "💡 Feature"],
+  ];
+  for (const [key, label] of cats) {
+    kb.text(t.category === key ? `✓ ${label}` : label, `cat:${t.id}:${key}`);
+  }
+  kb.row();
+  if (t.status !== "awaiting") kb.text("⏳ Awaiting", `await:${t.id}`);
+  kb.text("✅ Resolve", `resolve:${t.id}`);
+  return kb;
 }

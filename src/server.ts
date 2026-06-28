@@ -3,7 +3,7 @@ import { webhookCallback } from "grammy";
 import { z } from "zod";
 import { config } from "./config.js";
 import { leadsBot, postLead } from "./bots/leads.js";
-import { supportBot } from "./bots/support.js";
+import { supportBot, createAppTicket } from "./bots/support.js";
 
 export const app = new Hono();
 
@@ -60,6 +60,43 @@ app.post("/webhooks/leads", async (c) => {
     source: d.source ?? "lovable-landing",
   });
   return c.json({ ok: true });
+});
+
+// Inbound support ticket from the Mini App (structured: it already has tg/email/device).
+const SupportPayload = z.object({
+  tg: z.coerce.number().int(), // end-user's telegram id — required to relay back
+  username: z.string().nullish(),
+  name: z.string().nullish(),
+  email: z.string().nullish(),
+  device: z.string().nullish(),
+  request: z.string().min(1),
+  message: z.string().nullish(), // alias for request
+});
+
+app.post("/webhooks/support", async (c) => {
+  const expected = config.APP_WEBHOOK_SECRET ?? config.SUPABASE_WEBHOOK_SECRET;
+  if (c.req.header("x-webhook-secret") !== expected) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  const body = await c.req.json().catch(() => null);
+  const raw = body?.record ?? body;
+  // Allow `message` as an alias for `request` before validation.
+  if (raw && typeof raw === "object" && raw.request == null && raw.message != null) {
+    raw.request = raw.message;
+  }
+  const parsed = SupportPayload.safeParse(raw);
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const d = parsed.data;
+
+  const ticket = await createAppTicket({
+    user_tg: d.tg,
+    user_username: d.username ?? null,
+    user_name: d.name ?? null,
+    email: d.email ?? null,
+    device: d.device ?? null,
+    request: d.request,
+  });
+  return c.json({ ok: true, ticketId: ticket.id });
 });
 
 /** Register Telegram webhooks on boot. */

@@ -23,6 +23,9 @@ const Env = z.object({
 
   SUPABASE_WEBHOOK_SECRET: z.string().min(1),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
+  // Secret the Mini App sends to POST /webhooks/support. Optional: falls back to
+  // SUPABASE_WEBHOOK_SECRET so the endpoint works before a dedicated one is set.
+  APP_WEBHOOK_SECRET: z.string().optional(),
 
   ROSTER: z
     .string()
