@@ -33,17 +33,25 @@ Three intake channels → one operator workflow in the TG channel.
   durable `support_messages` log the web app **polls** (server-to-server, proxied by
   the web FastAPI backend with `user.id` as `web_user_id`). Endpoints:
   `POST /api/support/web/open`, `POST /api/support/web/message`,
-  `GET /api/support/web/messages?web_user_id&since=<seq>` (integer cursor).
+  `GET /api/support/web/messages?web_user_id&since=<seq>` (integer cursor), and
+  `POST /api/support/web/welcome` (proactive onboarding greeting — seeds an agent
+  message + posts a "new signup" card; deduped per open ticket).
 Operator card: Take → category (tech/bug/feature) + status (Awaiting/Resolve);
 'awaiting' = parked-open. Text+media relay both ways (web = text; media TG-only).
 Migrations 0004–0007. Full doc: `docs/SUPPORT.md`.
+
+**Web app integration (2026-06-28):** the turkarta repo side (FastAPI proxy
+`/api/web/support/*`, React chat screen, proactive welcome on signup) is built on
+branch `feat/web-support-chat` → **PR niksimak/turkarta#90**. Needs `OPS_WEBHOOK_SECRET`
+set on the dev API to go live.
 
 ### Remaining
 - **Wire Lovable form → `/webhooks/leads`** (see `docs/LOVABLE_SETUP.md`, URL filled in).
 - **Wire Mini App → `/webhooks/support`** + route app users through the bot deep link so
   relay works (see `docs/SUPPORT.md`). Optionally set a dedicated `APP_WEBHOOK_SECRET` on Render.
-- **Wire Web PWA → `/api/support/web/*`**: add 3 thin proxy routes in `apps/api`
-  (turkarta repo) behind web-auth that forward to ops with `X-Webhook-Secret` +
+- **Merge web PWA support (PR turkarta#90)** + set `OPS_WEBHOOK_SECRET` on the dev API.
+  ~~Add 3 thin proxy routes in `apps/api`~~ ✅ done on the branch. Original notes:
+  routes behind web-auth forward to ops with `X-Webhook-Secret` +
   `user.id`, and a chat UI in `apps/webapp` that polls every ~3-5s. Sketch in `docs/SUPPORT.md`.
 - Fill `ROSTER` (env on Render) with teammates' tg_ids (via `/id`) to enable @-pings
   + claim gating. Currently empty = anyone can claim, no mention ping.
