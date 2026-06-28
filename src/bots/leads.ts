@@ -6,6 +6,14 @@ import type { Lead } from "../db.js";
 
 export const leadsBot = new Bot(config.LEADS_BOT_TOKEN);
 
+// /id — bootstrap helper: prints the caller's tg id + this chat id (for ROSTER / LEADS_CHAT_ID).
+leadsBot.command("id", (ctx) =>
+  ctx.reply(
+    `Your Telegram id: <code>${ctx.from?.id}</code>\nThis chat id: <code>${ctx.chat.id}</code>`,
+    { parse_mode: "HTML" },
+  ),
+);
+
 /** Persist + post a fresh lead card to the ops group. */
 export async function postLead(
   input: Pick<Lead, "name" | "contact" | "message" | "source">,

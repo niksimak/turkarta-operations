@@ -1,11 +1,19 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-06-26_
+_Last updated: 2026-06-28_
 
-## Status: scaffold complete, not yet deployed
+## Status: scaffold complete + relay hardened, not yet deployed
 
 TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clean
-(`pnpm typecheck` + `pnpm build` both pass). Nothing committed yet, nothing deployed.
+(`pnpm typecheck` + `pnpm build` both pass). Committed, not yet deployed.
+
+**2026-06-28 — added (commit pending):**
+- **Media relay both directions** in support (photos/docs/voice/video/stickers via
+  `copyMessage`, attributed). Critical for payment support — users send screenshots.
+- **`/id` command in both bots** — prints caller tg id + chat id. Use it to grab
+  `*_CHAT_ID` (step 4) and roster `tg_id`s (step 5) without fishing through `getUpdates`.
+- **Resolve closes the forum topic** so the support group's topic list stays clean.
+- **Graceful shutdown** — drains the PG pool on Render's SIGTERM/SIGINT.
 
 ## Decisions locked
 - **Stack:** TypeScript (grammY + Hono + postgres + zod), Node 22, deploy on Render.
@@ -28,8 +36,8 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
 2. **Provision ops Postgres** — a Supabase project *you own* (or Render PG) → `DATABASE_URL`.
    Then `pnpm migrate`.
 3. **BotFather:** create both bots → tokens. Support bot: `/setprivacy → Disable`.
-4. **Create groups**, add bots, grab chat IDs via `getUpdates`. Make support group a
-   **forum/topics** supergroup.
+4. **Create groups**, add bots, make the support group a **forum/topics** supergroup.
+   Grab chat IDs by sending **`/id`** in each group (or DM a bot `/id` for your own tg_id).
 5. **Fill `.env`** (tokens, chat IDs, DATABASE_URL, PUBLIC_BASE_URL, secrets, ROSTER).
 6. **Deploy to Render** (Docker) → set `PUBLIC_BASE_URL` to the Render URL → webhooks
    self-register on boot.
