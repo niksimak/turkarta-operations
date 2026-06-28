@@ -18,8 +18,23 @@ self-registered; `/health` green; `/webhooks/leads` smoke-tested (card posted to
 - Deploy build needed two fixes: Docker `--ignore-scripts` (pnpm 11 esbuild) +
   declared `@types/node`. Auto-deploy on push isn't wired; trigger via API/dashboard.
 
+### Endpoints (live)
+- `POST /webhooks/leads` — Lovable landing → partners bot. Fields: name, company, phone,
+  email, tg_username (+aliases), message, contact, source. Header `X-Webhook-Secret`.
+- `POST /webhooks/support` — Mini App → support ticket. Fields: tg (req), username, name,
+  email, device, request (req). Header `X-Webhook-Secret` (`APP_WEBHOOK_SECRET`, falls
+  back to `SUPABASE_WEBHOOK_SECRET`). See `docs/SUPPORT.md`.
+
+### Support ticket system (v2, live 2026-06-28)
+Bot guided intake (request → email/skip, DB-persisted) + app webhook. Operator card:
+Take → category (tech/bug/feature) + status (Awaiting/Resolve). 'awaiting' = parked-open.
+Text+media relay both ways; undelivered user replies flag in the thread. Full doc:
+`docs/SUPPORT.md`. DB cols added via migration 0004.
+
 ### Remaining
 - **Wire Lovable form → `/webhooks/leads`** (see `docs/LOVABLE_SETUP.md`, URL filled in).
+- **Wire Mini App → `/webhooks/support`** + route app users through the bot deep link so
+  relay works (see `docs/SUPPORT.md`). Optionally set a dedicated `APP_WEBHOOK_SECRET` on Render.
 - Fill `ROSTER` (env on Render) with teammates' tg_ids (via `/id`) to enable @-pings
   + claim gating. Currently empty = anyone can claim, no mention ping.
 
