@@ -28,6 +28,7 @@ const LeadPayload = z.object({
   name: z.string().nullish(),
   company: z.string().nullish(),
   phone: z.string().nullish(),
+  email: z.string().nullish(),
   tg_username: z.string().nullish(),
   telegram: z.string().nullish(), // alias for tg_username
   tg: z.string().nullish(), //       alias for tg_username
@@ -52,6 +53,7 @@ app.post("/webhooks/leads", async (c) => {
     name: d.name ?? null,
     company: d.company ?? null,
     phone: d.phone ?? null,
+    email: d.email ?? null,
     tg_username: d.tg_username ?? d.telegram ?? d.tg ?? d.username ?? null,
     contact: d.contact ?? null,
     message: d.message ?? null,

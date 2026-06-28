@@ -30,6 +30,7 @@ function leadFields(l: Lead): string {
     row("Name", l.name) +
     row("Company", l.company) +
     row("Phone", l.phone) +
+    row("Email", l.email) +
     row("Telegram", tgHandle(l.tg_username)) +
     row("Contact", l.contact) +
     row("Message", l.message) +

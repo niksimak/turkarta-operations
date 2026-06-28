@@ -19,6 +19,7 @@ Body:
   "name":        "Jane Doe",
   "company":     "Acme LLC",
   "phone":       "+1 555 123 4567",
+  "email":       "jane@example.com",
   "tg_username": "jane_doe",
   "message":     "I'm interested in ...",
   "source":      "lovable-landing"
@@ -41,7 +42,7 @@ Paste this into Lovable's AI chat:
 > into the leads table (or is called from the contact form's submit handler). It should
 > send a POST request to `https://turkarta-operations.onrender.com/webhooks/leads` with header
 > `X-Webhook-Secret: <SECRET>` and a JSON body
-> `{ name, company, phone, tg_username, message, source: "lovable-landing" }`
+> `{ name, company, phone, email, tg_username, message, source: "lovable-landing" }`
 > built from the submitted form fields. Store the secret as a backend env var, never in
 > client code. Keep saving the submission to the database as before.
 

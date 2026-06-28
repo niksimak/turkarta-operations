@@ -10,6 +10,7 @@ export interface Lead {
   name: string | null;
   company: string | null;
   phone: string | null;
+  email: string | null;
   tg_username: string | null;
   contact: string | null;
   message: string | null;
@@ -38,15 +39,15 @@ export interface Ticket {
 
 export type LeadInput = Pick<
   Lead,
-  "name" | "company" | "phone" | "tg_username" | "contact" | "message" | "source"
+  "name" | "company" | "phone" | "email" | "tg_username" | "contact" | "message" | "source"
 >;
 
 /** Insert a fresh lead (form-POST path). */
 export async function insertLead(input: LeadInput): Promise<Lead> {
   const [row] = await sql<Lead[]>`
-    insert into leads (name, company, phone, tg_username, contact, message, source)
-    values (${input.name}, ${input.company}, ${input.phone}, ${input.tg_username},
-            ${input.contact}, ${input.message}, ${input.source})
+    insert into leads (name, company, phone, email, tg_username, contact, message, source)
+    values (${input.name}, ${input.company}, ${input.phone}, ${input.email},
+            ${input.tg_username}, ${input.contact}, ${input.message}, ${input.source})
     returning *`;
   return row!;
 }
