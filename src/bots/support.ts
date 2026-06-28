@@ -154,7 +154,11 @@ export async function createWebTicket(input: {
     email: input.email,
     device: input.device,
   });
-  if (!ticket.tg_message_id) await postTicketCard(ticket);
+  // New ticket (no card yet): post the ops card and seed the chat log with the request.
+  if (!ticket.tg_message_id) {
+    await db.addMessage(ticket.id, "user", input.request);
+    await postTicketCard(ticket);
+  }
   return ticket;
 }
 
