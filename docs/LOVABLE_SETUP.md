@@ -16,13 +16,22 @@ X-Webhook-Secret: <SUPABASE_WEBHOOK_SECRET from .env>
 Body:
 ```json
 {
-  "name":    "Jane Doe",
-  "contact": "jane@example.com or +1...",
-  "message": "I'm interested in ...",
-  "source":  "lovable-landing"
+  "name":        "Jane Doe",
+  "company":     "Acme LLC",
+  "phone":       "+1 555 123 4567",
+  "tg_username": "jane_doe",
+  "message":     "I'm interested in ...",
+  "source":      "lovable-landing"
 }
 ```
 All fields optional; `source` defaults to `"lovable-landing"`. Returns `{ "ok": true }`.
+Empty fields are simply omitted from the Telegram card.
+
+**Telegram handle:** send it as `tg_username`. Aliases `telegram`, `tg`, and
+`username` are also accepted. A leading `@` is optional (added automatically).
+
+**Freeform fallback:** a generic `contact` field (email/phone/handle in one string)
+is still accepted for forms that don't split contact info into separate fields.
 
 ## Recommended: Lovable Cloud edge function (keeps the secret server-side)
 
@@ -31,9 +40,10 @@ Paste this into Lovable's AI chat:
 > Add a backend edge function `notify-lead` that runs whenever a new row is inserted
 > into the leads table (or is called from the contact form's submit handler). It should
 > send a POST request to `https://turkarta-operations.onrender.com/webhooks/leads` with header
-> `X-Webhook-Secret: <SECRET>` and a JSON body `{ name, contact, message, source: "lovable-landing" }`
-> built from the submitted fields. Store the secret as a backend env var, never in client code.
-> Keep saving the submission to the database as before.
+> `X-Webhook-Secret: <SECRET>` and a JSON body
+> `{ name, company, phone, tg_username, message, source: "lovable-landing" }`
+> built from the submitted form fields. Store the secret as a backend env var, never in
+> client code. Keep saving the submission to the database as before.
 
 ## Fallback: client-side fetch on submit
 
