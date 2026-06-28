@@ -246,6 +246,7 @@ export interface Message {
   sender: "user" | "agent" | "system";
   body: string;
   created_at: string;
+  seq: number; // monotonic cursor
 }
 
 export async function addMessage(
@@ -261,20 +262,20 @@ export async function addMessage(
 }
 
 /**
- * Messages for a ticket newer than `since`; all if omitted. `created_at` is cast
- * to text so the full microsecond precision survives JSON — letting the caller use
- * the returned `at` verbatim as an exclusive cursor (a JS Date would truncate to ms
- * and re-return the boundary message on every poll).
+ * Messages for a ticket after the `since` sequence cursor; all if omitted.
+ * `seq` is a monotonic integer — an exact, URL-safe cursor (unlike a timestamp,
+ * whose '+00' offset gets mangled to a space in query strings). `created_at` is
+ * returned as text for display only.
  */
 export async function messagesSince(
   ticketId: string,
-  since?: string | null,
+  since?: number | null,
 ): Promise<Message[]> {
   return sql<Message[]>`
-    select id, ticket_id, sender, body, created_at::text as created_at
+    select id, ticket_id, sender, body, created_at::text as created_at, seq
       from support_messages
      where ticket_id = ${ticketId}
-       ${since ? sql`and created_at > ${since}::timestamptz` : sql``}
-     order by created_at asc
+       ${since != null ? sql`and seq > ${since}` : sql``}
+     order by seq asc
      limit 200`;
 }

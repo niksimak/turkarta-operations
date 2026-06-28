@@ -110,7 +110,7 @@ function appAuthed(c: Context): boolean {
 }
 
 const serializeMessages = (msgs: db.Message[]) =>
-  msgs.map((m) => ({ id: m.id, sender: m.sender, body: m.body, at: m.created_at }));
+  msgs.map((m) => ({ id: m.id, seq: m.seq, sender: m.sender, body: m.body, at: m.created_at }));
 
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
@@ -164,16 +164,22 @@ app.get("/api/support/web/messages", async (c) => {
   if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
   const webUserId = c.req.query("web_user_id");
   if (!webUserId) return c.json({ error: "web_user_id required" }, 422);
-  const since = c.req.query("since") ?? null;
+  const sinceRaw = c.req.query("since");
+  const since = sinceRaw != null && sinceRaw !== "" ? Number(sinceRaw) : null;
+  if (since != null && !Number.isFinite(since)) {
+    return c.json({ error: "since must be a number" }, 422);
+  }
 
   const ticket = await db.latestTicketByWebUser(webUserId);
-  if (!ticket) return c.json({ ticketId: null, status: null, messages: [] });
+  if (!ticket) return c.json({ ticketId: null, status: null, messages: [], cursor: since ?? 0 });
   const messages = await db.messagesSince(ticket.id, since);
   return c.json({
     ticketId: ticket.id,
     status: ticket.status,
     category: ticket.category,
     messages: serializeMessages(messages),
+    // Convenience: the cursor to pass as `since` on the next poll.
+    cursor: messages.length ? messages[messages.length - 1]!.seq : (since ?? 0),
   });
 });
 
