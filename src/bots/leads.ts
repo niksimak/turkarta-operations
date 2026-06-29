@@ -31,7 +31,7 @@ leadsBot.callbackQuery(/^claim:leads:(.+)$/, async (ctx) => {
   const user = ctx.from;
 
   if (rosterIds.size > 0 && !rosterIds.has(user.id)) {
-    return ctx.answerCallbackQuery({ text: "You're not on the ops roster.", show_alert: true });
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
   }
 
   const member = memberFor(user.id);
@@ -41,7 +41,7 @@ leadsBot.callbackQuery(/^claim:leads:(.+)$/, async (ctx) => {
   if (!won) {
     const existing = await db.getRow<Lead>("leads", id);
     await ctx.answerCallbackQuery({
-      text: `Already taken by ${existing?.claimed_by ?? "someone"}.`,
+      text: `Уже взято: ${existing?.claimed_by ?? "кто-то"}.`,
       show_alert: true,
     });
     return;
@@ -51,5 +51,5 @@ leadsBot.callbackQuery(/^claim:leads:(.+)$/, async (ctx) => {
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
   });
-  await ctx.answerCallbackQuery({ text: "It's yours 👍" });
+  await ctx.answerCallbackQuery({ text: "Взято 👍" });
 });

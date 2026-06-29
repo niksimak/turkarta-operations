@@ -8,14 +8,11 @@ import type { Ticket, TicketCategory } from "../db.js";
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 
 const GREETING =
-  "👋 Это поддержка Turkarta. Опишите вопрос одним сообщением — мы подключим оператора.\n\n" +
-  "👋 Turkarta support. Describe your issue in one message and an operator will join.";
+  "👋 Это поддержка Turkarta. Опишите вопрос одним сообщением — мы подключим оператора.";
 
-const ASK_EMAIL =
-  "📧 Оставьте email для связи (или отправьте /skip).\n" +
-  "📧 Leave an email so we can reach you (or send /skip).";
+const ASK_EMAIL = "📧 Оставьте email для связи (или отправьте /skip).";
 
-const QUEUED = "Принято! Подключаем оператора… / Got it — connecting an operator…";
+const QUEUED = "Принято! Подключаем оператора…";
 
 // /start (incl. deep-link from the Mini App: t.me/turkarta_support_bot?start=miniapp)
 supportBot.command("start", (ctx) => ctx.reply(GREETING));
@@ -115,7 +112,7 @@ async function deliverToUser(
       await ctx.api
         .sendMessage(
           config.SUPPORT_CHAT_ID,
-          "⚠️ Не доставлено пользователю (возможно, не открыл бота). / Couldn't deliver — user may not have started the bot.",
+          "⚠️ Не доставлено пользователю (возможно, не открыл бота).",
           { message_thread_id: ticket.thread_id },
         )
         .catch(() => {});
@@ -231,7 +228,7 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
   const id = ctx.match![1]!;
   const user = ctx.from;
   if (rosterGuardFailed(ctx)) {
-    return ctx.answerCallbackQuery({ text: "You're not on the ops roster.", show_alert: true });
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
   }
 
   const member = memberFor(user.id);
@@ -241,7 +238,7 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
   if (!won) {
     const existing = await db.getRow<Ticket>("support_requests", id);
     await ctx.answerCallbackQuery({
-      text: `Already taken by ${existing?.claimed_by ?? "someone"}.`,
+      text: `Уже взято: ${existing?.claimed_by ?? "кто-то"}.`,
       show_alert: true,
     });
     return;
@@ -266,12 +263,12 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
   }
 
   await safeEditCard(ctx, won);
-  await ctx.answerCallbackQuery({ text: "Ticket is yours 👍" });
+  await ctx.answerCallbackQuery({ text: "Тикет ваш 👍" });
 
   await notifyUser(
     ctx,
     won,
-    "✅ Оператор подключился. Пишите здесь — ответим в этом чате.\n✅ An operator has joined. Just write here.",
+    "✅ Оператор подключился. Пишите здесь — ответим в этом чате.",
   );
 });
 
@@ -279,16 +276,16 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
 
 supportBot.callbackQuery(/^cat:([^:]+):(tech_issue|bug_report|feature_request)$/, async (ctx) => {
   if (rosterGuardFailed(ctx)) {
-    return ctx.answerCallbackQuery({ text: "You're not on the ops roster.", show_alert: true });
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
   }
   const id = ctx.match![1]!;
   const category = ctx.match![2] as TicketCategory;
   const updated = await db.setCategory(id, category);
   if (!updated) {
-    return ctx.answerCallbackQuery({ text: "Ticket is closed.", show_alert: true });
+    return ctx.answerCallbackQuery({ text: "Тикет закрыт.", show_alert: true });
   }
   await safeEditCard(ctx, updated);
-  await ctx.answerCallbackQuery({ text: `Tagged: ${category.replace("_", " ")}` });
+  await ctx.answerCallbackQuery({ text: "Категория сохранена" });
 });
 
 // ---- operator: park as awaiting -----------------------------------------
@@ -298,28 +295,59 @@ supportBot.callbackQuery(/^await:(.+)$/, async (ctx) => {
   const updated = await db.awaitTicket(id, ctx.from.id);
   if (!updated) {
     return ctx.answerCallbackQuery({
-      text: "Only the assigned agent can park this.",
+      text: "Откладывать может только назначенный оператор.",
       show_alert: true,
     });
   }
   await safeEditCard(ctx, updated);
-  await ctx.answerCallbackQuery({ text: "Parked — awaiting resolution ⏳" });
+  await ctx.answerCallbackQuery({ text: "Отложено ⏳" });
 });
 
-// ---- operator: resolve ---------------------------------------------------
+// ---- operator: resolve (two-step confirm so a stray tap can't close) ------
 
+// First tap on "Закрыть": don't close — swap in a confirm/cancel row. Only the
+// assigned operator may, so a bystander's tap doesn't disturb the keyboard.
 supportBot.callbackQuery(/^resolve:(.+)$/, async (ctx) => {
+  const id = ctx.match![1]!;
+  const ticket = await db.getTicket(id);
+  if (!ticket || ticket.claimed_by_tg !== ctx.from.id) {
+    return ctx.answerCallbackQuery({
+      text: "Закрывать может только назначенный оператор.",
+      show_alert: true,
+    });
+  }
+  if (ticket.status === "resolved") {
+    return ctx.answerCallbackQuery({ text: "Тикет уже закрыт." });
+  }
+  await ctx
+    .editMessageReplyMarkup({ reply_markup: cards.supportConfirmResolveKb(id) })
+    .catch(() => {});
+  await ctx.answerCallbackQuery({ text: "Точно закрыть? Подтвердите ниже." });
+});
+
+// Cancel: restore the normal management keyboard.
+supportBot.callbackQuery(/^resolve_cancel:(.+)$/, async (ctx) => {
+  const id = ctx.match![1]!;
+  const ticket = await db.getTicket(id);
+  if (ticket) {
+    await ctx.editMessageReplyMarkup({ reply_markup: cards.supportManageKb(ticket) }).catch(() => {});
+  }
+  await ctx.answerCallbackQuery({ text: "Отменено" });
+});
+
+// Confirmed: actually close the ticket.
+supportBot.callbackQuery(/^resolve_do:(.+)$/, async (ctx) => {
   const id = ctx.match![1]!;
   const closed = await db.resolveTicket(id, ctx.from.id);
   if (!closed) {
     return ctx.answerCallbackQuery({
-      text: "Only the assigned agent can resolve this.",
+      text: "Закрывать может только назначенный оператор.",
       show_alert: true,
     });
   }
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
-  await ctx.answerCallbackQuery({ text: "Resolved ✅" });
-  await notifyUser(ctx, closed, "Обращение закрыто. Спасибо! / Ticket closed. Thank you!");
+  await ctx.answerCallbackQuery({ text: "Закрыто ✅" });
+  await notifyUser(ctx, closed, "Обращение закрыто. Спасибо!");
 
   // Tidy the support group: close the relay topic so it drops out of the active list.
   if (config.SUPPORT_FORUM && closed.thread_id != null) {
@@ -361,7 +389,7 @@ supportBot.on("message", async (ctx, next) => {
 
   // Intake done, not yet taken by an operator.
   if (ticket.status === "new") {
-    await ctx.reply("Ваше обращение в очереди. / Your request is queued.");
+    await ctx.reply("Ваше обращение в очереди.");
     return;
   }
 
