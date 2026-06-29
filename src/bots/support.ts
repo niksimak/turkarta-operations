@@ -260,6 +260,21 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
   if (threadId != null) {
     await db.setThread(won.id, threadId);
     won.thread_id = threadId;
+    // Seed the fresh topic with the request so the operator has context AND an
+    // unmistakable place to reply. Without this, a user who wrote before the
+    // claim leaves the new topic empty, and operators reply in the wrong place
+    // (so the message never reaches the user).
+    if (won.first_message) {
+      const who = won.user_username ? `@${won.user_username}` : (won.user_name ?? "Пользователь");
+      await ctx.api
+        .sendMessage(
+          config.SUPPORT_CHAT_ID,
+          `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(won.first_message)}\n\n` +
+            "<i>Отвечайте в этой теме — сообщение уйдёт пользователю.</i>",
+          { message_thread_id: threadId, parse_mode: "HTML" },
+        )
+        .catch(() => {});
+    }
   }
 
   await safeEditCard(ctx, won);
@@ -415,11 +430,18 @@ supportBot.on("message", async (ctx, next) => {
 
 supportBot.on("message", async (ctx, next) => {
   const msg = ctx.message;
-  if (ctx.chat.id !== config.SUPPORT_CHAT_ID || msg.message_thread_id == null) return next();
+  if (ctx.chat.id !== config.SUPPORT_CHAT_ID) return next();
   if (ctx.from?.is_bot) return;
   if (!isRelayable(ctx)) return;
-  const ticket = await db.ticketByThread(msg.message_thread_id);
-  if (!ticket) return;
+  // Locate the ticket two ways, so an operator reply lands either way:
+  //  1) typed inside the ticket's relay topic, or
+  //  2) sent as a reply to the ticket card (e.g. in the General area).
+  let ticket =
+    msg.message_thread_id != null ? await db.ticketByThread(msg.message_thread_id) : null;
+  if (!ticket && msg.reply_to_message) {
+    ticket = await db.ticketByCardMessage(msg.reply_to_message.message_id);
+  }
+  if (!ticket) return next();
 
   // Web channel: store the reply for the app to poll (media isn't relayable to web).
   if (ticket.channel === "web") {

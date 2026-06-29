@@ -159,6 +159,19 @@ export async function ticketByThread(threadId: number): Promise<Ticket | null> {
   return rows[0] ?? null;
 }
 
+/**
+ * Find an open ticket by the Telegram message id of its ops card — used when an
+ * operator replies directly to the card instead of typing inside the relay
+ * topic, so the reply still reaches the user.
+ */
+export async function ticketByCardMessage(messageId: number): Promise<Ticket | null> {
+  const rows = await sql<Ticket[]>`
+    select * from support_requests
+     where tg_message_id = ${messageId} and ${OPEN}
+     order by created_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
 export async function setThread(id: string, threadId: number): Promise<void> {
   await sql`update support_requests set thread_id = ${threadId} where id = ${id}`;
 }
