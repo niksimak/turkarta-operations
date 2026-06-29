@@ -1,6 +1,29 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-06-29_
+_Last updated: 2026-06-30_
+
+## Status: operator-reply relay fixed (web tickets) — 2026-06-30
+
+Commit `8a23a97`, deployed to the live service.
+
+Operator **text replies** to web tickets were silently dropped: when the web user
+wrote *before* the operator claimed, the relay forum topic was created empty, so
+operators replied in the wrong place. Status changes still worked (those are button
+callbacks). Root cause confirmed via the ops DB — a test web ticket had `user` +
+`system` (claim/resolve) messages but **no `agent` row**.
+
+Fixes:
+- **On claim, seed the relay topic** with the request + "Отвечайте в этой теме" hint
+  (`claim` handler) — the topic is never empty and the reply target is unmistakable.
+- The operator-reply handler now also matches a **reply to the ticket card** via the
+  new `db.ticketByCardMessage(messageId)` (matches `tg_message_id`), so a reply in the
+  General area still reaches the user.
+
+The turkarta app side shipped to prod the same day (auth auto-recovery, in-app support
+routing, mobile/zoom, contact-email) — see turkarta `docs/DEPLOY-STATE.md` (2026-06-30).
+`OPS_WEBHOOK_SECRET` is now set on both the prod and dev turkarta APIs.
+
+---
 
 ## Status: support-bot UX hardened + ROSTER live — 2026-06-29
 
