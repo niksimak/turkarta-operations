@@ -1,6 +1,44 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-06-28_
+_Last updated: 2026-06-29_
+
+## Status: support-bot UX hardened + ROSTER live — 2026-06-29
+
+Three fixes shipped + deployed to the live Render service (commits on `main`,
+deployed via `render deploys create … --confirm --wait`):
+
+- **`edf14e9` — two-tap confirm to close + Russian-only copy.** A single tap on the
+  operator «Закрыть» button closed tickets instantly (an accidental tap right after
+  «Взять»), so users saw «Обращение закрыто» before any operator replied. Resolve is
+  now two-step: first tap swaps in a Да/Отмена row, second tap closes. Also stripped
+  all bilingual RU+EN strings → **Russian only** across both bots (greeting, email
+  prompt, queue/join/close notices, cards, status/category labels, buttons, toasts).
+- **`d484db1` — any roster operator can close/park (not just the claimer).** Park/
+  resolve were locked to the operator who tapped «Взять»; now gated on roster
+  membership (`rosterGuardFailed`) instead. `db.awaitTicket`/`resolveTicket` dropped
+  their `claimed_by_tg` condition. Claiming stays roster-gated.
+
+### 🧑‍🤝‍🧑 ROSTER now set (env on Render, was `[]`)
+```json
+[{"name":"Никита","username":"nikitasim","tg_id":387115382},
+ {"name":"Артём","username":"ashotovich_34","tg_id":425253253}]
+```
+With `tg_id`s present, **claim-gating is now ON** (only these two can tap «Взять»),
+park/resolve is limited to them, and new ticket/lead cards ping them via
+`tg://user?id=…` (real notifications). Set via Render REST API (`PUT …/env-vars/ROSTER`)
++ redeploy. To add/change operators: each sends `/id` to **@turkarta_support_bot** →
+update the ROSTER env → redeploy.
+
+> ⚠️ Don't set a partial roster (some members without `tg_id`): the moment ANY member
+> has a `tg_id`, claim-gating switches on and members WITHOUT one get locked out of
+> claiming. Set all operators' `tg_id`s together.
+
+### Related (other repo)
+The turkarta app's prod API now has `OPS_WEBHOOK_SECRET` = this service's
+`LEADS_WEBHOOK_SECRET`, so the in-app web support chat is live on prod
+(app.turkarta.me). See turkarta `docs/DEPLOY-STATE.md` (2026-06-29 top entry).
+
+---
 
 ## Status: DEPLOYED + LIVE on Render (free tier) — 2026-06-28
 
@@ -57,8 +95,8 @@ name from the scaffold). Renamed in code + Render env (same value). The DB is **
   ~~Add 3 thin proxy routes in `apps/api`~~ ✅ done on the branch. Original notes:
   routes behind web-auth forward to ops with `X-Webhook-Secret` +
   `user.id`, and a chat UI in `apps/webapp` that polls every ~3-5s. Sketch in `docs/SUPPORT.md`.
-- Fill `ROSTER` (env on Render) with teammates' tg_ids (via `/id`) to enable @-pings
-  + claim gating. Currently empty = anyone can claim, no mention ping.
+- ~~Fill `ROSTER` (env on Render) with teammates' tg_ids~~ ✅ done 2026-06-29
+  (Никита + Артём, see top entry) — @-pings + claim gating now active.
 
 ---
 ## (historical) Status: scaffold complete + relay hardened, not yet deployed
