@@ -291,13 +291,13 @@ supportBot.callbackQuery(/^cat:([^:]+):(tech_issue|bug_report|feature_request)$/
 // ---- operator: park as awaiting -----------------------------------------
 
 supportBot.callbackQuery(/^await:(.+)$/, async (ctx) => {
+  if (rosterGuardFailed(ctx)) {
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
+  }
   const id = ctx.match![1]!;
-  const updated = await db.awaitTicket(id, ctx.from.id);
+  const updated = await db.awaitTicket(id);
   if (!updated) {
-    return ctx.answerCallbackQuery({
-      text: "Откладывать может только назначенный оператор.",
-      show_alert: true,
-    });
+    return ctx.answerCallbackQuery({ text: "Тикет закрыт.", show_alert: true });
   }
   await safeEditCard(ctx, updated);
   await ctx.answerCallbackQuery({ text: "Отложено ⏳" });
@@ -305,18 +305,15 @@ supportBot.callbackQuery(/^await:(.+)$/, async (ctx) => {
 
 // ---- operator: resolve (two-step confirm so a stray tap can't close) ------
 
-// First tap on "Закрыть": don't close — swap in a confirm/cancel row. Only the
-// assigned operator may, so a bystander's tap doesn't disturb the keyboard.
+// First tap on "Закрыть": don't close — swap in a confirm/cancel row. Any
+// roster operator may; a non-operator's tap doesn't disturb the keyboard.
 supportBot.callbackQuery(/^resolve:(.+)$/, async (ctx) => {
+  if (rosterGuardFailed(ctx)) {
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
+  }
   const id = ctx.match![1]!;
   const ticket = await db.getTicket(id);
-  if (!ticket || ticket.claimed_by_tg !== ctx.from.id) {
-    return ctx.answerCallbackQuery({
-      text: "Закрывать может только назначенный оператор.",
-      show_alert: true,
-    });
-  }
-  if (ticket.status === "resolved") {
+  if (!ticket || ticket.status === "resolved") {
     return ctx.answerCallbackQuery({ text: "Тикет уже закрыт." });
   }
   await ctx
@@ -337,13 +334,13 @@ supportBot.callbackQuery(/^resolve_cancel:(.+)$/, async (ctx) => {
 
 // Confirmed: actually close the ticket.
 supportBot.callbackQuery(/^resolve_do:(.+)$/, async (ctx) => {
+  if (rosterGuardFailed(ctx)) {
+    return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
+  }
   const id = ctx.match![1]!;
-  const closed = await db.resolveTicket(id, ctx.from.id);
+  const closed = await db.resolveTicket(id);
   if (!closed) {
-    return ctx.answerCallbackQuery({
-      text: "Закрывать может только назначенный оператор.",
-      show_alert: true,
-    });
+    return ctx.answerCallbackQuery({ text: "Тикет уже закрыт." });
   }
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
   await ctx.answerCallbackQuery({ text: "Закрыто ✅" });

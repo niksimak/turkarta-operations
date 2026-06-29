@@ -175,19 +175,23 @@ export async function setCategory(
   return rows[0] ?? null;
 }
 
-/** Park a taken ticket as 'awaiting' (still open). Only the assigned agent may. */
-export async function awaitTicket(id: string, byTg: number): Promise<Ticket | null> {
+/**
+ * Park a taken ticket as 'awaiting' (still open). Any operator may — the caller
+ * (bot handler) gates on roster membership; we only guard that it's still open.
+ */
+export async function awaitTicket(id: string): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     update support_requests set status = 'awaiting'
-     where id = ${id} and claimed_by_tg = ${byTg} and status in ('allocated','awaiting')
+     where id = ${id} and status in ('allocated','awaiting')
     returning *`;
   return rows[0] ?? null;
 }
 
-export async function resolveTicket(id: string, byTg: number): Promise<Ticket | null> {
+/** Resolve (close) a ticket. Roster gating is enforced by the caller. */
+export async function resolveTicket(id: string): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     update support_requests set status = 'resolved', resolved_at = now()
-     where id = ${id} and claimed_by_tg = ${byTg} and status in ('allocated','awaiting')
+     where id = ${id} and status in ('allocated','awaiting')
     returning *`;
   return rows[0] ?? null;
 }
