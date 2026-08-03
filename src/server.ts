@@ -401,8 +401,13 @@ app.post("/bitrix/app/handler", async (c) => {
       const chatId = m.chat?.id ?? "";
       const ticketId = openlines.ticketIdFromChatId(chatId);
       const text = (m.message?.text ?? "").trim();
-      // Bitrix's own id for the operator's line — our idempotency key.
-      const bitrixId = m.message?.id ? `ol-${m.message.id}` : null;
+      // Idempotency key: the operator message's id lives in im.message_id —
+      // Bitrix's internal-ids object — NOT in message.id, which only exists on
+      // messages WE send outbound. Reading message.id made every operator
+      // reply skip as id-less ("1 seen, 0 delivered", 2026-08-03); the docs'
+      // event example carries im: {chat_id, message_id} alongside chat/message.
+      const rawId = m.im?.message_id ?? m.message?.id;
+      const bitrixId = rawId ? `ol-${rawId}` : null;
       // Say WHICH guard rejected it. "1 seen, 0 delivered" with no reason meant
       // re-deploying blind; the inbound chat id in particular is not guaranteed
       // to be the `tk-…` string we send outbound.
