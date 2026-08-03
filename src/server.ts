@@ -238,16 +238,35 @@ async function storeBitrixInstall(form: Record<string, unknown>): Promise<boolea
   const accessToken = formValue(form, "AUTH_ID", "auth[access_token]");
   const refreshToken = formValue(form, "REFRESH_ID", "auth[refresh_token]");
   const memberId = formValue(form, "member_id", "auth[member_id]");
-  const domain = formValue(form, "DOMAIN", "auth[domain]");
   if (!accessToken || !refreshToken || !memberId) return false;
+
+  // The PORTAL host — every REST call targets https://<domain>/rest/…
+  // Bitrix supplies it as DOMAIN (query string on the install callback),
+  // auth[domain] (events), or inside auth[client_endpoint]
+  // ("https://<portal>/rest/"). There is deliberately NO fallback to our own
+  // host: an earlier `|| PUBLIC_BASE_URL` silently stored
+  // turkarta-operations.onrender.com and every REST call would have been sent
+  // to ourselves. A missing domain must fail loudly, not guess.
+  let domain = formValue(form, "DOMAIN", "auth[domain]");
+  if (!domain) {
+    const endpoint = formValue(form, "auth[client_endpoint]", "client_endpoint");
+    if (endpoint) domain = new URL(endpoint).host;
+  }
+  if (!domain) {
+    console.error("[bitrix-app] install payload carried NO portal domain — refusing");
+    return false;
+  }
 
   await bitrixApp.saveInstall({
     memberId,
-    domain: domain || new URL(config.PUBLIC_BASE_URL).host,
+    domain,
     accessToken,
     refreshToken,
     expiresInSeconds: Number(formValue(form, "AUTH_EXPIRES", "auth[expires_in]")) || 3600,
-    applicationToken: formValue(form, "APP_SID", "auth[application_token]") || null,
+    // ONLY auth[application_token]. APP_SID is a placement session id, NOT the
+    // event-verification token — treating them as interchangeable stored a
+    // useless value and left inbound events unverifiable.
+    applicationToken: formValue(form, "auth[application_token]") || null,
   });
   return true;
 }
@@ -263,10 +282,20 @@ const INSTALL_FINISH_HTML = `<!doctype html>
 <script>if (window.BX24) { BX24.init(function(){ BX24.installFinish(); }); }</script>
 </body></html>`;
 
+/**
+ * Bitrix splits the install callback across BOTH transports: DOMAIN / PROTOCOL /
+ * LANG / APP_SID ride the QUERY STRING while AUTH_ID / REFRESH_ID / member_id /
+ * AUTH_EXPIRES are POSTed in the body. Reading only the body loses the portal
+ * domain — which is exactly how the first install stored a broken host.
+ */
+async function bitrixPayload(c: Context): Promise<Record<string, unknown>> {
+  const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+  return { ...c.req.query(), ...body };
+}
+
 app.post("/bitrix/app/install", async (c) => {
-  const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
-  const stored = await storeBitrixInstall(form);
-  if (!stored) console.warn("[bitrix-app] install POST carried no tokens");
+  const stored = await storeBitrixInstall(await bitrixPayload(c));
+  if (!stored) console.warn("[bitrix-app] install POST carried no usable tokens");
   return c.html(INSTALL_FINISH_HTML);
 });
 
@@ -302,11 +331,13 @@ ${rows.map(([k, v]) => `<tr><td style="color:#666">${k}</td><td><b>${v}</b></td>
 });
 
 app.post("/bitrix/app/handler", async (c) => {
-  const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+  const form = await bitrixPayload(c);
   const event = formValue(form, "event").toUpperCase();
 
   // ONAPPINSTALL is the authoritative install signal — the install PAGE can be
-  // opened by a human, but this event only comes from Bitrix.
+  // opened by a human, but this event only comes from Bitrix. It is also the
+  // only payload carrying auth[application_token], so a reinstall is how a
+  // missing verification token gets healed.
   if (event === "ONAPPINSTALL") {
     await storeBitrixInstall(form);
     console.log("[bitrix-app] ONAPPINSTALL stored");
