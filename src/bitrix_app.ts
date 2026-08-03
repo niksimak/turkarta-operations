@@ -80,6 +80,7 @@ async function refreshTokens(current: db.BitrixTokens): Promise<db.BitrixTokens>
     expires_in?: number;
     member_id?: string;
     domain?: string;
+    client_endpoint?: string;
     error?: string;
     error_description?: string;
   } | null;
@@ -92,9 +93,17 @@ async function refreshTokens(current: db.BitrixTokens): Promise<db.BitrixTokens>
     );
   }
 
+  // 🔴 The refresh response's `domain` is the OAUTH SERVER ("oauth.bitrix.info"),
+  // NOT the portal — trusting it overwrites a working host and every REST call
+  // then goes to Bitrix's auth server (measured 2026-08-03). The portal lives in
+  // `client_endpoint` ("https://<portal>/rest/"); keep the stored host otherwise.
+  const portal = json.client_endpoint
+    ? new URL(json.client_endpoint).host
+    : current.domain;
+
   await db.saveBitrixTokens({
     member_id: json.member_id ?? current.member_id,
-    domain: json.domain ?? current.domain,
+    domain: portal,
     access_token: json.access_token,
     refresh_token: json.refresh_token,
     expires_at: new Date(Date.now() + (json.expires_in ?? 3600) * 1000),
