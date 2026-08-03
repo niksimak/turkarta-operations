@@ -174,3 +174,5 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
   fetch (secret exposed; rotate-able). See `docs/LOVABLE_SETUP.md`.
 - Support bot privacy mode MUST be disabled or agent replies won't relay.
 - One open support ticket per user enforced by a partial unique index — fine for v1.
+
+**TEMP 2026-08-03:** `TURKARTA_API_URL` points at the DEV api (turkarta-api-dev.onrender.com) so support-reply pushes are testable before the turkarta prod promote (#385 is in the 17-commit main→prod delta). Flip condition: after promote, set back to `https://api.turkarta.me` + deploy. Prod-app callbacks meanwhile no-op on dev (unknown user ids) — same as before the feature.
