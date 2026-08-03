@@ -13,6 +13,7 @@ import {
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
+import * as turkartaApi from "./turkarta_api.js";
 
 export const app = new Hono();
 
@@ -422,7 +423,19 @@ app.post("/bitrix/app/handler", async (c) => {
       }
       const stored = await db.addAgentMessageFromBitrix(ticket.id, text, bitrixId);
       if (!stored) console.log(`[bitrix-ol] duplicate ${bitrixId} — already delivered`);
-      if (stored) delivered++;
+      if (stored) {
+        delivered++;
+        // Bell + Web Push in the app. After the dedup insert, so a Bitrix
+        // event retry can never double-push. Best-effort by contract.
+        if (ticket.web_user_id) {
+          await turkartaApi.notifySupportReply({
+            web_user_id: ticket.web_user_id,
+            ticket_id: ticket.id,
+            message_id: stored.id,
+            preview: text,
+          });
+        }
+      }
     }
     console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
     if (list.length === 0) {

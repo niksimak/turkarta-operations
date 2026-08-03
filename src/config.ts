@@ -46,6 +46,13 @@ const Env = z.object({
   // «Открытая линия 3» on b24-zmr5uh (registered 2026-08-03).
   BITRIX_LINE_ID: z.coerce.number().int().default(0),
 
+  // --- turkarta API callback (support-reply push notifications) ---
+  // Base URL of the main app's API; unset = no callbacks (feature dark).
+  TURKARTA_API_URL: z.string().url().optional(),
+  // Defaults to the same shared secret the API already sends US, so one value
+  // guards the boundary in both directions.
+  TURKARTA_API_SECRET: z.string().optional(),
+
   ROSTER: z
     .string()
     .default("[]")
