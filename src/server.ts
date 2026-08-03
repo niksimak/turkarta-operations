@@ -362,6 +362,9 @@ app.post("/bitrix/app/handler", async (c) => {
   if (event === "ONAPPINSTALL") {
     await storeBitrixInstall(form);
     console.log("[bitrix-app] ONAPPINSTALL stored");
+    // Re-arm the event bindings a reinstall would otherwise drop, leaving
+    // outbound working and operator replies silently going nowhere.
+    await openlines.ensureBootstrapped(`${config.PUBLIC_BASE_URL}/bitrix/app/handler`);
     return c.json({ ok: true });
   }
 
