@@ -29,6 +29,19 @@ const Env = z.object({
   // back to LEADS_WEBHOOK_SECRET so the endpoints work before a dedicated one is set.
   APP_WEBHOOK_SECRET: z.string().optional(),
 
+  // --- Bitrix24 local application (docs/TZ-BITRIX-SUPPORT.md §4.1) ---
+  // OAuth credentials from Разработчикам → Локальное приложение. Optional:
+  // every Bitrix path is inert unless BITRIX_CLIENT_ID is set, so a deploy
+  // without them behaves exactly as before.
+  // NOTE: unlike a webhook URL these can be rotated in the Bitrix UI — do so if
+  // the secret is ever pasted into a chat, screenshot or log.
+  BITRIX_CLIENT_ID: z.string().optional(),
+  BITRIX_CLIENT_SECRET: z.string().optional(),
+  // Connector id registered via imconnector.register. Lowercase + underscores
+  // ONLY (Bitrix rejects dots), and immutable once registered — changing it
+  // orphans every existing chat, so it is config, not a literal.
+  BITRIX_CONNECTOR_ID: z.string().default("turkarta_support"),
+
   ROSTER: z
     .string()
     .default("[]")

@@ -11,6 +11,7 @@ import {
   pushWebUserMessage,
 } from "./bots/support.js";
 import * as db from "./db.js";
+import * as bitrixApp from "./bitrix_app.js";
 
 export const app = new Hono();
 
@@ -209,6 +210,113 @@ app.get("/api/support/web/messages", async (c) => {
     // Convenience: the cursor to pass as `since` on the next poll.
     cursor: messages.length ? messages[messages.length - 1]!.seq : (since ?? 0),
   });
+});
+
+// ---- Bitrix24 local application: install + handler ------------------------
+//
+// Configured in Разработчикам → Локальное приложение:
+//   Путь для первоначальной установки → /bitrix/app/install
+//   Путь вашего обработчика           → /bitrix/app/handler
+//
+// Bitrix POSTs x-www-form-urlencoded with UPPERCASE keys on install
+// (AUTH_ID / REFRESH_ID / AUTH_EXPIRES / member_id / DOMAIN) and lowercase
+// bracketed keys on events (auth[access_token] …). Both shapes are read here.
+
+function formValue(form: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = form[k];
+    if (v != null && String(v) !== "") return String(v);
+  }
+  return "";
+}
+
+/**
+ * Persist whatever credentials a Bitrix POST carried. Returns false when the
+ * payload had no token pair (e.g. a placement GET), so callers can skip.
+ */
+async function storeBitrixInstall(form: Record<string, unknown>): Promise<boolean> {
+  const accessToken = formValue(form, "AUTH_ID", "auth[access_token]");
+  const refreshToken = formValue(form, "REFRESH_ID", "auth[refresh_token]");
+  const memberId = formValue(form, "member_id", "auth[member_id]");
+  const domain = formValue(form, "DOMAIN", "auth[domain]");
+  if (!accessToken || !refreshToken || !memberId) return false;
+
+  await bitrixApp.saveInstall({
+    memberId,
+    domain: domain || new URL(config.PUBLIC_BASE_URL).host,
+    accessToken,
+    refreshToken,
+    expiresInSeconds: Number(formValue(form, "AUTH_EXPIRES", "auth[expires_in]")) || 3600,
+    applicationToken: formValue(form, "APP_SID", "auth[application_token]") || null,
+  });
+  return true;
+}
+
+// Bitrix renders this inside an iframe and waits for BX24.installFinish() —
+// without that call the install spinner never completes, even though we already
+// hold the tokens.
+const INSTALL_FINISH_HTML = `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>ТурКарта Поддержка</title>
+<script src="//api.bitrix24.com/api/v1/"></script></head>
+<body style="font:14px/1.5 -apple-system,sans-serif;padding:24px">
+<p>Приложение установлено ✅</p>
+<script>if (window.BX24) { BX24.init(function(){ BX24.installFinish(); }); }</script>
+</body></html>`;
+
+app.post("/bitrix/app/install", async (c) => {
+  const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+  const stored = await storeBitrixInstall(form);
+  if (!stored) console.warn("[bitrix-app] install POST carried no tokens");
+  return c.html(INSTALL_FINISH_HTML);
+});
+
+// Bitrix sometimes opens the install path with GET (re-install from the UI).
+app.get("/bitrix/app/install", (c) => c.html(INSTALL_FINISH_HTML));
+
+/**
+ * The app handler. Two very different callers share this URL by Bitrix's design:
+ *  - an OPERATOR clicking the app's menu item (GET, rendered in an iframe) —
+ *    serve a human status page, since a JSON blob there reads as "broken";
+ *  - BITRIX posting events (POST), starting with ONAPPINSTALL.
+ */
+app.get("/bitrix/app/handler", async (c) => {
+  const tokens = await db.getBitrixTokens().catch(() => null);
+  const expiresAt = tokens ? new Date(tokens.expires_at) : null;
+  const rows = [
+    ["Приложение", tokens ? "установлено ✅" : "НЕ установлено ❌"],
+    ["Портал", tokens?.domain ?? "—"],
+    [
+      "Токен действителен до",
+      expiresAt ? `${expiresAt.toISOString()} (${Math.round((expiresAt.getTime() - Date.now()) / 60000)} мин)` : "—",
+    ],
+    ["Коннектор", tokens?.connector_registered_at ? `зарегистрирован ${tokens.connector_registered_at}` : "не зарегистрирован ❌"],
+  ];
+  return c.html(`<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>ТурКарта Поддержка</title></head>
+<body style="font:14px/1.6 -apple-system,sans-serif;padding:24px">
+<h2 style="margin:0 0 16px">ТурКарта · интеграция поддержки</h2>
+<table cellpadding="6" style="border-collapse:collapse">
+${rows.map(([k, v]) => `<tr><td style="color:#666">${k}</td><td><b>${v}</b></td></tr>`).join("")}
+</table>
+</body></html>`);
+});
+
+app.post("/bitrix/app/handler", async (c) => {
+  const form = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+  const event = formValue(form, "event").toUpperCase();
+
+  // ONAPPINSTALL is the authoritative install signal — the install PAGE can be
+  // opened by a human, but this event only comes from Bitrix.
+  if (event === "ONAPPINSTALL") {
+    await storeBitrixInstall(form);
+    console.log("[bitrix-app] ONAPPINSTALL stored");
+    return c.json({ ok: true });
+  }
+
+  // Operator replies (OnImConnectorMessageAdd) land here once the connector is
+  // registered — wired in the next step, ACKed for now so Bitrix stops retrying.
+  console.log(`[bitrix-app] event ${event || "(none)"} received`);
+  return c.json({ ok: true, event: event || null });
 });
 
 /** Register Telegram webhooks on boot. */
