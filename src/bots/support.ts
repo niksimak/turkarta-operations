@@ -5,6 +5,7 @@ import { escapeHtml } from "../cards.js";
 import * as db from "../db.js";
 import type { Ticket, TicketCategory } from "../db.js";
 import * as openlines from "../bitrix_openlines.js";
+import * as turkartaApi from "../turkarta_api.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 
@@ -451,7 +452,16 @@ supportBot.on("message", async (ctx, next) => {
   // Web channel: store the reply for the app to poll (media isn't relayable to web).
   if (ticket.channel === "web") {
     const body = msg.text ?? "[оператор отправил вложение — доступно только в Telegram]";
-    await db.addMessage(ticket.id, "agent", body);
+    const stored = await db.addMessage(ticket.id, "agent", body);
+    // Bell + Web Push in the app; best-effort — never blocks the reply.
+    if (ticket.web_user_id) {
+      await turkartaApi.notifySupportReply({
+        web_user_id: ticket.web_user_id,
+        ticket_id: ticket.id,
+        message_id: stored.id,
+        preview: body,
+      });
+    }
     return;
   }
 
