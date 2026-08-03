@@ -351,6 +351,27 @@ export async function getBitrixTokens(): Promise<BitrixTokens | null> {
   return rows[0] ?? null;
 }
 
+/**
+ * Record an operator reply from Bitrix exactly once.
+ *
+ * `bitrix_message_id` carries a partial UNIQUE index, so a retried event
+ * (TZ §4.4 — Bitrix retries, duplicates unacceptable) collides and inserts
+ * nothing. Returns null when the row already existed = "already delivered".
+ */
+export async function addAgentMessageFromBitrix(
+  ticketId: string,
+  body: string,
+  bitrixMessageId: string,
+): Promise<Message | null> {
+  const rows = await sql<Message[]>`
+    insert into support_messages (ticket_id, sender, body, bitrix_message_id)
+    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId})
+    on conflict (bitrix_message_id) where bitrix_message_id is not null
+      do nothing
+    returning *`;
+  return rows[0] ?? null;
+}
+
 export async function markBitrixConnectorRegistered(memberId: string): Promise<void> {
   await sql`
     update bitrix_app_tokens

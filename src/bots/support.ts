@@ -4,6 +4,7 @@ import * as cards from "../cards.js";
 import { escapeHtml } from "../cards.js";
 import * as db from "../db.js";
 import type { Ticket, TicketCategory } from "../db.js";
+import * as openlines from "../bitrix_openlines.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 
@@ -153,8 +154,11 @@ export async function createWebTicket(input: {
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   if (!ticket.tg_message_id) {
-    await db.addMessage(ticket.id, "user", input.request);
+    const first = await db.addMessage(ticket.id, "user", input.request);
     await postTicketCard(ticket);
+    // Mirror into Bitrix Открытые линии. Best-effort by contract — never
+    // throws, so a Bitrix outage cannot fail the user's support request.
+    await openlines.sendUserMessage(ticket, input.request, first.id);
   }
   return ticket;
 }
@@ -192,7 +196,8 @@ export async function createWelcomeTicket(input: {
 
 /** A web user sent a message: log it and relay into the ops thread if claimed. */
 export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
-  await db.addMessage(ticket.id, "user", body);
+  const message = await db.addMessage(ticket.id, "user", body);
+  await openlines.sendUserMessage(ticket, body, message.id);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
     await supportBot.api

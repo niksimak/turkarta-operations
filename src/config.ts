@@ -41,6 +41,10 @@ const Env = z.object({
   // ONLY (Bitrix rejects dots), and immutable once registered — changing it
   // orphans every existing chat, so it is config, not a literal.
   BITRIX_CONNECTOR_ID: z.string().default("turkarta_support"),
+  // Открытая линия the connector is activated on. 0 = relay disabled, so the
+  // Bitrix leg stays dark until a line is explicitly chosen. Line 5 =
+  // «Открытая линия 3» on b24-zmr5uh (registered 2026-08-03).
+  BITRIX_LINE_ID: z.coerce.number().int().default(0),
 
   ROSTER: z
     .string()
