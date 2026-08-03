@@ -309,13 +309,31 @@ const INSTALL_FINISH_HTML = `<!doctype html>
  * AUTH_EXPIRES are POSTed in the body. Reading only the body loses the portal
  * domain — which is exactly how the first install stored a broken host.
  */
-async function bitrixPayload(c: Context): Promise<Record<string, unknown>> {
-  const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
-  return { ...c.req.query(), ...body };
+interface BitrixPayload {
+  /** Keys exactly as sent ("auth[access_token]") — what formValue looks up. */
+  flat: Record<string, unknown>;
+  /** Bracket-expanded ({auth:{access_token}}) — needed to walk MESSAGES. */
+  nested: Record<string, unknown>;
+  /** The raw body, for diagnostics. */
+  raw: string;
+}
+
+/**
+ * Read the request ONCE and expose both views.
+ *
+ * The body is a stream and can only be consumed once, so reading it twice
+ * (parseBody for the flat keys, then text() for the nested walk) yields an
+ * empty second read. Everything is derived from a single `text()` here.
+ */
+async function bitrixPayload(c: Context): Promise<BitrixPayload> {
+  const raw = await c.req.text().catch(() => "");
+  const flat: Record<string, unknown> = { ...c.req.query() };
+  for (const [k, v] of new URLSearchParams(raw)) flat[k] = v;
+  return { flat, nested: parsePhpForm(raw), raw };
 }
 
 app.post("/bitrix/app/install", async (c) => {
-  const stored = await storeBitrixInstall(await bitrixPayload(c));
+  const stored = await storeBitrixInstall((await bitrixPayload(c)).flat);
   if (!stored) console.warn("[bitrix-app] install POST carried no usable tokens");
   return c.html(INSTALL_FINISH_HTML);
 });
@@ -352,7 +370,8 @@ ${rows.map(([k, v]) => `<tr><td style="color:#666">${k}</td><td><b>${v}</b></td>
 });
 
 app.post("/bitrix/app/handler", async (c) => {
-  const form = await bitrixPayload(c);
+  const payload = await bitrixPayload(c);
+  const form = payload.flat;
   const event = formValue(form, "event").toUpperCase();
 
   // ONAPPINSTALL is the authoritative install signal — the install PAGE can be
@@ -373,8 +392,8 @@ app.post("/bitrix/app/handler", async (c) => {
   // (data[MESSAGES][0][message][text]), so the RAW body is reparsed rather than
   // read through Hono's flat parseBody.
   if (event === "ONIMCONNECTORMESSAGEADD") {
-    const nested = parsePhpForm(await c.req.text().catch(() => ""));
-    const messages = (nested?.data as Record<string, unknown>)?.MESSAGES;
+    const data = payload.nested.data as Record<string, unknown> | undefined;
+    const messages = data?.MESSAGES;
     const list = Array.isArray(messages) ? messages : Object.values(messages ?? {});
     let delivered = 0;
     for (const raw of list) {
@@ -391,6 +410,15 @@ app.post("/bitrix/app/handler", async (c) => {
       if (stored) delivered++;
     }
     console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
+    if (list.length === 0) {
+      // The payload arrived but carried no messages we could read — dump the
+      // shape (tokens redacted) so the real key layout is visible instead of
+      // guessed. Bitrix's nesting is not documented per-field.
+      const redacted = payload.raw
+        .replace(/(auth%5B[^=]*token[^=]*%5D|auth\[[^\]]*token[^\]]*\])=[^&]*/gi, "$1=REDACTED")
+        .slice(0, 900);
+      console.log(`[bitrix-ol] EMPTY payload shape: ${redacted}`);
+    }
     return c.json({ ok: true, delivered });
   }
 

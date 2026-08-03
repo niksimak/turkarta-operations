@@ -76,7 +76,15 @@ export async function sendUserMessage(
   if (!bitrixApp.enabled() || !config.BITRIX_LINE_ID) return;
   const who = ticket.user_name || ticket.user_username || "Пользователь";
   try {
-    await bitrixApp.call("imconnector.send.messages", {
+    // send.messages reports per-message outcomes INSIDE the result envelope —
+    // a rejected line yields SUCCESS:false with no top-level `error`, so it
+    // never throws. Without inspecting it, a silently dropped message looks
+    // identical to a delivered one (2026-08-03: only the first message of a
+    // conversation was reaching the line, with nothing logged).
+    const res = await bitrixApp.call<{
+      SUCCESS?: boolean;
+      DATA?: { RESULT?: Array<Record<string, unknown>> };
+    }>("imconnector.send.messages", {
       CONNECTOR: config.BITRIX_CONNECTOR_ID,
       LINE: config.BITRIX_LINE_ID,
       MESSAGES: [
@@ -99,6 +107,12 @@ export async function sendUserMessage(
         },
       ],
     });
+    const per = res?.DATA?.RESULT?.[0];
+    const ok = res?.SUCCESS === true && per?.SUCCESS !== false;
+    console.log(
+      `[bitrix-ol] send ticket=${ticket.id} msg=${messageId} ok=${ok} ` +
+        `raw=${JSON.stringify(res).slice(0, 400)}`,
+    );
   } catch (err) {
     warn(`sendUserMessage(${ticket.id})`, err);
   }
