@@ -296,3 +296,64 @@ export async function messagesSince(
      order by seq asc
      limit 200`;
 }
+
+// ---- Bitrix24 local-application tokens (migration 0009) ------------------
+
+export interface BitrixTokens {
+  member_id: string;
+  domain: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+  application_token: string | null;
+  connector_registered_at: string | null;
+}
+
+/**
+ * Store (or replace) the portal's OAuth tokens.
+ *
+ * Upsert rather than insert: Bitrix re-sends ONAPPINSTALL on every reinstall,
+ * and a refresh rotates both tokens, so this is the single write path for both.
+ */
+export async function saveBitrixTokens(t: {
+  member_id: string;
+  domain: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: Date;
+  application_token?: string | null;
+}): Promise<void> {
+  await sql`
+    insert into bitrix_app_tokens
+      (member_id, domain, access_token, refresh_token, expires_at, application_token, updated_at)
+    values (${t.member_id}, ${t.domain}, ${t.access_token}, ${t.refresh_token},
+            ${t.expires_at}, ${t.application_token ?? null}, now())
+    on conflict (member_id) do update set
+      domain        = excluded.domain,
+      access_token  = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at    = excluded.expires_at,
+      -- A refresh carries no application_token; keep the installed one.
+      application_token = coalesce(excluded.application_token,
+                                   bitrix_app_tokens.application_token),
+      updated_at    = now()`;
+}
+
+/** The single installed portal's tokens, if the app has been installed. */
+export async function getBitrixTokens(): Promise<BitrixTokens | null> {
+  const rows = await sql<BitrixTokens[]>`
+    select member_id, domain, access_token, refresh_token,
+           expires_at::text  as expires_at,
+           application_token,
+           connector_registered_at::text as connector_registered_at
+      from bitrix_app_tokens
+     order by updated_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
+export async function markBitrixConnectorRegistered(memberId: string): Promise<void> {
+  await sql`
+    update bitrix_app_tokens
+       set connector_registered_at = now()
+     where member_id = ${memberId}`;
+}
