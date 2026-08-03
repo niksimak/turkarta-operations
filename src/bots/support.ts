@@ -97,7 +97,11 @@ export async function createAppTicket(input: {
     intake_step: null,
   });
   // Only post a card if this is genuinely new (no card yet) — dedupes re-submits.
-  if (!ticket.tg_message_id) await postTicketCard(ticket);
+  if (!ticket.tg_message_id) {
+    await postTicketCard(ticket);
+    // Mirror into Bitrix Открытые линии (channel-agnostic connector chat).
+    await openlines.sendUserMessage(ticket, input.request, `tg-first-${ticket.id}`);
+  }
   return ticket;
 }
 
@@ -400,10 +404,27 @@ supportBot.on("message", async (ctx, next) => {
   if (ticket.intake_step === "email") {
     const email = !text || text === "/skip" ? null : text;
     const finalized = await db.finishIntake(ticket.id, email);
-    if (finalized) await postTicketCard(finalized);
+    if (finalized) {
+      await postTicketCard(finalized);
+      await openlines.sendUserMessage(
+        finalized,
+        finalized.first_message ?? "(без текста)",
+        `tg-first-${finalized.id}`,
+      );
+    }
     await ctx.reply(QUEUED);
     return;
   }
+
+  // Mirror every post-intake user message into Bitrix — including on a NEW
+  // (unclaimed) ticket, whose messages previously reached no operator surface
+  // at all. Media arrives as a text placeholder (contentLabel); real file
+  // forwarding into imconnector is a later step.
+  await openlines.sendUserMessage(
+    ticket,
+    contentLabel(ctx),
+    `tg-${ctx.chat.id}-${ctx.message.message_id}`,
+  );
 
   // Intake done, not yet taken by an operator.
   if (ticket.status === "new") {
