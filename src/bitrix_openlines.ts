@@ -1,0 +1,74 @@
+/**
+ * Открытые линии relay: ops-hub tickets <-> the Bitrix custom connector.
+ *
+ * Registered connector `turkarta_support` on line 5 (docs/TZ-BITRIX-SUPPORT.md
+ * §4.1). Outbound uses `imconnector.send.messages`; operator replies come back
+ * as `OnImConnectorMessageAdd` and are handled in server.ts.
+ *
+ * The ops hub stays the source of truth for tickets and messages — Bitrix is
+ * the operator surface over it. So EVERY export here is best-effort and never
+ * throws: a Bitrix outage must not stop a user opening a ticket or sending a
+ * message, exactly as the Telegram relay behaves.
+ */
+import * as bitrixApp from "./bitrix_app.js";
+import * as db from "./db.js";
+import { config } from "./config.js";
+
+/** The connector chat id for a ticket. Deterministic BOTH ways: an inbound
+ *  event echoes this string back, so the ticket is parsed out of it instead of
+ *  being looked up in a mapping table. One ticket = one Open Lines session. */
+export function chatIdForTicket(ticketId: string): string {
+  return `tk-${ticketId}`;
+}
+
+/** Inverse of `chatIdForTicket`; null when the chat isn't one of ours. */
+export function ticketIdFromChatId(chatId: string): string | null {
+  return chatId.startsWith("tk-") ? chatId.slice(3) : null;
+}
+
+function warn(what: string, err: unknown): void {
+  console.warn(`[bitrix-ol] ${what} failed:`, err instanceof Error ? err.message : err);
+}
+
+/**
+ * Push one user message into the ticket's Open Lines chat.
+ *
+ * `messageId` is OUR message row id — echoed by Bitrix on the way back, which
+ * is how the inbound handler tells "a line we sent" from "an operator reply"
+ * and avoids echoing the user's own words at them.
+ */
+export async function sendUserMessage(
+  ticket: db.Ticket,
+  body: string,
+  messageId: string,
+): Promise<void> {
+  if (!bitrixApp.enabled() || !config.BITRIX_LINE_ID) return;
+  const who = ticket.user_name || ticket.user_username || "Пользователь";
+  try {
+    await bitrixApp.call("imconnector.send.messages", {
+      CONNECTOR: config.BITRIX_CONNECTOR_ID,
+      LINE: config.BITRIX_LINE_ID,
+      MESSAGES: [
+        {
+          user: {
+            id: ticket.web_user_id ?? String(ticket.user_tg ?? ticket.id),
+            name: who,
+            email: ticket.email ?? undefined,
+          },
+          chat: {
+            id: chatIdForTicket(ticket.id),
+            name: `ТурКарта · ${ticket.channel} · ${who}`,
+            url: "https://app.turkarta.me",
+          },
+          message: {
+            id: messageId,
+            date: Math.floor(Date.now() / 1000),
+            text: body,
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    warn(`sendUserMessage(${ticket.id})`, err);
+  }
+}

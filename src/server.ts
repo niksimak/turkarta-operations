@@ -12,6 +12,7 @@ import {
 } from "./bots/support.js";
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
+import * as openlines from "./bitrix_openlines.js";
 
 export const app = new Hono();
 
@@ -222,6 +223,26 @@ app.get("/api/support/web/messages", async (c) => {
 // (AUTH_ID / REFRESH_ID / AUTH_EXPIRES / member_id / DOMAIN) and lowercase
 // bracketed keys on events (auth[access_token] …). Both shapes are read here.
 
+/**
+ * Parse PHP-style bracketed form encoding into nested objects:
+ * `data[MESSAGES][0][message][text]=hi` -> {data:{MESSAGES:{0:{message:{text:"hi"}}}}}.
+ *
+ * Needed because Bitrix posts connector events this way and Hono's parseBody
+ * keeps the bracketed key flat, so the message array can't be walked otherwise.
+ */
+function parsePhpForm(raw: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of new URLSearchParams(raw)) {
+    const path = [key.replace(/\[.*$/, ""), ...[...key.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1]!)];
+    let node: Record<string, unknown> = out;
+    path.forEach((seg, i) => {
+      if (i === path.length - 1) node[seg] = value;
+      else node = (node[seg] ??= {}) as Record<string, unknown>;
+    });
+  }
+  return out;
+}
+
 function formValue(form: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
     const v = form[k];
@@ -344,8 +365,32 @@ app.post("/bitrix/app/handler", async (c) => {
     return c.json({ ok: true });
   }
 
-  // Operator replies (OnImConnectorMessageAdd) land here once the connector is
-  // registered — wired in the next step, ACKed for now so Bitrix stops retrying.
+  // Operator reply from Открытые линии → back into the ticket's message log,
+  // which the PWA is already polling. Bitrix sends PHP-style nested form keys
+  // (data[MESSAGES][0][message][text]), so the RAW body is reparsed rather than
+  // read through Hono's flat parseBody.
+  if (event === "ONIMCONNECTORMESSAGEADD") {
+    const nested = parsePhpForm(await c.req.text().catch(() => ""));
+    const messages = (nested?.data as Record<string, unknown>)?.MESSAGES;
+    const list = Array.isArray(messages) ? messages : Object.values(messages ?? {});
+    let delivered = 0;
+    for (const raw of list) {
+      const m = raw as Record<string, Record<string, string>>;
+      const chatId = m.chat?.id ?? "";
+      const ticketId = openlines.ticketIdFromChatId(chatId);
+      const text = (m.message?.text ?? "").trim();
+      // Bitrix's own id for the operator's line — our idempotency key.
+      const bitrixId = m.message?.id ? `ol-${m.message.id}` : null;
+      if (!ticketId || !text || !bitrixId) continue;
+      const ticket = await db.getTicket(ticketId);
+      if (!ticket) continue;
+      const stored = await db.addAgentMessageFromBitrix(ticket.id, text, bitrixId);
+      if (stored) delivered++;
+    }
+    console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
+    return c.json({ ok: true, delivered });
+  }
+
   console.log(`[bitrix-app] event ${event || "(none)"} received`);
   return c.json({ ok: true, event: event || null });
 });
