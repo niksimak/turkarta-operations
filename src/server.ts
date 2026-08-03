@@ -403,10 +403,20 @@ app.post("/bitrix/app/handler", async (c) => {
       const text = (m.message?.text ?? "").trim();
       // Bitrix's own id for the operator's line — our idempotency key.
       const bitrixId = m.message?.id ? `ol-${m.message.id}` : null;
-      if (!ticketId || !text || !bitrixId) continue;
-      const ticket = await db.getTicket(ticketId);
-      if (!ticket) continue;
+      // Say WHICH guard rejected it. "1 seen, 0 delivered" with no reason meant
+      // re-deploying blind; the inbound chat id in particular is not guaranteed
+      // to be the `tk-…` string we send outbound.
+      const ticket = ticketId ? await db.getTicket(ticketId) : null;
+      if (!ticketId || !text || !bitrixId || !ticket) {
+        console.log(
+          `[bitrix-ol] SKIP chat="${chatId}" ticketId=${ticketId} ticketFound=${Boolean(ticket)} ` +
+            `hasText=${Boolean(text)} msgId=${bitrixId} keys=${JSON.stringify(Object.keys(m))} ` +
+            `msg=${JSON.stringify(m).slice(0, 500)}`,
+        );
+        continue;
+      }
       const stored = await db.addAgentMessageFromBitrix(ticket.id, text, bitrixId);
+      if (!stored) console.log(`[bitrix-ol] duplicate ${bitrixId} — already delivered`);
       if (stored) delivered++;
     }
     console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
