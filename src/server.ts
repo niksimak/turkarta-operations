@@ -425,9 +425,20 @@ app.post("/bitrix/app/handler", async (c) => {
       if (!stored) console.log(`[bitrix-ol] duplicate ${bitrixId} — already delivered`);
       if (stored) {
         delivered++;
-        // Bell + Web Push in the app. After the dedup insert, so a Bitrix
-        // event retry can never double-push. Best-effort by contract.
-        if (ticket.web_user_id) {
+        // Delivery leg by channel — all behind the dedup insert, so a Bitrix
+        // event retry can never double-deliver. Best-effort by contract.
+        if (ticket.channel === "telegram" && ticket.user_tg != null) {
+          // TG ticket: the reply goes out as a bot DM (web polling never sees
+          // these users). A user who blocked the bot must not 500 the webhook.
+          await supportBot.api
+            .sendMessage(ticket.user_tg, text)
+            .catch((err) =>
+              console.warn(
+                `[bitrix-ol] DM to ${ticket.user_tg} failed:`,
+                err instanceof Error ? err.message : err,
+              ),
+            );
+        } else if (ticket.web_user_id) {
           await turkartaApi.notifySupportReply({
             web_user_id: ticket.web_user_id,
             ticket_id: ticket.id,
