@@ -69,6 +69,17 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 
+// Version-controlled support-only operators are merged with Render's ROSTER.
+const approvedSupportOperators: RosterMember[] = [
+  { name: "Turkarta", username: "turkartame", tg_id: 1298059682 },
+];
+const supportRoster = [
+  ...config.ROSTER,
+  ...approvedSupportOperators.filter(
+    (approved) => !config.ROSTER.some((member) => member.tg_id === approved.tg_id),
+  ),
+];
+
 /** A Telegram mention that actually pings the person. */
 export function mention(m: RosterMember): string {
   if (m.tg_id) return `<a href="tg://user?id=${m.tg_id}">${m.name}</a>`;
@@ -80,10 +91,22 @@ export const rosterIds = new Set(
   config.ROSTER.map((m) => m.tg_id).filter((id): id is number => id != null),
 );
 
+export const supportRosterIds = new Set(
+  supportRoster.map((m) => m.tg_id).filter((id): id is number => id != null),
+);
+
 export function memberFor(tgId: number): RosterMember | undefined {
   return config.ROSTER.find((m) => m.tg_id === tgId);
 }
 
+export function supportMemberFor(tgId: number): RosterMember | undefined {
+  return supportRoster.find((m) => m.tg_id === tgId);
+}
+
 export function rosterPing(): string {
   return config.ROSTER.map(mention).join(" ");
+}
+
+export function supportRosterPing(): string {
+  return supportRoster.map(mention).join(" ");
 }

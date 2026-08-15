@@ -1,5 +1,5 @@
 import { Bot, type Context } from "grammy";
-import { config, memberFor, rosterIds } from "../config.js";
+import { config, supportMemberFor, supportRosterIds } from "../config.js";
 import * as cards from "../cards.js";
 import { escapeHtml } from "../cards.js";
 import * as db from "../db.js";
@@ -249,7 +249,7 @@ async function safeEditCard(ctx: Context, ticket: Ticket): Promise<void> {
 
 function rosterGuardFailed(ctx: Context): boolean {
   const id = ctx.from?.id;
-  return rosterIds.size > 0 && (id == null || !rosterIds.has(id));
+  return supportRosterIds.size > 0 && (id == null || !supportRosterIds.has(id));
 }
 
 // ---- operator: take ------------------------------------------------------
@@ -261,7 +261,7 @@ supportBot.callbackQuery(/^claim:support_requests:(.+)$/, async (ctx) => {
     return ctx.answerCallbackQuery({ text: "Вас нет в списке операторов.", show_alert: true });
   }
 
-  const member = memberFor(user.id);
+  const member = supportMemberFor(user.id);
   const byName = member?.name ?? (user.first_name || user.username || String(user.id));
 
   const won = await db.claim<Ticket>("support_requests", id, byName, user.id);

@@ -1,5 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import { rosterPing } from "./config.js";
+import { rosterPing, supportRosterPing } from "./config.js";
 import type { Lead, Ticket, TicketCategory } from "./db.js";
 
 // callback_data:  "claim:<table>:<id>"  /  "resolve:<id>"
@@ -85,7 +85,7 @@ function ticketFields(t: Ticket): string {
 }
 
 export function supportCard(t: Ticket): string {
-  return "🎫 <b>Новое обращение</b>\n" + ticketFields(t) + "\n" + rosterPing();
+  return "🎫 <b>Новое обращение</b>\n" + ticketFields(t) + "\n" + supportRosterPing();
 }
 
 /** Card shown after an operator takes the ticket; reflects category + status. */
