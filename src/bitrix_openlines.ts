@@ -72,6 +72,7 @@ export async function sendUserMessage(
   ticket: db.Ticket,
   body: string,
   messageId: string,
+  files: Array<{ url: string; name: string }> = [],
 ): Promise<void> {
   if (!bitrixApp.enabled() || !config.BITRIX_LINE_ID) return;
   const who = ticket.user_name || ticket.user_username || "Пользователь";
@@ -103,6 +104,7 @@ export async function sendUserMessage(
             id: messageId,
             date: Math.floor(Date.now() / 1000),
             text: body,
+            ...(files.length ? { files } : {}),
           },
         },
       ],

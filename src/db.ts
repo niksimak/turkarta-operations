@@ -35,6 +35,7 @@ export interface Ticket {
   user_name: string | null;
   source: string | null;
   first_message: string | null; // the user's request text
+  first_photo_file_id: string | null; // Telegram photo received during intake
   email: string | null;
   device: string | null;
   category: TicketCategory | null;
@@ -115,6 +116,7 @@ export interface OpenTicketInput {
   email?: string | null;
   device?: string | null;
   intake_step?: string | null;
+  first_photo_file_id?: string | null;
 }
 
 /**
@@ -125,9 +127,11 @@ export interface OpenTicketInput {
 export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
-      (user_tg, user_username, user_name, source, first_message, email, device, intake_step)
+      (user_tg, user_username, user_name, source, first_message, email, device, intake_step,
+       first_photo_file_id)
     values (${t.user_tg}, ${t.user_username}, ${t.user_name}, ${t.source},
-            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.intake_step ?? null})
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.intake_step ?? null},
+            ${t.first_photo_file_id ?? null})
     on conflict (user_tg) where status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
     returning *`;
