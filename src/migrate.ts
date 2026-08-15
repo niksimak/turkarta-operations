@@ -11,12 +11,10 @@ if (!url) {
 }
 
 const sql = postgres(url);
+// In source this resolves to ../migrations; compiled in dist it does as well.
 const dir = join(here, "..", "migrations");
-
-// Run every *.sql in lexical order. Migrations are written idempotently
-// (create … if not exists / add column if not exists) so re-running is safe.
 const files = readdirSync(dir)
-  .filter((f) => f.endsWith(".sql"))
+  .filter((file) => file.endsWith(".sql"))
   .sort();
 
 try {
