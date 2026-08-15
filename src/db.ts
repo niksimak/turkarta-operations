@@ -3,6 +3,12 @@ import { config } from "./config.js";
 
 export const sql = postgres(config.DATABASE_URL, { max: 5 });
 
+/** Ensure the additive photo-relay column exists before accepting updates. */
+export async function ensureSupportPhotoSchema(): Promise<void> {
+  await sql`alter table public.support_requests
+    add column if not exists first_photo_file_id text`;
+}
+
 const CLAIMABLE = new Set(["leads", "support_requests"]);
 
 export interface Lead {

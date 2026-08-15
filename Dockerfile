@@ -19,4 +19,4 @@ RUN pnpm install --prod --frozen-lockfile --ignore-scripts || pnpm install --pro
 COPY --from=build /app/dist ./dist
 COPY migrations ./migrations
 EXPOSE 8000
-CMD ["sh", "-c", "node dist/migrate.js && exec node dist/index.js"]
+CMD ["node", "dist/index.js"]
