@@ -6,6 +6,7 @@ import * as db from "../db.js";
 import type { Ticket, TicketCategory } from "../db.js";
 import * as openlines from "../bitrix_openlines.js";
 import * as turkartaApi from "../turkarta_api.js";
+import { telegramPhotoUrl } from "../telegram_media.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 
@@ -58,6 +59,25 @@ function isRelayable(ctx: Context): boolean {
         m.audio ||
         m.sticker),
   );
+}
+
+/** Telegram orders photo sizes from smallest to largest. */
+function photoFileId(ctx: Context): string | null {
+  return ctx.message?.photo?.at(-1)?.file_id ?? null;
+}
+
+function bitrixPhoto(fileId: string | null): Array<{ url: string; name: string }> {
+  if (!fileId) return [];
+  return [
+    {
+      url: telegramPhotoUrl(
+        fileId,
+        config.PUBLIC_BASE_URL,
+        config.TELEGRAM_WEBHOOK_SECRET,
+      ),
+      name: "photo.jpg",
+    },
+  ];
 }
 
 /** Post a fresh ticket card to the support channel and record its message id. */
@@ -395,6 +415,7 @@ supportBot.on("message", async (ctx, next) => {
       source: "bot",
       request: contentLabel(ctx),
       intake_step: "email",
+      first_photo_file_id: photoFileId(ctx),
     });
     await ctx.reply(ASK_EMAIL);
     return;
@@ -410,6 +431,7 @@ supportBot.on("message", async (ctx, next) => {
         finalized,
         finalized.first_message ?? "(без текста)",
         `tg-first-${finalized.id}`,
+        bitrixPhoto(finalized.first_photo_file_id),
       );
     }
     await ctx.reply(QUEUED);
@@ -424,6 +446,7 @@ supportBot.on("message", async (ctx, next) => {
     ticket,
     contentLabel(ctx),
     `tg-${ctx.chat.id}-${ctx.message.message_id}`,
+    bitrixPhoto(photoFileId(ctx)),
   );
 
   // Intake done, not yet taken by an operator.

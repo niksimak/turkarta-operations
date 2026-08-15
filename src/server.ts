@@ -14,6 +14,7 @@ import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
 import * as turkartaApi from "./turkarta_api.js";
+import { validTelegramPhotoRequest } from "./telegram_media.js";
 
 export const app = new Hono();
 
@@ -21,6 +22,42 @@ const TG_LEADS_PATH = `/tg/leads/${config.TELEGRAM_WEBHOOK_SECRET}`;
 const TG_SUPPORT_PATH = `/tg/support/${config.TELEGRAM_WEBHOOK_SECRET}`;
 
 app.get("/health", (c) => c.json({ status: "ok" }));
+
+// Bitrix requires an externally reachable file URL. This proxy keeps the
+// Telegram bot token out of that URL and rejects expired or modified links.
+app.get("/media/telegram/photo.jpg", async (c) => {
+  const fileId = c.req.query("file_id") ?? "";
+  const expires = c.req.query("expires") ?? "";
+  const signature = c.req.query("signature") ?? "";
+  if (
+    !fileId ||
+    !validTelegramPhotoRequest(
+      fileId,
+      expires,
+      signature,
+      config.TELEGRAM_WEBHOOK_SECRET,
+    )
+  ) {
+    return c.json({ error: "invalid or expired media link" }, 403);
+  }
+
+  const file = await supportBot.api.getFile(fileId).catch(() => null);
+  if (!file?.file_path) return c.json({ error: "media unavailable" }, 404);
+
+  const upstream = await fetch(
+    `https://api.telegram.org/file/bot${config.SUPPORT_BOT_TOKEN}/${file.file_path}`,
+    { signal: AbortSignal.timeout(20_000) },
+  ).catch(() => null);
+  if (!upstream?.ok || !upstream.body) return c.json({ error: "media unavailable" }, 502);
+
+  return new Response(upstream.body, {
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "image/jpeg",
+      "content-disposition": 'inline; filename="photo.jpg"',
+      "cache-control": "private, no-store",
+    },
+  });
+});
 
 // Telegram update webhooks (grammy verifies the secret_token header).
 app.post(
