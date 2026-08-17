@@ -80,6 +80,23 @@ function bitrixPhoto(fileId: string | null): Array<{ url: string; name: string }
   ];
 }
 
+/** Make a user's photo visible to Telegram operators before anyone claims it. */
+async function sendPhotoToSupport(ticket: Ticket, fileId: string): Promise<void> {
+  await supportBot.api
+    .sendPhoto(config.SUPPORT_CHAT_ID, fileId, {
+      caption: `📷 Фото к обращению ${ticket.id}`,
+      ...(ticket.tg_message_id
+        ? { reply_parameters: { message_id: ticket.tg_message_id } }
+        : {}),
+    })
+    .catch((err: unknown) => {
+      console.warn(
+        `[support] photo copy ticket=${ticket.id} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+}
+
 /** Post a fresh ticket card to the support channel and record its message id. */
 async function postTicketCard(ticket: Ticket): Promise<void> {
   const card = await supportBot.api.sendMessage(
@@ -427,7 +444,14 @@ supportBot.on("message", async (ctx, next) => {
     const finalized = await db.finishIntake(ticket.id, email);
     if (finalized) {
       await postTicketCard(finalized);
-      await openlines.sendUserMessage(
+      const refreshed = (await db.getTicket(finalized.id)) ?? finalized;
+      if (finalized.first_photo_file_id) {
+        await sendPhotoToSupport(refreshed, finalized.first_photo_file_id);
+      }
+      // Do not keep Telegram's webhook open while Bitrix downloads the file.
+      // Telegram retries unacknowledged updates, which previously duplicated
+      // both the photo and the queue message every 10 seconds.
+      void openlines.sendUserMessage(
         finalized,
         finalized.first_message ?? "(без текста)",
         `tg-first-${finalized.id}`,
@@ -442,16 +466,17 @@ supportBot.on("message", async (ctx, next) => {
   // (unclaimed) ticket, whose messages previously reached no operator surface
   // at all. Media arrives as a text placeholder (contentLabel); real file
   // forwarding into imconnector is a later step.
-  await openlines.sendUserMessage(
+  const fileId = photoFileId(ctx);
+  if (fileId) await sendPhotoToSupport(ticket, fileId);
+  void openlines.sendUserMessage(
     ticket,
     contentLabel(ctx),
     `tg-${ctx.chat.id}-${ctx.message.message_id}`,
-    bitrixPhoto(photoFileId(ctx)),
+    bitrixPhoto(fileId),
   );
 
   // Intake done, not yet taken by an operator.
   if (ticket.status === "new") {
-    await ctx.reply("Ваше обращение в очереди.");
     return;
   }
 
