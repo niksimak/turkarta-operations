@@ -85,30 +85,36 @@ export async function sendUserMessage(
     const res = await bitrixApp.call<{
       SUCCESS?: boolean;
       DATA?: { RESULT?: Array<Record<string, unknown>> };
-    }>("imconnector.send.messages", {
-      CONNECTOR: config.BITRIX_CONNECTOR_ID,
-      LINE: config.BITRIX_LINE_ID,
-      MESSAGES: [
-        {
-          user: {
-            id: ticket.web_user_id ?? String(ticket.user_tg ?? ticket.id),
-            name: who,
-            email: ticket.email ?? undefined,
+    }>(
+      "imconnector.send.messages",
+      {
+        CONNECTOR: config.BITRIX_CONNECTOR_ID,
+        LINE: config.BITRIX_LINE_ID,
+        MESSAGES: [
+          {
+            user: {
+              id: ticket.web_user_id ?? String(ticket.user_tg ?? ticket.id),
+              name: who,
+              email: ticket.email ?? undefined,
+            },
+            chat: {
+              id: chatIdForTicket(ticket.id),
+              name: `ТурКарта · ${ticket.channel} · ${who}`,
+              url: "https://app.turkarta.me",
+            },
+            message: {
+              id: messageId,
+              date: Math.floor(Date.now() / 1000),
+              text: body,
+              ...(files.length ? { files } : {}),
+            },
           },
-          chat: {
-            id: chatIdForTicket(ticket.id),
-            name: `ТурКарта · ${ticket.channel} · ${who}`,
-            url: "https://app.turkarta.me",
-          },
-          message: {
-            id: messageId,
-            date: Math.floor(Date.now() / 1000),
-            text: body,
-            ...(files.length ? { files } : {}),
-          },
-        },
-      ],
-    });
+        ],
+      },
+      // Bitrix downloads remote attachments synchronously. Its fetch can take
+      // longer than the normal REST budget even when the file URL is healthy.
+      files.length ? 60_000 : undefined,
+    );
     const per = res?.DATA?.RESULT?.[0];
     const ok = res?.SUCCESS === true && per?.SUCCESS !== false;
     console.log(

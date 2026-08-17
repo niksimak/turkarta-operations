@@ -136,7 +136,11 @@ export async function validTokens(): Promise<db.BitrixTokens> {
  * it. Any other error is surfaced — retrying an `insufficient_scope` forever
  * would just hammer the portal.
  */
-export async function call<T>(method: string, params: unknown = {}): Promise<T> {
+export async function call<T>(
+  method: string,
+  params: unknown = {},
+  timeoutMs = TIMEOUT_MS,
+): Promise<T> {
   if (!enabled()) {
     throw new BitrixAppError(method, "disabled", "BITRIX_CLIENT_ID/SECRET unset");
   }
@@ -147,7 +151,7 @@ export async function call<T>(method: string, params: unknown = {}): Promise<T> 
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...(params as object), auth: tokens.access_token }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const json = (await res.json().catch(() => null)) as {
       result?: T;
