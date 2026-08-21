@@ -7,6 +7,7 @@ import type { Ticket, TicketCategory } from "../db.js";
 import * as openlines from "../bitrix_openlines.js";
 import * as turkartaApi from "../turkarta_api.js";
 import { telegramPhotoUrl } from "../telegram_media.js";
+import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 
@@ -185,6 +186,7 @@ export async function createWebTicket(input: {
   email: string | null;
   device: string | null;
   request: string;
+  photo?: ValidPhoto | null;
 }): Promise<Ticket> {
   const ticket = await db.openWebTicket({
     web_user_id: input.web_user_id,
@@ -196,11 +198,11 @@ export async function createWebTicket(input: {
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   if (!ticket.tg_message_id) {
-    const first = await db.addMessage(ticket.id, "user", input.request);
+    const first = await db.addMessage(ticket.id, "user", input.request, input.photo);
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии. Best-effort by contract — never
     // throws, so a Bitrix outage cannot fail the user's support request.
-    await openlines.sendUserMessage(ticket, input.request, first.id);
+    await openlines.sendUserMessage(ticket, input.request, first.id, bitrixStoredPhoto(first));
   }
   return ticket;
 }
@@ -237,18 +239,47 @@ export async function createWelcomeTicket(input: {
 }
 
 /** A web user sent a message: log it and relay into the ops thread if claimed. */
-export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
-  const message = await db.addMessage(ticket.id, "user", body);
-  await openlines.sendUserMessage(ticket, body, message.id);
+function bitrixStoredPhoto(message: db.Message): Array<{ url: string; name: string }> {
+  if (!message.attachment_id || !message.attachment_filename) return [];
+  return [
+    {
+      url: supportPhotoUrl(
+        message.attachment_id,
+        message.attachment_filename,
+        config.PUBLIC_BASE_URL,
+        config.TELEGRAM_WEBHOOK_SECRET,
+      ),
+      name: message.attachment_filename,
+    },
+  ];
+}
+
+export async function pushWebUserMessage(
+  ticket: Ticket,
+  body: string,
+  photo?: ValidPhoto | null,
+): Promise<void> {
+  const message = await db.addMessage(ticket.id, "user", body, photo);
+  const files = bitrixStoredPhoto(message);
+  await openlines.sendUserMessage(ticket, body, message.id, files);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
-    await supportBot.api
-      .sendMessage(
-        config.SUPPORT_CHAT_ID,
-        `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(body)}`,
-        { message_thread_id: ticket.thread_id, parse_mode: "HTML" },
-      )
-      .catch(() => {});
+    if (files[0]) {
+      await supportBot.api
+        .sendPhoto(config.SUPPORT_CHAT_ID, files[0].url, {
+          message_thread_id: ticket.thread_id,
+          caption: `💬 ${who}: ${body}`.slice(0, 1024),
+        })
+        .catch(() => {});
+    } else {
+      await supportBot.api
+        .sendMessage(
+          config.SUPPORT_CHAT_ID,
+          `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(body)}`,
+          { message_thread_id: ticket.thread_id, parse_mode: "HTML" },
+        )
+        .catch(() => {});
+    }
   }
 }
 
