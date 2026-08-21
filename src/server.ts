@@ -15,6 +15,11 @@ import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
 import * as turkartaApi from "./turkarta_api.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
+import {
+  MAX_PHOTO_BYTES,
+  validSupportPhotoRequest,
+  validatePhoto,
+} from "./support_media.js";
 
 export const app = new Hono();
 
@@ -156,7 +161,20 @@ function appAuthed(c: Context): boolean {
 }
 
 const serializeMessages = (msgs: db.Message[]) =>
-  msgs.map((m) => ({ id: m.id, seq: m.seq, sender: m.sender, body: m.body, at: m.created_at }));
+  msgs.map((m) => ({
+    id: m.id,
+    seq: m.seq,
+    sender: m.sender,
+    body: m.body,
+    at: m.created_at,
+    attachment: m.attachment_id
+      ? {
+          id: m.attachment_id,
+          mediaType: m.attachment_media_type,
+          filename: m.attachment_filename,
+        }
+      : null,
+  }));
 
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
@@ -225,6 +243,90 @@ app.post("/api/support/web/message", async (c) => {
   if (!ticket) return c.json({ error: "no open ticket" }, 404);
   await pushWebUserMessage(ticket, parsed.data.body);
   return c.json({ ok: true });
+});
+
+// One durable photo message. The app backend authenticates the user and sends
+// multipart here over the shared-secret boundary; browsers never call ops directly.
+app.post("/api/support/web/photo", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const form = await c.req.parseBody().catch(() => null);
+  if (!form) return c.json({ error: "bad multipart payload" }, 422);
+  const webUserId = typeof form.web_user_id === "string" ? form.web_user_id.trim() : "";
+  const rawBody = typeof form.body === "string" ? form.body.trim() : "";
+  const body = rawBody || "📷 Фото";
+  const file = form.photo;
+  if (!webUserId || body.length > 4000 || !(file instanceof File)) {
+    return c.json({ error: "bad payload" }, 422);
+  }
+  if (file.size <= 0 || file.size > MAX_PHOTO_BYTES) {
+    return c.json({ error: "photo_too_large" }, 413);
+  }
+  const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
+  if (!photo) return c.json({ error: "unsupported_photo" }, 415);
+
+  let ticket = await db.ticketByWebUser(webUserId);
+  if (!ticket) {
+    const email = typeof form.email === "string" ? form.email.trim() || null : null;
+    if (!email) return c.json({ error: "email_required" }, 422);
+    ticket = await createWebTicket({
+      web_user_id: webUserId,
+      user_name: null,
+      email,
+      device: typeof form.device === "string" ? form.device.slice(0, 300) : null,
+      request: body,
+      photo,
+    });
+  } else {
+    await pushWebUserMessage(ticket, body, photo);
+  }
+  return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+});
+
+function attachmentResponse(
+  attachment: db.SupportAttachment,
+  head = false,
+  cacheControl = "private, max-age=300",
+): Response {
+  return new Response(head ? null : attachment.content, {
+    headers: {
+      "content-type": attachment.media_type,
+      "content-length": String(attachment.size_bytes),
+      "content-disposition": `inline; filename="${attachment.filename}"`,
+      "cache-control": cacheControl,
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+async function publicSupportPhoto(c: Context, head = false): Promise<Response> {
+  const id = c.req.param("id") ?? "";
+  if (
+    !validSupportPhotoRequest(
+      id,
+      c.req.query("expires") ?? "",
+      c.req.query("signature") ?? "",
+      config.TELEGRAM_WEBHOOK_SECRET,
+    )
+  ) {
+    return c.json({ error: "invalid or expired media link" }, 403);
+  }
+  const attachment = await db.supportAttachment(id);
+  return attachment
+    ? attachmentResponse(attachment, head, "public, max-age=300")
+    : c.json({ error: "not found" }, 404);
+}
+
+// Bitrix probes some remote files with HEAD before downloading them. Supporting
+// both methods avoids a false "file unavailable" result despite a healthy GET.
+app.get("/media/support/:id/:filename", (c) => publicSupportPhoto(c));
+app.on("HEAD", "/media/support/:id/:filename", (c) => publicSupportPhoto(c, true));
+
+app.get("/api/support/web/attachment/:id", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const webUserId = c.req.query("web_user_id") ?? "";
+  if (!webUserId) return c.json({ error: "web_user_id required" }, 422);
+  const attachment = await db.supportAttachmentForWebUser(c.req.param("id"), webUserId);
+  return attachment ? attachmentResponse(attachment) : c.json({ error: "not found" }, 404);
 });
 
 // Web app polls for new messages + ticket status.
