@@ -159,7 +159,7 @@ export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
 export async function finishIntake(id: string, email: string | null): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     update support_requests set email = ${email}, intake_step = null
-     where id = ${id}
+     where id = ${id} and intake_step = 'email'
     returning *`;
   return rows[0] ?? null;
 }
