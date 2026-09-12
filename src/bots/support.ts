@@ -8,8 +8,10 @@ import * as openlines from "../bitrix_openlines.js";
 import * as turkartaApi from "../turkarta_api.js";
 import { telegramPhotoUrl } from "../telegram_media.js";
 import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
+import { sequencePrivateMessages } from "../telegram_sequence.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
+supportBot.use(sequencePrivateMessages());
 
 const GREETING =
   "👋 Это поддержка Turkarta. Опишите вопрос одним сообщением — мы подключим оператора.";
@@ -469,9 +471,11 @@ supportBot.on("message", async (ctx, next) => {
     return;
   }
 
-  // Mid-intake: this message is the email (or /skip).
-  if (ticket.intake_step === "email") {
-    const email = !text || text === "/skip" ? null : text;
+  // Only an actual text message can answer the email prompt. Album items
+  // arrive as separate photo updates (captions are not email answers): relay
+  // them below without finishing intake or discarding the current photo.
+  if (ticket.intake_step === "email" && text) {
+    const email = text === "/skip" ? null : text;
     const finalized = await db.finishIntake(ticket.id, email);
     if (finalized) {
       await postTicketCard(finalized);
@@ -495,8 +499,8 @@ supportBot.on("message", async (ctx, next) => {
 
   // Mirror every post-intake user message into Bitrix — including on a NEW
   // (unclaimed) ticket, whose messages previously reached no operator surface
-  // at all. Media arrives as a text placeholder (contentLabel); real file
-  // forwarding into imconnector is a later step.
+  // at all. Photos received while awaiting email use this same path, with a
+  // distinct Telegram message id and signed file URL for every album item.
   const fileId = photoFileId(ctx);
   if (fileId) await sendPhotoToSupport(ticket, fileId);
   void openlines.sendUserMessage(
