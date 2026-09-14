@@ -54,3 +54,23 @@ Validation: typecheck and full local suite including real Postgres deduplication
 first-message eligibility, attribution, AI freshness, Telegram failure/ambiguity,
 and unchanged photo/delivery handling. Production verification uses a synthetic
 web ticket without real customer/Telegram identity; no test messages to customers.
+
+## Release status
+
+PR #7 is ready and CI passed for code head `fec36c9`. All 66 local tests passed
+with no skips. Migration 0015 was applied to production with zero greeting rows.
+Automatic approval review rejected the production merge because it requires
+explicit approval to activate customer-facing automatic greetings. The production
+flag is kept false and production code remains `6d376c3`; existing AI shadow
+analysis remains active. No production greeting was sent during this work.
+
+Dev verification passed on image
+`registry.fly.io/turkarta-support-ai-dev:deployment-01M2GSVWJDBK7EJWQ85E0Q5HSP`
+(digest `sha256:946225f4323a52158b753526d3d00a8f855aa9f7e92ba4312d270f4676848edc`).
+Synthetic ticket `afc187c9-cdff-4d23-96b8-f48ad35e95bd` received one persisted KYC
+greeting; concurrent attempts returned sent/skipped. The message was attributed
+to automation, queued no human QA review, and its AI triage completed without
+becoming stale. The check called the compiled greeting service against the
+isolated dev DB and did not send any Telegram/Bitrix message.
+
+Production merge and activation are pending the user's explicit approval.
