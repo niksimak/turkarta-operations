@@ -4,12 +4,16 @@ import { app, registerWebhooks } from "./server.js";
 import * as db from "./db.js";
 import { leadsBot } from "./bots/leads.js";
 import { supportBot } from "./bots/support.js";
+import { ensureDeliverySchema } from "./bitrix_delivery_store.js";
+import { startDeliveryConfirmations } from "./bitrix_delivery.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
+  await ensureDeliverySchema();
   // init() lets grammy learn each bot's identity before handling updates.
   await Promise.all([leadsBot.init(), supportBot.init()]);
   await registerWebhooks();
+  const stopDeliveryConfirmations = startDeliveryConfirmations();
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     console.log(`turkarta-operations listening on :${info.port}`);
@@ -22,6 +26,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopDeliveryConfirmations();
     console.log(`${signal} received — shutting down`);
     server.close();
     await db.sql.end({ timeout: 5 }).catch(() => {});

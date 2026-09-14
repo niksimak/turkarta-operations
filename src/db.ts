@@ -441,7 +441,8 @@ export async function getBitrixTokens(): Promise<BitrixTokens | null> {
  *
  * `bitrix_message_id` carries a partial UNIQUE index, so a retried event
  * (TZ §4.4 — Bitrix retries, duplicates unacceptable) collides and inserts
- * nothing. Returns null when the row already existed = "already delivered".
+ * nothing. Returns null when the row already existed; this does NOT prove
+ * transport delivery (tracked separately in bitrix_delivery_receipts).
  */
 export async function addAgentMessageFromBitrix(
   ticketId: string,
