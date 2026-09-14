@@ -14,7 +14,7 @@ export class OperationsStore {
       if (!job) return false;
       // Lock the ticket against concurrent closure while creating internal tasks.
       const [ticket] = await tx`select status from support_requests where id=${job.ticket_id} for update`;
-      const [newer] = await tx`select id from support_messages where ticket_id=${job.ticket_id} and seq>${job.through_seq} limit 1`;
+      const [newer] = await tx`select id from support_messages where ticket_id=${job.ticket_id} and seq>${job.through_seq} and actor_type <> 'automation' limit 1`;
       if (job.kind === "triage" && !newer && ticket?.status !== "resolved") {
         const parsed = TaskSnapshot.safeParse(job.status === "failed" ? {
           classification: { summary_ru: "Автоматический анализ недоступен. Проверьте обращение вручную." },
@@ -123,7 +123,7 @@ export class OperationsStore {
       where status='pending' and kind='critical' and not exists (
         select 1 from support_agent_jobs j where j.id::text=n.payload->>'job_id'
           and j.status='completed' and coalesce(j.feedback->>'verdict','')<>'rejected'
-          and not exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq))`;
+          and not exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation'))`;
     const rows = await this.sql<Notification[]>`update support_agent_notifications set status='sending',
       attempts=attempts+1,lease_token=gen_random_uuid(),lease_until=now()+interval '1 minute'
       where id=(select id from support_agent_notifications where status='pending' and available_at<=now()
@@ -145,7 +145,7 @@ export class OperationsStore {
     const start = `${day}T00:00:00Z`;
     const [report] = await this.sql`with reviews as (
       select distinct on(j.ticket_id) j.*,exists(select 1 from support_messages m
-        where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.created_at<${start}::timestamptz+interval '1 day') as stale
+        where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation' and m.created_at<${start}::timestamptz+interval '1 day') as stale
       from support_agent_jobs j
       where j.kind='review' and j.status='completed' and j.result is not null
         and j.finished_at>=${start}::timestamptz and j.finished_at<${start}::timestamptz+interval '1 day'
@@ -187,7 +187,7 @@ export class OperationsStore {
     const start = `${day}T00:00:00Z`;
     return this.sql`select * from (
       select distinct on(j.ticket_id) j.id,j.ticket_id,j.through_seq,j.result,j.feedback,j.finished_at,
-        exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq) as stale
+        exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation') as stale
       from support_agent_jobs j where j.kind='review' and j.status='completed' and j.result is not null
         and j.finished_at>=${start}::timestamptz and j.finished_at<${start}::timestamptz+interval '1 day'
       order by j.ticket_id,j.through_seq desc
