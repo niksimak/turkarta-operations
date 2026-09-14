@@ -21,11 +21,11 @@ it is not required or enabled for the shadow sandbox.
 - Configured model: `gpt-5.4-nano`; application limits $1/day and $20/month.
   Infrastructure billing is separate from model usage.
 
-**TEMP (2026-09-14):** deploy with `SUPPORT_AI_MODE=off` until the owner supplies
-`OPENAI_API_KEY` through Fly secrets. Then set `SUPPORT_AI_MODE=shadow` and verify
-a synthetic ticket completes with a Russian draft and metered usage. No model
-credentials were found in the existing support/dev service or local project
-configuration. Mock tests do not establish live model account access.
+**Active (2026-09-14):** `OPENAI_API_KEY` is stored in the dev app's Fly
+secrets and `SUPPORT_AI_MODE=shadow` is enabled. The initial missing-key TEMP
+state is closed. Live model access, Russian knowledge-base drafting, payment
+escalation, and usage metering are verified. Queued QA remains experimental;
+see the activation results below.
 
 The service and Neon compute can stop when idle. This is an on-demand dev
 sandbox; pending work resumes when the service starts. Do not treat it as an
@@ -71,7 +71,7 @@ services, databases, webhooks and secrets are not part of this rollout.
 
 Model compatibility/pricing checked against the [official model documentation](https://developers.openai.com/api/docs/models/gpt-5.4-nano).
 
-## Live verification — 2026-09-14
+## Initial deployment verification — 2026-09-14
 
 Deployed code `6b40aca`, image
 `registry.fly.io/turkarta-support-ai-dev:support-ai-6b40aca`
@@ -90,3 +90,36 @@ Machine `7845d4da1d39e8` was created successfully.
 Real model classification/drafting, QA generation, and account diagnostics have
 not been verified live. The next step is the model-key configuration and shadow
 smoke test described above. No messages were sent to Telegram or Bitrix.
+
+
+## Shadow activation — 2026-09-14
+
+The dev machine updated successfully after setting the model key and shadow
+mode. Authenticated readiness reports `mode=shadow`,
+`model_key_configured=true`, `automatic_customer_replies=false`, and
+`financial_actions=false`. No code/image change was needed for activation.
+The key is not stored in this repository or the verification artifacts.
+
+Live synthetic results:
+
+- Wallet question: classification completed and produced a conservative Russian
+  draft requiring operator review (`technical`, `card`).
+- General question (`4eab938d-2a06-4b32-9d64-ac9f89574cb8`): classification and
+  answer generation completed, with a Russian draft grounded in one published
+  knowledge article.
+- Payment issue (`1559b661-a00b-4733-8ac0-fe15f2541232`): classified as payment/card,
+  `money_related=true`, `requires_operator=true`; the controlled reply advised
+  against repeating payment while its outcome needs investigation. No financial
+  action was executed.
+- QA: first queued review failed with `non_russian_output`. A separate metered
+  diagnostic run over the same synthetic conversation passed all six criteria,
+  but the subsequent queued review failed with `unknown_message_reference`.
+  Both rejected queue results remain visible as failed; no invalid review was
+  accepted. QA is not yet reliable enough to claim successful end-to-end
+  verification. Tightening model output constraints/reliability is follow-up
+  work before relying on operator scoring.
+- Usage metering settled the first five model calls at $0.00336540 before the
+  two additional QA checks. The configured application caps remain $1/day and
+  $20/month. No customer messages or production services were involved.
+
+The optional account-diagnostics service remains disconnected in this sandbox.
