@@ -1,10 +1,13 @@
 # Support AI production rollout — 2026-09-15
 
+**Current status:** code is live on production, AI is **off**. Activating the
+model requires the explicit credential-transfer approval described below.
+
 ## Scope and operating mode
 
 Promote PR #6 into the existing Render `turkarta-operations` service
 (`srv-d90g7t4m0tmc73dpi000`, Frankfurt). Runtime remains the Telegram/Bitrix
-relay, with `SUPPORT_AI_MODE=shadow`. New customer messages queue classification
+relay. The intended activation mode is `SUPPORT_AI_MODE=shadow`. New customer messages queue classification
 and Russian reply drafts; operator replies queue evidence-based quality reviews.
 Results require the dedicated internal API credential. No automatic customer
 replies, financial actions, internal Telegram notifications, or employee scoring
@@ -58,7 +61,8 @@ accumulate jobs while analysis is off; account for this before reactivation.
 
 Dev gate: all five queued triage jobs and all five queued reviews completed,
 with six validated assessments per review. CI passed for `885167a` (run
-`34888679695`). Production deployment and smoke check are pending.
+`34888679695`). Production code is live; model activation and the production
+model smoke check are pending explicit credential-transfer approval.
 
 Dev failures from the
 initial activation remain available for audit; they were not rewritten as passes.
@@ -70,3 +74,18 @@ solely because an unfinished synthetic dialogue had no final answer. Structural
 validation now passes, but severity calibration remains experimental. Reviews
 must remain pending supervisor review; do not publish them as employee scores
 or enable automatic critical notifications based on this validation alone.
+
+## Production deployment result
+
+- Commit: `6d376c339849d10f6d485c173eee0f68a5d2443f` on `main`.
+- Render deployment: `dep-dak50p0ae00c73fmr58g`, live at
+  `2026-09-14T19:52:42Z` (September 15 in Asia/Almaty).
+- Public `/health`: 200. Unauthenticated internal AI readiness: 403, confirming
+  the new endpoint is deployed and access is denied without its credential.
+- Migrations 0012/0013 committed together; zero historical jobs were queued.
+- Production configuration was verified as AI off, without OpenAI key or AI
+  admin secret. The rejected secret transfer was not executed.
+- Production model smoke testing is deferred until activation; no synthetic
+  customer messages were sent through production Telegram or Bitrix.
+- GitHub API connectivity timed out during the final metadata check. The tested
+  branch was merged with Git and pushed to main; Render confirms that exact merge.
