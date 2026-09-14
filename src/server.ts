@@ -13,7 +13,8 @@ import {
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
-import * as turkartaApi from "./turkarta_api.js";
+import { deliverOperatorReply } from "./bitrix_reply.js";
+import { flushDeliveryConfirmations } from "./bitrix_delivery.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
 import {
   MAX_PHOTO_BYTES,
@@ -533,9 +534,14 @@ app.post("/bitrix/app/handler", async (c) => {
   // read through Hono's flat parseBody.
   if (event === "ONIMCONNECTORMESSAGEADD") {
     const data = payload.nested.data as Record<string, unknown> | undefined;
+    if (String(data?.CONNECTOR) !== config.BITRIX_CONNECTOR_ID || Number(data?.LINE) !== config.BITRIX_LINE_ID) {
+      return c.json({ ok: false, error: "Unexpected connector or line" }, 400);
+    }
     const messages = data?.MESSAGES;
     const list = Array.isArray(messages) ? messages : Object.values(messages ?? {});
     let delivered = 0;
+    let failed = 0;
+    let duplicates = 0;
     for (const raw of list) {
       const m = raw as Record<string, Record<string, string>>;
       const chatId = m.chat?.id ?? "";
@@ -552,7 +558,7 @@ app.post("/bitrix/app/handler", async (c) => {
       // re-deploying blind; the inbound chat id in particular is not guaranteed
       // to be the `tk-…` string we send outbound.
       const ticket = ticketId ? await db.getTicket(ticketId) : null;
-      if (!ticketId || !text || !bitrixId || !ticket) {
+      if (!ticketId || !text || !bitrixId || !ticket || !m.im?.chat_id || !m.im?.message_id) {
         console.log(
           `[bitrix-ol] SKIP chat="${chatId}" ticketId=${ticketId} ticketFound=${Boolean(ticket)} ` +
             `hasText=${Boolean(text)} msgId=${bitrixId} keys=${JSON.stringify(Object.keys(m))} ` +
@@ -560,34 +566,19 @@ app.post("/bitrix/app/handler", async (c) => {
         );
         continue;
       }
-      const stored = await db.addAgentMessageFromBitrix(ticket.id, text, bitrixId);
-      if (!stored) console.log(`[bitrix-ol] duplicate ${bitrixId} — already delivered`);
-      if (stored) {
-        delivered++;
-        // Delivery leg by channel — all behind the dedup insert, so a Bitrix
-        // event retry can never double-deliver. Best-effort by contract.
-        if (ticket.channel === "telegram" && ticket.user_tg != null) {
-          // TG ticket: the reply goes out as a bot DM (web polling never sees
-          // these users). A user who blocked the bot must not 500 the webhook.
-          await supportBot.api
-            .sendMessage(ticket.user_tg, text)
-            .catch((err) =>
-              console.warn(
-                `[bitrix-ol] DM to ${ticket.user_tg} failed:`,
-                err instanceof Error ? err.message : err,
-              ),
-            );
-        } else if (ticket.web_user_id) {
-          await turkartaApi.notifySupportReply({
-            web_user_id: ticket.web_user_id,
-            ticket_id: ticket.id,
-            message_id: stored.id,
-            preview: text,
-          });
-        }
-      }
+      const outcome = await deliverOperatorReply(ticket, text, {
+        bitrix_message_id: bitrixId,
+        connector: config.BITRIX_CONNECTOR_ID, line: config.BITRIX_LINE_ID,
+        im_chat_id: String(m.im.chat_id), im_message_id: String(m.im.message_id),
+        chat_id: chatId,
+      });
+      if (outcome === "delivered") delivered++;
+      else if (outcome === "failed") failed++;
+      else duplicates++;
     }
-    console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
+    // Acknowledgements have their own durable retries; keep the webhook fast.
+    void flushDeliveryConfirmations();
+    console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered, ${failed} failed, ${duplicates} duplicates`);
     if (list.length === 0) {
       // The payload arrived but carried no messages we could read — dump the
       // shape (tokens redacted) so the real key layout is visible instead of
@@ -597,7 +588,7 @@ app.post("/bitrix/app/handler", async (c) => {
         .slice(0, 900);
       console.log(`[bitrix-ol] EMPTY payload shape: ${redacted}`);
     }
-    return c.json({ ok: true, delivered });
+    return c.json({ ok: true, delivered, failed, duplicates });
   }
 
   console.log(`[bitrix-app] event ${event || "(none)"} received`);
