@@ -1,7 +1,7 @@
 -- Additive; no historical replies are assumed delivered or resent.
 create table if not exists public.bitrix_delivery_receipts (
   bitrix_message_id text primary key,
-  support_message_id uuid not null references public.support_messages(id),
+  support_message_id uuid not null references public.support_messages(id) on delete cascade,
   connector text not null,
   line integer not null,
   im_chat_id text not null,

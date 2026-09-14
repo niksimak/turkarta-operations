@@ -46,6 +46,9 @@ test("receipt SQL: additive schema, concurrent claims, durable retries, and no f
     assert.equal((await store.claimReceipt())!.attempts, 2);
     await store.confirmReceipt("ol-101");
     assert.equal(await store.claimReceipt(), null);
+    await setup`delete from support_messages where id = ${messageId}`;
+    const [{ count }] = await setup`select count(*)::int as count from bitrix_delivery_receipts`;
+    assert.equal(count, 0, "receipts must not block existing message deletion");
   } finally {
     await db.sql.end();
     await setup.end();
