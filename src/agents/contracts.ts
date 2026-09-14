@@ -49,6 +49,22 @@ export const schemas = {
   })) }),
 };
 export type Task = keyof typeof schemas;
+/** Constrain references at generation time; the engine still validates evidence. */
+export function schemaFor(task: Task, evidence: unknown): object {
+  if (task !== "review") return schemas[task];
+  const { messages } = z.object({ messages: z.array(z.object({ id: z.string().min(1) })).max(80) }).parse(evidence);
+  const ids = [...new Set(messages.map((message) => message.id))];
+  const russianText = { type: "string", pattern: "[А-Яа-яЁё]" };
+  return objectOf({ summary_ru: russianText, assessments: {
+    type: "array", minItems: 6, maxItems: 6, items: objectOf({
+      dimension: enumOf(dimensions), verdict: enumOf(verdicts),
+      message_ids: ids.length ? { ...arrayOf(enumOf(ids)), maxItems: 20 }
+        : { ...arrayOf(str), maxItems: 0 },
+      explanation_ru: russianText,
+      suggested_reply_ru: { type: "string", pattern: "^$|[А-Яа-яЁё]" },
+    }),
+  } });
+}
 export interface Model {
   complete(task: Task, instructions: string, evidence: unknown): Promise<unknown>;
 }

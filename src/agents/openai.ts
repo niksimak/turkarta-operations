@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { schemas, type Model, type Task } from "./contracts.js";
+import { schemaFor, type Model, type Task } from "./contracts.js";
 
 export const MODELS = {
   "gpt-5-nano": { input: 0.05, output: 0.40, effort: "minimal" },
@@ -27,7 +27,7 @@ export class OpenAIModel implements Model {
       model: this.options.model, store: false, max_output_tokens: maxOutput,
       reasoning: { effort: rates.effort },
       input: [{ role: "developer", content: instructions }, { role: "user", content: JSON.stringify(evidence) }],
-      text: { format: { type: "json_schema", name: task, strict: true, schema: schemas[task] } },
+      text: { format: { type: "json_schema", name: task, strict: true, schema: schemaFor(task, evidence) } },
       // No tools, previous responses, external URLs, or delegated permissions.
     };
     const body = JSON.stringify(payload);

@@ -149,6 +149,38 @@ test("budget rejection prevents any network request", async () => {
   await assert.rejects(model.complete("classify", BASE_INSTRUCTIONS, {}), /budget_exceeded/);
 });
 
+test("review generation can cite only the current transcript and requires Russian text", async () => {
+  const requests: any[] = [];
+  const model = new OpenAIModel({ apiKey: "test", model: "gpt-5.4-nano",
+    meter: { async reserve() { return "id"; }, async settle() {} },
+    fetch: async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ status: "completed", usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(review()) }] }] }));
+    },
+  });
+  for (const messages of [[customer("Вопрос"), human], [{ ...human, id: "another-ticket" }], []]) {
+    await model.complete("review", BASE_INSTRUCTIONS, { messages });
+  }
+  const fields = requests.map((r) => r.text.format.schema.properties.assessments.items.properties);
+  assert.deepEqual(fields[0].message_ids.items.enum, ["m1", "m2"]);
+  assert.deepEqual(fields[1].message_ids.items.enum, ["another-ticket"]);
+  assert.equal(fields[2].message_ids.maxItems, 0);
+  const explanation = new RegExp(fields[0].explanation_ru.pattern);
+  const suggestion = new RegExp(fields[0].suggested_reply_ru.pattern);
+  assert.equal(explanation.test("English only"), false);
+  assert.equal(explanation.test("Нужна проверка."), true);
+  for (const placeholder of ["N/A", "—", "null"]) assert.equal(suggestion.test(placeholder), false);
+  assert.equal(suggestion.test(""), true);
+});
+
+test("QA still rejects non-Russian explanations and suggested replies", async () => {
+  for (const field of ["explanation_ru", "suggested_reply_ru"] as const) {
+    const bad = review(); bad.assessments[0]![field] = "Please try again";
+    await assert.rejects(modelFor([bad]).engine.review([human], [], false), /non_russian_output/);
+  }
+});
+
 test("incomplete model responses are metered but never used", async () => {
   let settled = false;
   const model = new OpenAIModel({ apiKey: "test", model: "gpt-5.4-nano",
