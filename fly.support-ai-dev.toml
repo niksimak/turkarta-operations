@@ -1,0 +1,37 @@
+app = "turkarta-support-ai-dev"
+primary_region = "fra"
+kill_timeout = "60s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8000"
+  SUPPORT_RUNTIME = "sandbox"
+  PUBLIC_BASE_URL = "https://turkarta-support-ai-dev.fly.dev"
+  SUPPORT_AI_MODEL = "gpt-5.4-nano"
+  SUPPORT_AI_KB_API = "https://api.turkarta.me/api/knowledge-base"
+  SUPPORT_AI_DAILY_USD = "1"
+  SUPPORT_AI_MONTHLY_USD = "20"
+
+[processes]
+  app = "node dist/agents/index.js"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -31,6 +31,8 @@ function fixture(user: number, fields: Partial<Ticket> = {}): Ticket {
 }
 
 mock.module("../dist/db.js", { namedExports: {
+  sql: () => { throw new Error("Unexpected database call in album test"); },
+  addMessage: async (_ticket: string, _sender: string, _body: string) => ({ id: "stored-message" }),
   ticketByUser: async (id: number) => {
     if (failLookup) { failLookup = false; throw new Error("temporary lookup failure"); }
     // Snapshot before yielding reproduces concurrent first-contact lookups.

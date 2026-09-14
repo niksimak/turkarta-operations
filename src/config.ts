@@ -9,11 +9,12 @@ const RosterMember = z.object({
 export type RosterMember = z.infer<typeof RosterMember>;
 
 const Env = z.object({
-  LEADS_BOT_TOKEN: z.string().min(1),
-  SUPPORT_BOT_TOKEN: z.string().min(1),
+  SUPPORT_RUNTIME: z.enum(["relay", "sandbox"]).default("relay"),
+  LEADS_BOT_TOKEN: z.string().default(""),
+  SUPPORT_BOT_TOKEN: z.string().default(""),
 
-  LEADS_CHAT_ID: z.coerce.number().int(),
-  SUPPORT_CHAT_ID: z.coerce.number().int(),
+  LEADS_CHAT_ID: z.coerce.number().int().default(0),
+  SUPPORT_CHAT_ID: z.coerce.number().int().default(0),
   SUPPORT_FORUM: z
     .enum(["true", "false"])
     .default("true")
@@ -24,8 +25,8 @@ const Env = z.object({
 
   // Shared secret guarding the inbound webhooks (Lovable leads + app fallback),
   // sent as the `x-webhook-secret` header. Not a Supabase resource — just a name.
-  LEADS_WEBHOOK_SECRET: z.string().min(1),
-  TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
+  LEADS_WEBHOOK_SECRET: z.string().default(""),
+  TELEGRAM_WEBHOOK_SECRET: z.string().default(""),
   // Secret the Mini App / web app sends to the support webhooks. Optional: falls
   // back to LEADS_WEBHOOK_SECRET so the endpoints work before a dedicated one is set.
   APP_WEBHOOK_SECRET: z.string().optional(),
@@ -87,6 +88,14 @@ const Env = z.object({
 
   PORT: z.coerce.number().int().default(8000),
 }).superRefine((env, ctx) => {
+  if (env.SUPPORT_RUNTIME === "relay" && (!env.LEADS_BOT_TOKEN || !env.SUPPORT_BOT_TOKEN
+    || !env.LEADS_CHAT_ID || !env.SUPPORT_CHAT_ID || !env.LEADS_WEBHOOK_SECRET || !env.TELEGRAM_WEBHOOK_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Relay runtime requires Telegram bots, chat IDs and webhook secrets" });
+  }
+  if (env.SUPPORT_RUNTIME === "sandbox" && (env.SUPPORT_AI_MODE === "assist"
+    || env.LEADS_BOT_TOKEN || env.SUPPORT_BOT_TOKEN || env.BITRIX_CLIENT_ID || env.BITRIX_CLIENT_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Sandbox permits off/shadow only, without Telegram or Bitrix credentials" });
+  }
   if (!!env.SUPPORT_AI_DIAGNOSTICS_URL !== !!env.SUPPORT_AI_DIAGNOSTICS_SECRET) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostics requires both origin and dedicated secret" });
   }
