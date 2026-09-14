@@ -1,13 +1,15 @@
 # Support AI production rollout — 2026-09-15
 
-**Current status:** code is live on production, AI is **off**. Activating the
-model requires the explicit credential-transfer approval described below.
+**Current status:** production AI is active in **shadow mode**. The user
+explicitly approved copying the supplied OpenAI key from Fly dev into Render
+production. The transfer is complete; automatic customer replies and internal
+Telegram notifications remain disabled.
 
 ## Scope and operating mode
 
 Promote PR #6 into the existing Render `turkarta-operations` service
 (`srv-d90g7t4m0tmc73dpi000`, Frankfurt). Runtime remains the Telegram/Bitrix
-relay. The intended activation mode is `SUPPORT_AI_MODE=shadow`. New customer messages queue classification
+relay, with `SUPPORT_AI_MODE=shadow`. New customer messages queue classification
 and Russian reply drafts; operator replies queue evidence-based quality reviews.
 Results require the dedicated internal API credential. No automatic customer
 replies, financial actions, internal Telegram notifications, or employee scoring
@@ -17,8 +19,7 @@ Use `gpt-5.4-nano`, the published knowledge API at
 `https://api.turkarta.me/api/knowledge-base`, $1/day and $20/month application
 model budgets, and 12 model calls per ticket per UTC day. The model credential
 is transferred directly from the authorized dev secret into Render configuration;
-production will receive its own independently generated AI admin secret after
-explicit approval of the key transfer. No secrets
+production has its own independently generated AI admin secret. No secrets
 are checked in. Account diagnostics remain disconnected.
 
 The existing free Render service can sleep when idle; queued analysis resumes
@@ -38,11 +39,11 @@ when it wakes. This rollout does not establish an always-on analysis SLA.
    These add columns, tables, indexes, and queue triggers. Existing customer and
    system messages receive actor metadata; no historical analysis is queued.
    Migration `0014_bitrix_delivery_receipts.sql` is already installed.
-5. Merge the tested PR and deploy that exact production merge commit with AI
-   mode off. Automatic approval review blocked transferring the dev OpenAI key
-   into Render without explicit credential/destination approval. Configure
-   production shadow mode and secrets only after that approval. Existing webhook addresses and
-   connector routing remain the same.
+5. The tested branch was first deployed with AI off. After explicit user
+   approval, copy the supplied model key from Fly dev to Render, generate a
+   separate production admin secret, set shadow mode and the spend limits, and
+   redeploy the same tested commit. Existing webhook addresses and connector
+   routing remain the same.
 6. Verify Render live commit, public health, authenticated readiness, rejection
    of unauthenticated AI requests, and absent sandbox mutation routes. Use a
    clearly marked synthetic DB ticket with no Telegram/Bitrix destination to
@@ -61,8 +62,8 @@ accumulate jobs while analysis is off; account for this before reactivation.
 
 Dev gate: all five queued triage jobs and all five queued reviews completed,
 with six validated assessments per review. CI passed for `885167a` (run
-`34888679695`). Production code is live; model activation and the production
-model smoke check are pending explicit credential-transfer approval.
+`34888679695`). Production code and shadow configuration are live. The production model
+smoke check passed; results are recorded below.
 
 Dev failures from the
 initial activation remain available for audit; they were not rewritten as passes.
@@ -75,7 +76,7 @@ validation now passes, but severity calibration remains experimental. Reviews
 must remain pending supervisor review; do not publish them as employee scores
 or enable automatic critical notifications based on this validation alone.
 
-## Production deployment result
+## Initial production deployment — before activation
 
 - Commit: `6d376c339849d10f6d485c173eee0f68a5d2443f` on `main`.
 - Render deployment: `dep-dak50p0ae00c73fmr58g`, live at
@@ -89,3 +90,38 @@ or enable automatic critical notifications based on this validation alone.
   customer messages were sent through production Telegram or Bitrix.
 - GitHub API connectivity timed out during the final metadata check. The tested
   branch was merged with Git and pushed to main; Render confirms that exact merge.
+
+## Shadow activation — 2026-09-15
+
+- User explicitly approved the model-key transfer and production activation.
+- The key was transferred directly from the dev Fly machine into Render
+  environment configuration, without printing it or saving it in a local file.
+- A separate production AI admin secret was generated and configured.
+- Deployment `dep-dak5433l550s739ui8a0` became live at
+  `2026-09-14T19:59:32Z`, using the same code commit `6d376c3`.
+- Mode: shadow; model: `gpt-5.4-nano`; application caps: $1 per UTC day,
+  $20 per UTC month, 12 calls per ticket per UTC day.
+- Drafts and reviews are available through the authenticated internal API;
+  there is currently no Bitrix/Telegram UI showing these drafts to operators.
+- Customer replies remain operator-controlled. Account diagnostics and internal
+  task/QA Telegram groups remain disconnected.
+
+## Production smoke result
+
+- Authenticated readiness: 200, shadow mode, model key configured, published KB
+  source configured, $1/day and $20/month caps, automatic replies/financial
+  actions disabled. Public health: 200; unauthenticated readiness: 403.
+- Authenticated sandbox ticket creation: 404; dev mutation routes are absent.
+- Synthetic ticket `6db2f1df-dfd8-4ae3-bc9d-8588ce8a9db4` was created directly
+  with source `support-ai-prod-smoke`, a random web identity, and no Telegram
+  or Bitrix delivery destination. No customer message was sent.
+- Triage completed with a Russian operator-handoff draft. The general service
+  question was classified as general/other, so conservative policy skipped KB
+  answer generation. KB retrieval was available; this production sample does
+  not establish successful KB-grounded answer generation.
+- A synthetic human reply triggered a completed review with six validated
+  assessments and state `pending_lead_review`.
+- Both model calls were metered and settled, total $0.00190985 for this test.
+  The synthetic ticket was marked resolved; its evidence and usage were kept.
+- Existing dev smoke tests separately cover a KB answer, payment handoff and
+  prompt-injection handling. Human QA calibration limitations still apply.
