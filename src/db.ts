@@ -20,6 +20,15 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
     on public.support_attachments (message_id)`;
 }
 
+/** Fail before registering webhooks if the required additive migration is missing. */
+export async function assertSupportAgentSchema(): Promise<void> {
+  await sql`select actor_type,author_id,source_message_id from support_messages limit 0`;
+  await sql`select id from support_agent_jobs limit 0`;
+  await sql`select id from support_agent_calls limit 0`;
+  await sql`select id,next_reminder_at from support_agent_tasks limit 0`;
+  await sql`select id from support_agent_notifications limit 0`;
+}
+
 const CLAIMABLE = new Set(["leads", "support_requests"]);
 
 export interface Lead {
@@ -296,23 +305,34 @@ export interface PhotoInput {
   filename: string;
 }
 
+export interface MessageMeta {
+  actor?: "customer" | "human" | "automation" | "system" | "unknown";
+  authorId?: string;
+  sourceId?: string;
+}
+
 export async function addMessage(
   ticketId: string,
   sender: Message["sender"],
   body: string,
   photo?: PhotoInput | null,
+  meta: MessageMeta = {},
 ): Promise<Message> {
+  const actor = meta.actor ?? (sender === "user" ? "customer" : sender === "system" ? "system" : "unknown");
   const [row] = photo
     ? await sql<Message[]>`
         with new_message as (
-          insert into support_messages (ticket_id, sender, body)
-          values (${ticketId}, ${sender}, ${body})
+          insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
+          values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
+          on conflict (source_message_id) where source_message_id is not null
+            do update set source_message_id = support_messages.source_message_id
           returning *
         ), new_attachment as (
           insert into support_attachments
             (message_id, media_type, filename, size_bytes, content)
           select id, ${photo.mediaType}, ${photo.filename}, ${photo.content.length}, ${photo.content}
             from new_message
+          on conflict (message_id) do update set message_id = support_attachments.message_id
           returning id, media_type, filename
         )
         select m.*, a.id as attachment_id,
@@ -321,8 +341,10 @@ export async function addMessage(
           from new_message m cross join new_attachment a`
     : await sql<Message[]>`
         with new_message as (
-          insert into support_messages (ticket_id, sender, body)
-          values (${ticketId}, ${sender}, ${body})
+          insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
+          values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
+          on conflict (source_message_id) where source_message_id is not null
+            do update set source_message_id = support_messages.source_message_id
           returning *
         )
         select m.*, null::uuid as attachment_id,
@@ -450,8 +472,8 @@ export async function addAgentMessageFromBitrix(
   bitrixMessageId: string,
 ): Promise<Message | null> {
   const rows = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body, bitrix_message_id)
-    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId})
+    insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
+    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
     on conflict (bitrix_message_id) where bitrix_message_id is not null
       do nothing
     returning *`;

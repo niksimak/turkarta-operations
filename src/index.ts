@@ -4,15 +4,21 @@ import { app, registerWebhooks } from "./server.js";
 import * as db from "./db.js";
 import { leadsBot } from "./bots/leads.js";
 import { supportBot } from "./bots/support.js";
+import { startAgentWorker } from "./agents/worker.js";
+import { startOperationsWorker } from "./agents/operations-delivery.js";
+import { telegramTransport } from "./agents/operations-telegram.js";
+import { operationsStore, operationsOptions } from "./agents/operations-runtime.js";
 import { ensureDeliverySchema } from "./bitrix_delivery_store.js";
 import { startDeliveryConfirmations } from "./bitrix_delivery.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
+  await db.assertSupportAgentSchema();
   await ensureDeliverySchema();
-  // init() lets grammy learn each bot's identity before handling updates.
   await Promise.all([leadsBot.init(), supportBot.init()]);
   await registerWebhooks();
+  const stopAgentWorker = startAgentWorker();
+  const stopOperationsWorker = startOperationsWorker(operationsStore, telegramTransport(supportBot.api), operationsOptions);
   const stopDeliveryConfirmations = startDeliveryConfirmations();
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
@@ -29,6 +35,7 @@ async function main() {
     stopDeliveryConfirmations();
     console.log(`${signal} received — shutting down`);
     server.close();
+    await Promise.all([stopAgentWorker(), stopOperationsWorker()]);
     await db.sql.end({ timeout: 5 }).catch(() => {});
     process.exit(0);
   };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OwnerRoutes } from "./agents/operations-contracts.js";
 
 const RosterMember = z.object({
   name: z.string(),
@@ -8,11 +9,12 @@ const RosterMember = z.object({
 export type RosterMember = z.infer<typeof RosterMember>;
 
 const Env = z.object({
-  LEADS_BOT_TOKEN: z.string().min(1),
-  SUPPORT_BOT_TOKEN: z.string().min(1),
+  SUPPORT_RUNTIME: z.enum(["relay", "sandbox"]).default("relay"),
+  LEADS_BOT_TOKEN: z.string().default(""),
+  SUPPORT_BOT_TOKEN: z.string().default(""),
 
-  LEADS_CHAT_ID: z.coerce.number().int(),
-  SUPPORT_CHAT_ID: z.coerce.number().int(),
+  LEADS_CHAT_ID: z.coerce.number().int().default(0),
+  SUPPORT_CHAT_ID: z.coerce.number().int().default(0),
   SUPPORT_FORUM: z
     .enum(["true", "false"])
     .default("true")
@@ -23,8 +25,8 @@ const Env = z.object({
 
   // Shared secret guarding the inbound webhooks (Lovable leads + app fallback),
   // sent as the `x-webhook-secret` header. Not a Supabase resource — just a name.
-  LEADS_WEBHOOK_SECRET: z.string().min(1),
-  TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
+  LEADS_WEBHOOK_SECRET: z.string().default(""),
+  TELEGRAM_WEBHOOK_SECRET: z.string().default(""),
   // Secret the Mini App / web app sends to the support webhooks. Optional: falls
   // back to LEADS_WEBHOOK_SECRET so the endpoints work before a dedicated one is set.
   APP_WEBHOOK_SECRET: z.string().optional(),
@@ -53,12 +55,69 @@ const Env = z.object({
   // guards the boundary in both directions.
   TURKARTA_API_SECRET: z.string().optional(),
 
+  // assist sends internal tasks only; customer replies remain drafts.
+  SUPPORT_AI_MODE: z.enum(["off", "shadow", "assist"]).default("off"),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  SUPPORT_AI_MODEL: z.enum(["gpt-5-nano", "gpt-5.4-nano"]).default("gpt-5.4-nano"),
+  SUPPORT_AI_ADMIN_SECRET: z.string().min(32).optional(),
+  SUPPORT_AI_DIAGNOSTICS_URL: z.string().url().refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/";
+  }, "Diagnostics requires an HTTPS origin without credentials or path").optional(),
+  SUPPORT_AI_DIAGNOSTICS_SECRET: z.string().min(32).optional(),
+  SUPPORT_AI_KB_FILE: z.string().optional(),
+  SUPPORT_AI_KB_API: z.string().url().optional(),
+  SUPPORT_AI_DAILY_USD: z.coerce.number().positive().max(100).default(1),
+  SUPPORT_AI_MONTHLY_USD: z.coerce.number().positive().max(1000).default(20),
+  SUPPORT_AI_TICKET_DAILY_CALLS: z.coerce.number().int().min(1).max(100).default(12),
+  SUPPORT_AI_INTERNAL_CHAT_ID: z.coerce.number().int().negative().safe().optional(),
+  SUPPORT_AI_QA_CHAT_ID: z.coerce.number().int().negative().safe().optional(),
+  SUPPORT_AI_OWNER_ROUTES: z.string().default("{}").transform((s, ctx) => {
+    try { return OwnerRoutes.parse(JSON.parse(s)); }
+    catch { ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid owner routes JSON" }); return z.NEVER; }
+  }),
+  SUPPORT_AI_ACK_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
+  SUPPORT_AI_UPDATE_MINUTES: z.coerce.number().int().min(1).max(10080).default(60),
+  SUPPORT_AI_MAX_REMINDERS: z.coerce.number().int().min(1).max(10).default(3),
+  SUPPORT_AI_DIGEST_HOUR_UTC: z.coerce.number().int().min(0).max(23).default(4),
+
   ROSTER: z
     .string()
     .default("[]")
     .transform((s) => z.array(RosterMember).parse(JSON.parse(s))),
 
   PORT: z.coerce.number().int().default(8000),
+}).superRefine((env, ctx) => {
+  if (env.SUPPORT_RUNTIME === "relay" && (!env.LEADS_BOT_TOKEN || !env.SUPPORT_BOT_TOKEN
+    || !env.LEADS_CHAT_ID || !env.SUPPORT_CHAT_ID || !env.LEADS_WEBHOOK_SECRET || !env.TELEGRAM_WEBHOOK_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Relay runtime requires Telegram bots, chat IDs and webhook secrets" });
+  }
+  if (env.SUPPORT_RUNTIME === "sandbox" && (env.SUPPORT_AI_MODE === "assist"
+    || env.LEADS_BOT_TOKEN || env.SUPPORT_BOT_TOKEN || env.BITRIX_CLIENT_ID || env.BITRIX_CLIENT_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Sandbox permits off/shadow only, without Telegram or Bitrix credentials" });
+  }
+  if (!!env.SUPPORT_AI_DIAGNOSTICS_URL !== !!env.SUPPORT_AI_DIAGNOSTICS_SECRET) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostics requires both origin and dedicated secret" });
+  }
+  if (env.SUPPORT_AI_DIAGNOSTICS_SECRET && [env.SUPPORT_AI_ADMIN_SECRET, env.TURKARTA_API_SECRET,
+    env.APP_WEBHOOK_SECRET, env.LEADS_WEBHOOK_SECRET, env.TELEGRAM_WEBHOOK_SECRET].includes(env.SUPPORT_AI_DIAGNOSTICS_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Diagnostics must use a separate read-only credential" });
+  }
+  if (env.SUPPORT_AI_MODE !== "off" && (!env.OPENAI_API_KEY || !env.SUPPORT_AI_ADMIN_SECRET)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "AI mode requires OPENAI_API_KEY and SUPPORT_AI_ADMIN_SECRET" });
+  }
+  if (env.SUPPORT_AI_MODE === "assist" && (!env.SUPPORT_AI_INTERNAL_CHAT_ID || !env.SUPPORT_AI_OWNER_ROUTES.support)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Assist mode requires an internal group and support primary/backup owners" });
+  }
+  if (env.SUPPORT_AI_INTERNAL_CHAT_ID && [env.SUPPORT_CHAT_ID,env.LEADS_CHAT_ID].includes(env.SUPPORT_AI_INTERNAL_CHAT_ID)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Internal tasks require a separate group, never a relay/leads group" });
+  }
+  if (env.SUPPORT_AI_QA_CHAT_ID && [env.SUPPORT_CHAT_ID,env.LEADS_CHAT_ID,env.SUPPORT_AI_INTERNAL_CHAT_ID].includes(env.SUPPORT_AI_QA_CHAT_ID)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "QA requires a separate restricted supervisor group" });
+  }
+  if (env.SUPPORT_AI_KB_FILE && env.SUPPORT_AI_KB_API) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Choose one knowledge source: file or API" });
+  }
 });
 
 const parsed = Env.safeParse(process.env);
