@@ -3,6 +3,11 @@
 Internal operations hub for Turkarta. One service, **two Telegram bots**, shared core.
 **TypeScript** (grammY + Hono), deploys on Render.
 
+Support AI: [Russian setup and operating guide](docs/SUPPORT-AGENTS-RUNBOOK.md).
+Apply migrations through `0013_support_agent_operations.sql` before running the updated service.
+AI defaults to `off`; `shadow` stores drafts/reviews and `assist` adds internal
+Telegram tasks, reminders, and supervisor summaries. Customer replies remain drafts.
+
 | Bot | Audience | Job |
 |-----|----------|-----|
 | `@turkarta_leads`   | Internal team | Inbound leads from the Lovable landing → claimable cards in the ops group |

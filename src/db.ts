@@ -9,6 +9,15 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
     add column if not exists first_photo_file_id text`;
 }
 
+/** Fail before registering webhooks if the required additive migration is missing. */
+export async function assertSupportAgentSchema(): Promise<void> {
+  await sql`select actor_type,author_id,source_message_id from support_messages limit 0`;
+  await sql`select id from support_agent_jobs limit 0`;
+  await sql`select id from support_agent_calls limit 0`;
+  await sql`select id,next_reminder_at from support_agent_tasks limit 0`;
+  await sql`select id from support_agent_notifications limit 0`;
+}
+
 const CLAIMABLE = new Set(["leads", "support_requests"]);
 
 export interface Lead {
@@ -276,14 +285,24 @@ export interface Message {
   seq: number; // monotonic cursor
 }
 
+export interface MessageMeta {
+  actor?: "customer" | "human" | "automation" | "system" | "unknown";
+  authorId?: string;
+  sourceId?: string;
+}
+
 export async function addMessage(
   ticketId: string,
   sender: Message["sender"],
   body: string,
+  meta: MessageMeta = {},
 ): Promise<Message> {
+  const actor = meta.actor ?? (sender === "user" ? "customer" : sender === "system" ? "system" : "unknown");
   const [row] = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body)
-    values (${ticketId}, ${sender}, ${body})
+    insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
+    values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
+    on conflict (source_message_id) where source_message_id is not null
+      do update set source_message_id = support_messages.source_message_id
     returning *`;
   return row!;
 }
@@ -374,8 +393,8 @@ export async function addAgentMessageFromBitrix(
   bitrixMessageId: string,
 ): Promise<Message | null> {
   const rows = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body, bitrix_message_id)
-    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId})
+    insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
+    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
     on conflict (bitrix_message_id) where bitrix_message_id is not null
       do nothing
     returning *`;

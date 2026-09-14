@@ -4,12 +4,19 @@ import { app, registerWebhooks } from "./server.js";
 import * as db from "./db.js";
 import { leadsBot } from "./bots/leads.js";
 import { supportBot } from "./bots/support.js";
+import { startAgentWorker } from "./agents/worker.js";
+import { startOperationsWorker } from "./agents/operations-delivery.js";
+import { telegramTransport } from "./agents/operations-telegram.js";
+import { operationsStore, operationsOptions } from "./agents/operations-runtime.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
+  await db.assertSupportAgentSchema();
   // init() lets grammy learn each bot's identity before handling updates.
   await Promise.all([leadsBot.init(), supportBot.init()]);
   await registerWebhooks();
+  const stopAgentWorker = startAgentWorker();
+  const stopOperationsWorker = startOperationsWorker(operationsStore, telegramTransport(supportBot.api), operationsOptions);
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     console.log(`turkarta-operations listening on :${info.port}`);
@@ -24,6 +31,7 @@ async function main() {
     shuttingDown = true;
     console.log(`${signal} received — shutting down`);
     server.close();
+    await Promise.all([stopAgentWorker(), stopOperationsWorker()]);
     await db.sql.end({ timeout: 5 }).catch(() => {});
     process.exit(0);
   };

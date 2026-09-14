@@ -15,8 +15,13 @@ import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
 import * as turkartaApi from "./turkarta_api.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
+import { createAgentRoutes } from "./agents/routes.js";
+import { readiness } from "./agents/readiness.js";
+import { agentStore } from "./agents/worker.js";
+import { operationsStore } from "./agents/operations-runtime.js";
 
 export const app = new Hono();
+app.route("/api/internal/support-ai", createAgentRoutes(agentStore, config.SUPPORT_AI_ADMIN_SECRET, operationsStore, config.SUPPORT_AI_MODE, () => readiness(config)));
 
 const TG_LEADS_PATH = `/tg/leads/${config.TELEGRAM_WEBHOOK_SECRET}`;
 const TG_SUPPORT_PATH = `/tg/support/${config.TELEGRAM_WEBHOOK_SECRET}`;

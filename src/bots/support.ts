@@ -7,8 +7,11 @@ import type { Ticket, TicketCategory } from "../db.js";
 import * as openlines from "../bitrix_openlines.js";
 import * as turkartaApi from "../turkarta_api.js";
 import { telegramPhotoUrl } from "../telegram_media.js";
+import { operationsOptions, operationsStore } from "../agents/operations-runtime.js";
+import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
+registerOperationsHandlers(supportBot, operationsStore, operationsOptions);
 
 const GREETING =
   "👋 Это поддержка Turkarta. Опишите вопрос одним сообщением — мы подключим оператора.";
@@ -134,6 +137,9 @@ export async function createAppTicket(input: {
     intake_step: null,
   });
   // Only post a card if this is genuinely new (no card yet) — dedupes re-submits.
+  await db.addMessage(ticket.id, "user", input.request, {
+    actor: "customer", authorId: `tg:${input.user_tg}`, sourceId: `miniapp-first:${ticket.id}`,
+  });
   if (!ticket.tg_message_id) {
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии (channel-agnostic connector chat).
@@ -196,7 +202,9 @@ export async function createWebTicket(input: {
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   if (!ticket.tg_message_id) {
-    const first = await db.addMessage(ticket.id, "user", input.request);
+    const first = await db.addMessage(ticket.id, "user", input.request, {
+      authorId: `web:${input.web_user_id}`, sourceId: `web-first:${ticket.id}`,
+    });
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии. Best-effort by contract — never
     // throws, so a Bitrix outage cannot fail the user's support request.
@@ -230,7 +238,9 @@ export async function createWelcomeTicket(input: {
     device: input.device,
   });
   if (!ticket.tg_message_id) {
-    await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE);
+    await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE, {
+      actor: "automation", sourceId: `welcome:${ticket.id}`,
+    });
     await postTicketCard(ticket);
   }
   return ticket;
@@ -238,7 +248,7 @@ export async function createWelcomeTicket(input: {
 
 /** A web user sent a message: log it and relay into the ops thread if claimed. */
 export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
-  const message = await db.addMessage(ticket.id, "user", body);
+  const message = await db.addMessage(ticket.id, "user", body, { authorId: `web:${ticket.web_user_id}` });
   await openlines.sendUserMessage(ticket, body, message.id);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
@@ -425,7 +435,7 @@ supportBot.on("message", async (ctx, next) => {
 
   // First contact → capture the request, then ask for an email.
   if (!ticket) {
-    await db.openTicket({
+    const opened = await db.openTicket({
       user_tg: user.id,
       user_username: user.username ?? null,
       user_name: [user.first_name, user.last_name].filter(Boolean).join(" ") || null,
@@ -433,6 +443,9 @@ supportBot.on("message", async (ctx, next) => {
       request: contentLabel(ctx),
       intake_step: "email",
       first_photo_file_id: photoFileId(ctx),
+    });
+    await db.addMessage(opened.id, "user", contentLabel(ctx), {
+      authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
     });
     await ctx.reply(ASK_EMAIL);
     return;
@@ -467,6 +480,9 @@ supportBot.on("message", async (ctx, next) => {
   // at all. Media arrives as a text placeholder (contentLabel); real file
   // forwarding into imconnector is a later step.
   const fileId = photoFileId(ctx);
+  await db.addMessage(ticket.id, "user", contentLabel(ctx), {
+    authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
+  });
   if (fileId) await sendPhotoToSupport(ticket, fileId);
   void openlines.sendUserMessage(
     ticket,
@@ -518,10 +534,16 @@ supportBot.on("message", async (ctx, next) => {
   }
   if (!ticket) return next();
 
+  // Persist all operator channels for QA; Telegram identity comes from the
+  // authenticated bot update, never from message text or a model suggestion.
+  const body = msg.text ?? "[Оператор отправил вложение; содержимое не анализировалось]";
+  const stored = await db.addMessage(ticket.id, "agent", body, {
+    actor: "human", authorId: `tg:${ctx.from.id}`,
+    sourceId: `tg:${ctx.chat.id}:${msg.message_id}`,
+  });
+
   // Web channel: store the reply for the app to poll (media isn't relayable to web).
   if (ticket.channel === "web") {
-    const body = msg.text ?? "[оператор отправил вложение — доступно только в Telegram]";
-    const stored = await db.addMessage(ticket.id, "agent", body);
     // Bell + Web Push in the app; best-effort — never blocks the reply.
     if (ticket.web_user_id) {
       await turkartaApi.notifySupportReply({
