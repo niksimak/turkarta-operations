@@ -57,12 +57,11 @@ web ticket without real customer/Telegram identity; no test messages to customer
 
 ## Release status
 
-PR #7 is ready and CI passed for code head `fec36c9`. All 66 local tests passed
-with no skips. Migration 0015 was applied to production with zero greeting rows.
-Automatic approval review rejected the production merge because it requires
-explicit approval to activate customer-facing automatic greetings. The production
-flag is kept false and production code remains `6d376c3`; existing AI shadow
-analysis remains active. No production greeting was sent during this work.
+PR #7 was explicitly approved by the user and merged as
+`10a1f5a9c67206d4ee34963a81fc16ca378f527c`. CI passed for PR head `bfbc6b2`
+(run `34893666692`). All 66 local tests passed with no skips. Migration 0015
+was applied to production with zero historical greeting rows. The production
+greeting flag is enabled; existing AI analysis remains in shadow mode.
 
 Dev verification passed on image
 `registry.fly.io/turkarta-support-ai-dev:deployment-01M2GSVWJDBK7EJWQ85E0Q5HSP`
@@ -73,4 +72,30 @@ to automation, queued no human QA review, and its AI triage completed without
 becoming stale. The check called the compiled greeting service against the
 isolated dev DB and did not send any Telegram/Bitrix message.
 
-Production merge and activation are pending the user's explicit approval.
+Production deployment `dep-dak5orek1f9s73eh5qbg` is live at
+`2026-09-14T20:44:02Z`, using merge commit `10a1f5a` (September 15 in
+Asia/Almaty). Production readiness confirms topic greetings enabled, AI mode
+shadow, automatic AI answers disabled, and unchanged $1/day and $20/month caps.
+Public health is 200 and unauthenticated AI readiness is 403.
+
+Greetings run during first-message intake, without waiting for model analysis.
+Telegram normally delivers within seconds; web chat shows the message on its
+next automatic poll. The existing free Render service can sleep when idle, so
+a cold start or upstream network delay can make the first response slower.
+
+## Production greeting verification
+
+Synthetic web ticket `ffa02d52-7d6e-4e28-b2f9-b5414c324f54` was created with
+source `support-topic-greeting-prod-smoke` and a random web identity, with no
+Telegram/Bitrix destination. The tested compiled greeting service returned
+sent/skipped for concurrent attempts. Exactly one payment greeting was persisted
+with automation attribution, and the live production web polling API returned
+that same greeting. No Telegram or Bitrix test message was sent.
+
+The live production AI triage completed with `stale=false`, money-related routing
+and `automatic_send_allowed=false`. The first result-read attempt hit a local
+TCP timeout; a read-only retry succeeded. The synthetic ticket was then resolved,
+retaining its greeting and metering records; normal closure QA may queue.
+
+The rollout is complete: production greetings are enabled. Existing conversations
+are not backfilled and substantive AI answers still require an operator.

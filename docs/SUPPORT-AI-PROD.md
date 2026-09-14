@@ -2,8 +2,9 @@
 
 **Current status:** production AI is active in **shadow mode**. The user
 explicitly approved copying the supplied OpenAI key from Fly dev into Render
-production. The transfer is complete; automatic customer replies and internal
-Telegram notifications remain disabled.
+production. The transfer is complete. Substantive AI answers remain drafts and internal
+Telegram notifications remain disabled. Fixed topic greetings are enabled
+separately; see `SUPPORT-TOPIC-GREETINGS.md`.
 
 ## Scope and operating mode
 
@@ -11,9 +12,10 @@ Promote PR #6 into the existing Render `turkarta-operations` service
 (`srv-d90g7t4m0tmc73dpi000`, Frankfurt). Runtime remains the Telegram/Bitrix
 relay, with `SUPPORT_AI_MODE=shadow`. New customer messages queue classification
 and Russian reply drafts; operator replies queue evidence-based quality reviews.
-Results require the dedicated internal API credential. No automatic customer
-replies, financial actions, internal Telegram notifications, or employee scoring
-publication are enabled. Reviews require a supervisor's assessment.
+AI results require the dedicated internal API credential. Automatic substantive
+AI answers, financial actions, internal Telegram notifications, and employee
+scoring publication remain disabled. Short fixed topic greetings are sent
+separately during intake. Reviews require a supervisor's assessment.
 
 Use `gpt-5.4-nano`, the published knowledge API at
 `https://api.turkarta.me/api/knowledge-base`, $1/day and $20/month application
