@@ -14,7 +14,8 @@ Use `gpt-5.4-nano`, the published knowledge API at
 `https://api.turkarta.me/api/knowledge-base`, $1/day and $20/month application
 model budgets, and 12 model calls per ticket per UTC day. The model credential
 is transferred directly from the authorized dev secret into Render configuration;
-production receives its own independently generated AI admin secret. No secrets
+production will receive its own independently generated AI admin secret after
+explicit approval of the key transfer. No secrets
 are checked in. Account diagnostics remain disconnected.
 
 The existing free Render service can sleep when idle; queued analysis resumes
@@ -34,8 +35,10 @@ when it wakes. This rollout does not establish an always-on analysis SLA.
    These add columns, tables, indexes, and queue triggers. Existing customer and
    system messages receive actor metadata; no historical analysis is queued.
    Migration `0014_bitrix_delivery_receipts.sql` is already installed.
-5. Configure production shadow mode and secrets, then merge the tested PR and
-   deploy that exact production merge commit. Existing webhook addresses and
+5. Merge the tested PR and deploy that exact production merge commit with AI
+   mode off. Automatic approval review blocked transferring the dev OpenAI key
+   into Render without explicit credential/destination approval. Configure
+   production shadow mode and secrets only after that approval. Existing webhook addresses and
    connector routing remain the same.
 6. Verify Render live commit, public health, authenticated readiness, rejection
    of unauthenticated AI requests, and absent sandbox mutation routes. Use a
@@ -59,3 +62,11 @@ with six validated assessments per review. CI passed for `885167a` (run
 
 Dev failures from the
 initial activation remain available for audit; they were not rewritten as passes.
+
+## QA interpretation
+
+The live wallet scenario produced an excessive `critical` resolution finding
+solely because an unfinished synthetic dialogue had no final answer. Structural
+validation now passes, but severity calibration remains experimental. Reviews
+must remain pending supervisor review; do not publish them as employee scores
+or enable automatic critical notifications based on this validation alone.
