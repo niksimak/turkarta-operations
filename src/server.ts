@@ -13,12 +13,18 @@ import {
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
 import * as openlines from "./bitrix_openlines.js";
-import * as turkartaApi from "./turkarta_api.js";
+import { deliverOperatorReply } from "./bitrix_reply.js";
+import { flushDeliveryConfirmations } from "./bitrix_delivery.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
 import { createAgentRoutes } from "./agents/routes.js";
 import { readiness } from "./agents/readiness.js";
 import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
+import {
+  MAX_PHOTO_BYTES,
+  validSupportPhotoRequest,
+  validatePhoto,
+} from "./support_media.js";
 
 export const app = new Hono();
 app.route("/api/internal/support-ai", createAgentRoutes(agentStore, config.SUPPORT_AI_ADMIN_SECRET, operationsStore, config.SUPPORT_AI_MODE, () => readiness(config)));
@@ -161,7 +167,20 @@ function appAuthed(c: Context): boolean {
 }
 
 const serializeMessages = (msgs: db.Message[]) =>
-  msgs.map((m) => ({ id: m.id, seq: m.seq, sender: m.sender, body: m.body, at: m.created_at }));
+  msgs.map((m) => ({
+    id: m.id,
+    seq: m.seq,
+    sender: m.sender,
+    body: m.body,
+    at: m.created_at,
+    attachment: m.attachment_id
+      ? {
+          id: m.attachment_id,
+          mediaType: m.attachment_media_type,
+          filename: m.attachment_filename,
+        }
+      : null,
+  }));
 
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
@@ -230,6 +249,90 @@ app.post("/api/support/web/message", async (c) => {
   if (!ticket) return c.json({ error: "no open ticket" }, 404);
   await pushWebUserMessage(ticket, parsed.data.body);
   return c.json({ ok: true });
+});
+
+// One durable photo message. The app backend authenticates the user and sends
+// multipart here over the shared-secret boundary; browsers never call ops directly.
+app.post("/api/support/web/photo", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const form = await c.req.parseBody().catch(() => null);
+  if (!form) return c.json({ error: "bad multipart payload" }, 422);
+  const webUserId = typeof form.web_user_id === "string" ? form.web_user_id.trim() : "";
+  const rawBody = typeof form.body === "string" ? form.body.trim() : "";
+  const body = rawBody || "📷 Фото";
+  const file = form.photo;
+  if (!webUserId || body.length > 4000 || !(file instanceof File)) {
+    return c.json({ error: "bad payload" }, 422);
+  }
+  if (file.size <= 0 || file.size > MAX_PHOTO_BYTES) {
+    return c.json({ error: "photo_too_large" }, 413);
+  }
+  const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
+  if (!photo) return c.json({ error: "unsupported_photo" }, 415);
+
+  let ticket = await db.ticketByWebUser(webUserId);
+  if (!ticket) {
+    const email = typeof form.email === "string" ? form.email.trim() || null : null;
+    if (!email) return c.json({ error: "email_required" }, 422);
+    ticket = await createWebTicket({
+      web_user_id: webUserId,
+      user_name: null,
+      email,
+      device: typeof form.device === "string" ? form.device.slice(0, 300) : null,
+      request: body,
+      photo,
+    });
+  } else {
+    await pushWebUserMessage(ticket, body, photo);
+  }
+  return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+});
+
+function attachmentResponse(
+  attachment: db.SupportAttachment,
+  head = false,
+  cacheControl = "private, max-age=300",
+): Response {
+  return new Response(head ? null : attachment.content, {
+    headers: {
+      "content-type": attachment.media_type,
+      "content-length": String(attachment.size_bytes),
+      "content-disposition": `inline; filename="${attachment.filename}"`,
+      "cache-control": cacheControl,
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+async function publicSupportPhoto(c: Context, head = false): Promise<Response> {
+  const id = c.req.param("id") ?? "";
+  if (
+    !validSupportPhotoRequest(
+      id,
+      c.req.query("expires") ?? "",
+      c.req.query("signature") ?? "",
+      config.TELEGRAM_WEBHOOK_SECRET,
+    )
+  ) {
+    return c.json({ error: "invalid or expired media link" }, 403);
+  }
+  const attachment = await db.supportAttachment(id);
+  return attachment
+    ? attachmentResponse(attachment, head, "public, max-age=300")
+    : c.json({ error: "not found" }, 404);
+}
+
+// Bitrix probes some remote files with HEAD before downloading them. Supporting
+// both methods avoids a false "file unavailable" result despite a healthy GET.
+app.get("/media/support/:id/:filename", (c) => publicSupportPhoto(c));
+app.on("HEAD", "/media/support/:id/:filename", (c) => publicSupportPhoto(c, true));
+
+app.get("/api/support/web/attachment/:id", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const webUserId = c.req.query("web_user_id") ?? "";
+  if (!webUserId) return c.json({ error: "web_user_id required" }, 422);
+  const attachment = await db.supportAttachmentForWebUser(c.req.param("id"), webUserId);
+  return attachment ? attachmentResponse(attachment) : c.json({ error: "not found" }, 404);
 });
 
 // Web app polls for new messages + ticket status.
@@ -436,9 +539,14 @@ app.post("/bitrix/app/handler", async (c) => {
   // read through Hono's flat parseBody.
   if (event === "ONIMCONNECTORMESSAGEADD") {
     const data = payload.nested.data as Record<string, unknown> | undefined;
+    if (String(data?.CONNECTOR) !== config.BITRIX_CONNECTOR_ID || Number(data?.LINE) !== config.BITRIX_LINE_ID) {
+      return c.json({ ok: false, error: "Unexpected connector or line" }, 400);
+    }
     const messages = data?.MESSAGES;
     const list = Array.isArray(messages) ? messages : Object.values(messages ?? {});
     let delivered = 0;
+    let failed = 0;
+    let duplicates = 0;
     for (const raw of list) {
       const m = raw as Record<string, Record<string, string>>;
       const chatId = m.chat?.id ?? "";
@@ -455,7 +563,7 @@ app.post("/bitrix/app/handler", async (c) => {
       // re-deploying blind; the inbound chat id in particular is not guaranteed
       // to be the `tk-…` string we send outbound.
       const ticket = ticketId ? await db.getTicket(ticketId) : null;
-      if (!ticketId || !text || !bitrixId || !ticket) {
+      if (!ticketId || !text || !bitrixId || !ticket || !m.im?.chat_id || !m.im?.message_id) {
         console.log(
           `[bitrix-ol] SKIP chat="${chatId}" ticketId=${ticketId} ticketFound=${Boolean(ticket)} ` +
             `hasText=${Boolean(text)} msgId=${bitrixId} keys=${JSON.stringify(Object.keys(m))} ` +
@@ -463,34 +571,19 @@ app.post("/bitrix/app/handler", async (c) => {
         );
         continue;
       }
-      const stored = await db.addAgentMessageFromBitrix(ticket.id, text, bitrixId);
-      if (!stored) console.log(`[bitrix-ol] duplicate ${bitrixId} — already delivered`);
-      if (stored) {
-        delivered++;
-        // Delivery leg by channel — all behind the dedup insert, so a Bitrix
-        // event retry can never double-deliver. Best-effort by contract.
-        if (ticket.channel === "telegram" && ticket.user_tg != null) {
-          // TG ticket: the reply goes out as a bot DM (web polling never sees
-          // these users). A user who blocked the bot must not 500 the webhook.
-          await supportBot.api
-            .sendMessage(ticket.user_tg, text)
-            .catch((err) =>
-              console.warn(
-                `[bitrix-ol] DM to ${ticket.user_tg} failed:`,
-                err instanceof Error ? err.message : err,
-              ),
-            );
-        } else if (ticket.web_user_id) {
-          await turkartaApi.notifySupportReply({
-            web_user_id: ticket.web_user_id,
-            ticket_id: ticket.id,
-            message_id: stored.id,
-            preview: text,
-          });
-        }
-      }
+      const outcome = await deliverOperatorReply(ticket, text, {
+        bitrix_message_id: bitrixId,
+        connector: config.BITRIX_CONNECTOR_ID, line: config.BITRIX_LINE_ID,
+        im_chat_id: String(m.im.chat_id), im_message_id: String(m.im.message_id),
+        chat_id: chatId,
+      });
+      if (outcome === "delivered") delivered++;
+      else if (outcome === "failed") failed++;
+      else duplicates++;
     }
-    console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered`);
+    // Acknowledgements have their own durable retries; keep the webhook fast.
+    void flushDeliveryConfirmations();
+    console.log(`[bitrix-ol] operator messages: ${list.length} seen, ${delivered} delivered, ${failed} failed, ${duplicates} duplicates`);
     if (list.length === 0) {
       // The payload arrived but carried no messages we could read — dump the
       // shape (tokens redacted) so the real key layout is visible instead of
@@ -500,7 +593,7 @@ app.post("/bitrix/app/handler", async (c) => {
         .slice(0, 900);
       console.log(`[bitrix-ol] EMPTY payload shape: ${redacted}`);
     }
-    return c.json({ ok: true, delivered });
+    return c.json({ ok: true, delivered, failed, duplicates });
   }
 
   console.log(`[bitrix-app] event ${event || "(none)"} received`);

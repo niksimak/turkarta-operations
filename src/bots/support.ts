@@ -10,7 +10,11 @@ import { telegramPhotoUrl } from "../telegram_media.js";
 import { operationsOptions, operationsStore } from "../agents/operations-runtime.js";
 import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 
+import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
+import { sequencePrivateMessages } from "../telegram_sequence.js";
+
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
+supportBot.use(sequencePrivateMessages());
 registerOperationsHandlers(supportBot, operationsStore, operationsOptions);
 
 const GREETING =
@@ -137,7 +141,7 @@ export async function createAppTicket(input: {
     intake_step: null,
   });
   // Only post a card if this is genuinely new (no card yet) — dedupes re-submits.
-  await db.addMessage(ticket.id, "user", input.request, {
+  await db.addMessage(ticket.id, "user", input.request, undefined, {
     actor: "customer", authorId: `tg:${input.user_tg}`, sourceId: `miniapp-first:${ticket.id}`,
   });
   if (!ticket.tg_message_id) {
@@ -191,6 +195,7 @@ export async function createWebTicket(input: {
   email: string | null;
   device: string | null;
   request: string;
+  photo?: ValidPhoto | null;
 }): Promise<Ticket> {
   const ticket = await db.openWebTicket({
     web_user_id: input.web_user_id,
@@ -202,13 +207,13 @@ export async function createWebTicket(input: {
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   if (!ticket.tg_message_id) {
-    const first = await db.addMessage(ticket.id, "user", input.request, {
+    const first = await db.addMessage(ticket.id, "user", input.request, input.photo, {
       authorId: `web:${input.web_user_id}`, sourceId: `web-first:${ticket.id}`,
     });
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии. Best-effort by contract — never
     // throws, so a Bitrix outage cannot fail the user's support request.
-    await openlines.sendUserMessage(ticket, input.request, first.id);
+    await openlines.sendUserMessage(ticket, input.request, first.id, bitrixStoredPhoto(first));
   }
   return ticket;
 }
@@ -238,7 +243,7 @@ export async function createWelcomeTicket(input: {
     device: input.device,
   });
   if (!ticket.tg_message_id) {
-    await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE, {
+    await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE, undefined, {
       actor: "automation", sourceId: `welcome:${ticket.id}`,
     });
     await postTicketCard(ticket);
@@ -247,18 +252,47 @@ export async function createWelcomeTicket(input: {
 }
 
 /** A web user sent a message: log it and relay into the ops thread if claimed. */
-export async function pushWebUserMessage(ticket: Ticket, body: string): Promise<void> {
-  const message = await db.addMessage(ticket.id, "user", body, { authorId: `web:${ticket.web_user_id}` });
-  await openlines.sendUserMessage(ticket, body, message.id);
+function bitrixStoredPhoto(message: db.Message): Array<{ url: string; name: string }> {
+  if (!message.attachment_id || !message.attachment_filename) return [];
+  return [
+    {
+      url: supportPhotoUrl(
+        message.attachment_id,
+        message.attachment_filename,
+        config.PUBLIC_BASE_URL,
+        config.TELEGRAM_WEBHOOK_SECRET,
+      ),
+      name: message.attachment_filename,
+    },
+  ];
+}
+
+export async function pushWebUserMessage(
+  ticket: Ticket,
+  body: string,
+  photo?: ValidPhoto | null,
+): Promise<void> {
+  const message = await db.addMessage(ticket.id, "user", body, photo, { authorId: `web:${ticket.web_user_id}` });
+  const files = bitrixStoredPhoto(message);
+  await openlines.sendUserMessage(ticket, body, message.id, files);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
-    await supportBot.api
-      .sendMessage(
-        config.SUPPORT_CHAT_ID,
-        `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(body)}`,
-        { message_thread_id: ticket.thread_id, parse_mode: "HTML" },
-      )
-      .catch(() => {});
+    if (files[0]) {
+      await supportBot.api
+        .sendPhoto(config.SUPPORT_CHAT_ID, files[0].url, {
+          message_thread_id: ticket.thread_id,
+          caption: `💬 ${who}: ${body}`.slice(0, 1024),
+        })
+        .catch(() => {});
+    } else {
+      await supportBot.api
+        .sendMessage(
+          config.SUPPORT_CHAT_ID,
+          `💬 <b>${escapeHtml(who)}:</b> ${escapeHtml(body)}`,
+          { message_thread_id: ticket.thread_id, parse_mode: "HTML" },
+        )
+        .catch(() => {});
+    }
   }
 }
 
@@ -444,16 +478,18 @@ supportBot.on("message", async (ctx, next) => {
       intake_step: "email",
       first_photo_file_id: photoFileId(ctx),
     });
-    await db.addMessage(opened.id, "user", contentLabel(ctx), {
+    await db.addMessage(opened.id, "user", contentLabel(ctx), undefined, {
       authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
     });
     await ctx.reply(ASK_EMAIL);
     return;
   }
 
-  // Mid-intake: this message is the email (or /skip).
-  if (ticket.intake_step === "email") {
-    const email = !text || text === "/skip" ? null : text;
+  // Only an actual text message can answer the email prompt. Album items
+  // arrive as separate photo updates (captions are not email answers): relay
+  // them below without finishing intake or discarding the current photo.
+  if (ticket.intake_step === "email" && text) {
+    const email = text === "/skip" ? null : text;
     const finalized = await db.finishIntake(ticket.id, email);
     if (finalized) {
       await postTicketCard(finalized);
@@ -477,10 +513,10 @@ supportBot.on("message", async (ctx, next) => {
 
   // Mirror every post-intake user message into Bitrix — including on a NEW
   // (unclaimed) ticket, whose messages previously reached no operator surface
-  // at all. Media arrives as a text placeholder (contentLabel); real file
-  // forwarding into imconnector is a later step.
+  // at all. Photos received while awaiting email use this same path, with a
+  // distinct Telegram message id and signed file URL for every album item.
   const fileId = photoFileId(ctx);
-  await db.addMessage(ticket.id, "user", contentLabel(ctx), {
+  await db.addMessage(ticket.id, "user", contentLabel(ctx), undefined, {
     authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
   });
   if (fileId) await sendPhotoToSupport(ticket, fileId);
@@ -537,7 +573,7 @@ supportBot.on("message", async (ctx, next) => {
   // Persist all operator channels for QA; Telegram identity comes from the
   // authenticated bot update, never from message text or a model suggestion.
   const body = msg.text ?? "[Оператор отправил вложение; содержимое не анализировалось]";
-  const stored = await db.addMessage(ticket.id, "agent", body, {
+  const stored = await db.addMessage(ticket.id, "agent", body, undefined, {
     actor: "human", authorId: `tg:${ctx.from.id}`,
     sourceId: `tg:${ctx.chat.id}:${msg.message_id}`,
   });

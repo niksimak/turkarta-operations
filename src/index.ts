@@ -8,15 +8,18 @@ import { startAgentWorker } from "./agents/worker.js";
 import { startOperationsWorker } from "./agents/operations-delivery.js";
 import { telegramTransport } from "./agents/operations-telegram.js";
 import { operationsStore, operationsOptions } from "./agents/operations-runtime.js";
+import { ensureDeliverySchema } from "./bitrix_delivery_store.js";
+import { startDeliveryConfirmations } from "./bitrix_delivery.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
   await db.assertSupportAgentSchema();
-  // init() lets grammy learn each bot's identity before handling updates.
+  await ensureDeliverySchema();
   await Promise.all([leadsBot.init(), supportBot.init()]);
   await registerWebhooks();
   const stopAgentWorker = startAgentWorker();
   const stopOperationsWorker = startOperationsWorker(operationsStore, telegramTransport(supportBot.api), operationsOptions);
+  const stopDeliveryConfirmations = startDeliveryConfirmations();
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     console.log(`turkarta-operations listening on :${info.port}`);
@@ -29,6 +32,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopDeliveryConfirmations();
     console.log(`${signal} received — shutting down`);
     server.close();
     await Promise.all([stopAgentWorker(), stopOperationsWorker()]);

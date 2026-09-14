@@ -3,10 +3,21 @@ import { config } from "./config.js";
 
 export const sql = postgres(config.DATABASE_URL, { max: 5 });
 
-/** Ensure the additive photo-relay column exists before accepting updates. */
+/** Ensure additive support-media schema exists before accepting updates. */
 export async function ensureSupportPhotoSchema(): Promise<void> {
   await sql`alter table public.support_requests
     add column if not exists first_photo_file_id text`;
+  await sql`create table if not exists public.support_attachments (
+    id uuid primary key default gen_random_uuid(),
+    message_id uuid not null unique references public.support_messages(id) on delete cascade,
+    media_type text not null check (media_type in ('image/jpeg', 'image/png', 'image/webp')),
+    filename text not null,
+    size_bytes integer not null check (size_bytes > 0 and size_bytes <= 8388608),
+    content bytea not null,
+    created_at timestamptz not null default now()
+  )`;
+  await sql`create index if not exists support_attachments_message_idx
+    on public.support_attachments (message_id)`;
 }
 
 /** Fail before registering webhooks if the required additive migration is missing. */
@@ -157,7 +168,7 @@ export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
 export async function finishIntake(id: string, email: string | null): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`
     update support_requests set email = ${email}, intake_step = null
-     where id = ${id}
+     where id = ${id} and intake_step = 'email'
     returning *`;
   return rows[0] ?? null;
 }
@@ -283,6 +294,15 @@ export interface Message {
   body: string;
   created_at: string;
   seq: number; // monotonic cursor
+  attachment_id: string | null;
+  attachment_media_type: string | null;
+  attachment_filename: string | null;
+}
+
+export interface PhotoInput {
+  content: Uint8Array;
+  mediaType: string;
+  filename: string;
 }
 
 export interface MessageMeta {
@@ -295,15 +315,42 @@ export async function addMessage(
   ticketId: string,
   sender: Message["sender"],
   body: string,
+  photo?: PhotoInput | null,
   meta: MessageMeta = {},
 ): Promise<Message> {
   const actor = meta.actor ?? (sender === "user" ? "customer" : sender === "system" ? "system" : "unknown");
-  const [row] = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
-    values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
-    on conflict (source_message_id) where source_message_id is not null
-      do update set source_message_id = support_messages.source_message_id
-    returning *`;
+  const [row] = photo
+    ? await sql<Message[]>`
+        with new_message as (
+          insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
+          values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
+          on conflict (source_message_id) where source_message_id is not null
+            do update set source_message_id = support_messages.source_message_id
+          returning *
+        ), new_attachment as (
+          insert into support_attachments
+            (message_id, media_type, filename, size_bytes, content)
+          select id, ${photo.mediaType}, ${photo.filename}, ${photo.content.length}, ${photo.content}
+            from new_message
+          on conflict (message_id) do update set message_id = support_attachments.message_id
+          returning id, media_type, filename
+        )
+        select m.*, a.id as attachment_id,
+               a.media_type as attachment_media_type,
+               a.filename as attachment_filename
+          from new_message m cross join new_attachment a`
+    : await sql<Message[]>`
+        with new_message as (
+          insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
+          values (${ticketId}, ${sender}, ${body}, ${actor}, ${meta.authorId ?? null}, ${meta.sourceId ?? null})
+          on conflict (source_message_id) where source_message_id is not null
+            do update set source_message_id = support_messages.source_message_id
+          returning *
+        )
+        select m.*, null::uuid as attachment_id,
+               null::text as attachment_media_type,
+               null::text as attachment_filename
+          from new_message m`;
   return row!;
 }
 
@@ -318,12 +365,43 @@ export async function messagesSince(
   since?: number | null,
 ): Promise<Message[]> {
   return sql<Message[]>`
-    select id, ticket_id, sender, body, created_at::text as created_at, seq
-      from support_messages
-     where ticket_id = ${ticketId}
-       ${since != null ? sql`and seq > ${since}` : sql``}
-     order by seq asc
+    select m.id, m.ticket_id, m.sender, m.body, m.created_at::text as created_at, m.seq,
+           a.id as attachment_id, a.media_type as attachment_media_type,
+           a.filename as attachment_filename
+      from support_messages m
+      left join support_attachments a on a.message_id = m.id
+     where m.ticket_id = ${ticketId}
+       ${since != null ? sql`and m.seq > ${since}` : sql``}
+     order by m.seq asc
      limit 200`;
+}
+
+export interface SupportAttachment {
+  id: string;
+  media_type: string;
+  filename: string;
+  size_bytes: number;
+  content: Uint8Array;
+}
+
+export async function supportAttachment(id: string): Promise<SupportAttachment | null> {
+  const rows = await sql<SupportAttachment[]>`
+    select id, media_type, filename, size_bytes, content
+      from support_attachments where id = ${id}`;
+  return rows[0] ?? null;
+}
+
+export async function supportAttachmentForWebUser(
+  id: string,
+  webUserId: string,
+): Promise<SupportAttachment | null> {
+  const rows = await sql<SupportAttachment[]>`
+    select a.id, a.media_type, a.filename, a.size_bytes, a.content
+      from support_attachments a
+      join support_messages m on m.id = a.message_id
+      join support_requests r on r.id = m.ticket_id
+     where a.id = ${id} and r.web_user_id = ${webUserId}`;
+  return rows[0] ?? null;
 }
 
 // ---- Bitrix24 local-application tokens (migration 0009) ------------------
@@ -385,7 +463,8 @@ export async function getBitrixTokens(): Promise<BitrixTokens | null> {
  *
  * `bitrix_message_id` carries a partial UNIQUE index, so a retried event
  * (TZ §4.4 — Bitrix retries, duplicates unacceptable) collides and inserts
- * nothing. Returns null when the row already existed = "already delivered".
+ * nothing. Returns null when the row already existed; this does NOT prove
+ * transport delivery (tracked separately in bitrix_delivery_receipts).
  */
 export async function addAgentMessageFromBitrix(
   ticketId: string,
