@@ -57,6 +57,7 @@ const Env = z.object({
 
   // assist sends internal tasks only; customer replies remain drafts.
   SUPPORT_AI_MODE: z.enum(["off", "shadow", "assist"]).default("off"),
+  SUPPORT_TOPIC_GREETINGS_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
   OPENAI_API_KEY: z.string().min(1).optional(),
   SUPPORT_AI_MODEL: z.enum(["gpt-5-nano", "gpt-5.4-nano"]).default("gpt-5.4-nano"),
   SUPPORT_AI_ADMIN_SECRET: z.string().min(32).optional(),

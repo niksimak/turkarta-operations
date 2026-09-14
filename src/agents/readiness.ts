@@ -11,7 +11,8 @@ export function readiness(env: typeof config) {
     owner_teams: Object.keys(env.SUPPORT_AI_OWNER_ROUTES),
     diagnostics_configured: !!env.SUPPORT_AI_DIAGNOSTICS_URL && !!env.SUPPORT_AI_DIAGNOSTICS_SECRET,
     daily_budget_usd: env.SUPPORT_AI_DAILY_USD, monthly_budget_usd: env.SUPPORT_AI_MONTHLY_USD,
-    connectivity: "not_checked", automatic_customer_replies: false, financial_actions: false,
+    connectivity: "not_checked", automatic_customer_replies: !!env.SUPPORT_TOPIC_GREETINGS_ENABLED,
+    topic_greetings_enabled: !!env.SUPPORT_TOPIC_GREETINGS_ENABLED, automatic_ai_answers: false, financial_actions: false,
     note_ru: "Показана только конфигурация. Доступность модели, базы знаний, диагностики и Telegram ещё нужно проверить на тестовом обращении.",
   };
 }

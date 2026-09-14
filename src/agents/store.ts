@@ -47,7 +47,7 @@ export class AgentStore {
     // Lease fencing prevents a worker returning after timeout from overwriting a new result.
     await this.sql`update support_agent_jobs set
       status=case when exists(select 1 from support_messages
-        where ticket_id=${job.ticket_id} and seq>${job.through_seq}) then 'superseded' else 'completed' end,
+        where ticket_id=${job.ticket_id} and seq>${job.through_seq} and actor_type <> 'automation') then 'superseded' else 'completed' end,
       result=${this.sql.json(result as postgres.JSONValue)}, finished_at=now(), lease_until=null
       where id=${job.id} and status='running' and lease_token=${job.lease_token}`;
   }
@@ -85,7 +85,7 @@ export class AgentStore {
 
   async results(ticketId: string) {
     return this.sql`select id,kind,through_seq,status,result,error_code,feedback,created_at,finished_at,
-      exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq) as stale
+      exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation') as stale
       from support_agent_jobs j where ticket_id=${ticketId} order by created_at desc limit 30`;
   }
 

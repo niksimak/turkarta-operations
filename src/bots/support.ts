@@ -12,6 +12,7 @@ import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 
 import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
 import { sequencePrivateMessages } from "../telegram_sequence.js";
+import { greetCustomer } from "../topic-greeting-runtime.js";
 
 export const supportBot = new Bot(config.SUPPORT_BOT_TOKEN);
 supportBot.use(sequencePrivateMessages());
@@ -23,6 +24,16 @@ const GREETING =
 const ASK_EMAIL = "📧 Оставьте email для связи (или отправьте /skip).";
 
 const QUEUED = "Принято! Подключаем оператора…";
+
+async function acknowledgeTopic(ticketId: string, messageId: string) {
+  await greetCustomer(ticketId, messageId, async (userId, text) => {
+    // grammY's Node typings name the older abort-controller shim; native signals
+    // implement the same runtime cancellation interface used by its HTTP client.
+    const signal = AbortSignal.timeout(5000) as unknown as Parameters<typeof supportBot.api.sendMessage>[3];
+    const sent = await supportBot.api.sendMessage(userId, text, {}, signal);
+    return String(sent.message_id);
+  });
+}
 
 // /start (incl. deep-link from the Mini App: t.me/turkarta_support_bot?start=miniapp)
 supportBot.command("start", (ctx) => ctx.reply(GREETING));
@@ -141,9 +152,10 @@ export async function createAppTicket(input: {
     intake_step: null,
   });
   // Only post a card if this is genuinely new (no card yet) — dedupes re-submits.
-  await db.addMessage(ticket.id, "user", input.request, undefined, {
+  const first = await db.addMessage(ticket.id, "user", input.request, undefined, {
     actor: "customer", authorId: `tg:${input.user_tg}`, sourceId: `miniapp-first:${ticket.id}`,
   });
+  await acknowledgeTopic(ticket.id, first.id);
   if (!ticket.tg_message_id) {
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии (channel-agnostic connector chat).
@@ -210,6 +222,7 @@ export async function createWebTicket(input: {
     const first = await db.addMessage(ticket.id, "user", input.request, input.photo, {
       authorId: `web:${input.web_user_id}`, sourceId: `web-first:${ticket.id}`,
     });
+    await acknowledgeTopic(ticket.id, first.id);
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии. Best-effort by contract — never
     // throws, so a Bitrix outage cannot fail the user's support request.
@@ -273,6 +286,7 @@ export async function pushWebUserMessage(
   photo?: ValidPhoto | null,
 ): Promise<void> {
   const message = await db.addMessage(ticket.id, "user", body, photo, { authorId: `web:${ticket.web_user_id}` });
+  await acknowledgeTopic(ticket.id, message.id);
   const files = bitrixStoredPhoto(message);
   await openlines.sendUserMessage(ticket, body, message.id, files);
   if (ticket.thread_id != null) {
@@ -478,9 +492,10 @@ supportBot.on("message", async (ctx, next) => {
       intake_step: "email",
       first_photo_file_id: photoFileId(ctx),
     });
-    await db.addMessage(opened.id, "user", contentLabel(ctx), undefined, {
+    const first = await db.addMessage(opened.id, "user", contentLabel(ctx), undefined, {
       authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
     });
+    await acknowledgeTopic(opened.id, first.id);
     await ctx.reply(ASK_EMAIL);
     return;
   }
