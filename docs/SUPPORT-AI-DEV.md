@@ -70,3 +70,23 @@ deployment, redeploy the previous dev image. Production support/main-app
 services, databases, webhooks and secrets are not part of this rollout.
 
 Model compatibility/pricing checked against the [official model documentation](https://developers.openai.com/api/docs/models/gpt-5.4-nano).
+
+## Live verification — 2026-09-14
+
+Deployed code `6b40aca`, image
+`registry.fly.io/turkarta-support-ai-dev:support-ai-6b40aca`
+(digest `sha256:02c78505d5199fb1449e9f584d4c15b58f56c7855b8e8ebbdea1c9f2500099c4`).
+Machine `7845d4da1d39e8` was created successfully.
+
+- Public `/health`: 200, `runtime=sandbox`.
+- Unauthenticated readiness: 403; authenticated readiness: 200.
+- Readiness reports `mode=off`, `model_key_configured=false`, and no automatic
+  customer replies or financial actions.
+- Bitrix handler path: 404.
+- Synthetic ticket `104e1822-fbae-4368-94e1-ea0dd3a56b29`: created through the
+  authenticated dev API; its triage job is persisted as `pending` until activation.
+- Knowledge adapter fetched 46 published articles; all 46 have nonempty text.
+
+Real model classification/drafting, QA generation, and account diagnostics have
+not been verified live. The next step is the model-key configuration and shadow
+smoke test described above. No messages were sent to Telegram or Bitrix.
