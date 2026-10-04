@@ -133,8 +133,13 @@ export const config = parsed.data;
 const approvedSupportOperators: RosterMember[] = [
   { name: "Turkarta", username: "turkartame", tg_id: 1298059682 },
 ];
+// Leads-only members of Render's ROSTER: not pinged on support tickets and
+// cannot claim them; their lead cards and lead claims are unchanged.
+const leadsOnlyOperatorIds = new Set<number>([
+  425253253, // Артём, off support since 2026-10-04
+]);
 const supportRoster = [
-  ...config.ROSTER,
+  ...config.ROSTER.filter((member) => member.tg_id == null || !leadsOnlyOperatorIds.has(member.tg_id)),
   ...approvedSupportOperators.filter(
     (approved) => !config.ROSTER.some((member) => member.tg_id === approved.tg_id),
   ),

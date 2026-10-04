@@ -144,3 +144,22 @@ test("configuration refuses relay-group reuse, missing owners and public QA grou
   assert.equal(run({ SUPPORT_AI_DIAGNOSTICS_URL: "https://api.example.test", SUPPORT_AI_DIAGNOSTICS_SECRET: "x".repeat(32) }), 1);
   assert.equal(run({ SUPPORT_AI_DIAGNOSTICS_URL: "https://api.example.test", SUPPORT_AI_DIAGNOSTICS_SECRET: "d".repeat(32) }), 0);
 });
+
+test("leads-only roster members are neither pinged on nor allowed to claim support tickets", () => {
+  const roster = JSON.stringify([
+    { name: "Никита", username: "nikita", tg_id: 1001 },
+    { name: "Артём", username: "ashotovich_34", tg_id: 425253253 },
+  ]);
+  const script = "const c = await import('./src/config.ts');"
+    + "console.log(JSON.stringify({ support: c.supportRosterPing(), leads: c.rosterPing(),"
+    + " supportIds: [...c.supportRosterIds], leadIds: [...c.rosterIds] }))";
+  const result = spawnSync(process.execPath, ["--import","tsx","--input-type=module","-e",script],
+    { cwd: new URL("../",import.meta.url), encoding: "utf8",
+      env: { PATH: process.env.PATH, DATABASE_URL: "postgres://unused", PUBLIC_BASE_URL: "https://example.com",
+        SUPPORT_RUNTIME: "sandbox", ROSTER: roster } });
+  assert.equal(result.status, 0, result.stderr);
+  const out = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
+  assert.ok(!out.support.includes("Артём") && !out.supportIds.includes(425253253));
+  assert.ok(out.support.includes("Никита") && out.support.includes("Turkarta"));
+  assert.ok(out.leads.includes("Артём") && out.leadIds.includes(425253253));
+});
