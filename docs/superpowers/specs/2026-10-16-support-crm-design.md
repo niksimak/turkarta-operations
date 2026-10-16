@@ -24,6 +24,9 @@ place operators work. Owner decisions (2026-10-16):
 | UI | React SPA served by ops at `/crm`; light and dark themes. |
 | Queue | One shared queue; unclaimed for 5 min means auto-assign. |
 | Notify | Every new ticket: in-CRM sound + desktop notification, and a TG group ping. |
+| SLA | First response 5 min, follow-ups 15 min (editable). |
+| Settings | Team settings editable by admins and «Support lead» operators; personal settings for everyone. |
+| Hosting | Ops moves from Render to Fly.io. No Render, no Vercel. |
 
 ## 2. Context (current state, ops `origin/main` 2357682)
 
@@ -42,7 +45,9 @@ place operators work. Owner decisions (2026-10-16):
   and a topic per ticket, relayed both ways.
 - The AI support-agent layer (`support_agent_*`, migrations 0012/0013) is fed
   by DB triggers on the support tables and runs in shadow mode.
-- Ops runs on Render **free** tier (cold starts). No SSE or websockets exist.
+- Ops runs on Render **free** tier (cold starts) at
+  `turkarta-operations.onrender.com`. No SSE or websockets exist. On boot it
+  calls `setWebhook` for both bots with `PUBLIC_BASE_URL` (`src/server.ts:603`).
 
 ## 3. Architecture
 
@@ -124,8 +129,9 @@ also records the returned `tg_file_id`.
 
 ```
 crm_operators      id bigint pk (= turkarta admin_users.id), name, email, role,
+                   is_lead bool default false, auto_assign_enabled bool default true,
                    on_shift bool, last_active_at, last_assigned_at,
-                   notify_sound bool default true, created_at, updated_at
+                   prefs jsonb (personal settings, section 13a), created_at, updated_at
 crm_sessions       id uuid pk, token_hash text unique, operator_id, expires_at, created_at
 crm_sso_nonces     jti text pk, expires_at          -- replay guard
 crm_ticket_events  id bigserial pk, ticket_id, type, actor_operator_id null,
@@ -135,9 +141,9 @@ crm_ticket_events  id bigserial pk, ticket_id, type, actor_operator_id null,
 crm_canned_replies id uuid pk, title, body, use_count int, created_by, updated_by,
                    created_at, updated_at
 crm_settings       key text pk, value jsonb
-                   sla_first_minutes 15, sla_followup_minutes 30,
-                   auto_assign_minutes 5, reopen_days 7,
-                   offline_after_minutes 15
+                   defaults and full list in section 13a
+crm_settings_log   id bigserial pk, key, old_value jsonb, new_value jsonb,
+                   operator_id, created_at       -- who changed what
 ```
 
 ## 5. Inbound
@@ -197,10 +203,11 @@ Limits: jpeg/png/webp, 8 MB each (TG `sendPhoto` cap is 10 MB), 10 per message.
 
 - **Queue.** `new` tickets, ordered by `queued_at`. Any operator can «Взять».
   Replying to a queued ticket claims it.
-- **Auto-assign worker** (every 30 s): select `new` tickets with
-  `queued_at < now() - auto_assign_minutes` using `FOR UPDATE SKIP LOCKED`.
-  Candidate operators: `on_shift` and `last_active_at > now() -
-  offline_after_minutes`. Pick the fewest open (`allocated` + `awaiting`)
+- **Auto-assign worker** (every 30 s, skipped when `auto_assign_enabled` is
+  off): select `new` tickets with `queued_at < now() - auto_assign_minutes`
+  using `FOR UPDATE SKIP LOCKED`. Candidate operators: `on_shift`,
+  `auto_assign_enabled`, `last_active_at > now() - offline_after_minutes`, and
+  below `auto_assign_max_open` when that cap is set. Pick the fewest open (`allocated` + `awaiting`)
   tickets, tie-break oldest `last_assigned_at`. Set `auto_assigned=true`, log
   `auto_assigned`, notify the assignee. No candidate: ticket stays queued and a
   «никого нет на смене» ping goes to the TG group, at most once per 15 min.
@@ -210,7 +217,8 @@ Limits: jpeg/png/webp, 8 MB each (TG `sendPhoto` cap is 10 MB), 10 per message.
   ticket to a colleague. Unassign returns it to the queue.
 - **SLA timers.** A ticket's wait = `now() - waiting_since`. Target is
   `sla_first_minutes` before the first response, `sla_followup_minutes` after.
-  List badge: neutral, amber from 50% of target, red when overdue. When a
+  Defaults: 5 min first response, 15 min follow-up. List badge: neutral,
+  amber from `sla_warn_percent` (default 50%) of target, red when overdue. When a
   ticket goes overdue the worker posts one TG group ping per waiting period.
 - **Response speed** is measured per agent reply as `response_seconds` (time
   from the oldest unanswered user message to that reply). Notes, status changes
@@ -234,7 +242,8 @@ Turkarta side:
 - `NAV_ITEMS` entry «Поддержка», roles `admin` and `support`.
 - `GET /admin/support-crm` gated by `require_support_role`: builds a token
   `{sub: admin_user_id, name, email, role, jti, exp: now+60s}` signed HMAC-SHA256
-  with `CRM_SSO_SECRET`, redirects to `{OPS_PUBLIC_URL}/crm/sso?t=<token>`.
+  with `CRM_SSO_SECRET`, redirects to `{ops_support_base_url}/crm/sso?t=<token>` (existing
+  turkarta setting, `config.py:509`).
   Optional `next` param carries a ticket id for deep links.
 - Classified in `tests/test_admin_support_role.py`.
 
@@ -284,7 +293,11 @@ POST /tickets/:id/status {status}
 GET  /attachments/:id            (bytes, or streamed from Telegram via getFile)
 GET|POST|PUT|DELETE /canned[/:id]
 GET  /operators                  GET /stats?from=&to=
-GET|PUT /settings                (admin only)
+GET  /settings                  PUT /settings  (admin or lead)
+GET  /settings/log               (admin or lead)
+PUT  /me/prefs                   (personal settings, everyone)
+PUT  /operators/:id {is_lead}    (admin only)
+PUT  /operators/:id {auto_assign_enabled, on_shift}  (admin or lead)
 POST /tickets/:id/presence {state: viewing|typing}
 GET  /stream                     (SSE)
 ```
@@ -314,7 +327,8 @@ Per operator row:
 - first response: median and p90 (`first_response_at - created_at`)
 - % replies within SLA, reopen rate
 
-Admins see every row. Support operators see the team block and their own row.
+Admins and leads see every row. Other support operators see the team block
+and their own row.
 
 ## 13. UI
 
@@ -322,7 +336,7 @@ Russian. Desktop-first (≥1280 px): nav rail, ticket list, thread, user panel.
 Below 1024 px: list and thread as separate screens, panel as a sheet.
 
 - **Nav rail:** Очередь (count), Мои, Все, overdue badge, Статистика, Шаблоны,
-  Настройки (admin), «На смене» toggle, sound toggle, theme switch.
+  Настройки, «На смене» toggle, sound toggle, theme switch.
 - **List row:** channel dot (TG бот / Mini App / Web), name or @username, wait
   timer with SLA colour, last message first line, assignee avatar, presence,
   «авто» marker for auto-assigned.
@@ -364,6 +378,50 @@ Stack: React 18, Vite, TypeScript, Tailwind, react-router, TanStack Query.
 Package `web/` in the pnpm workspace, built into `dist/web`, served by Hono at
 `/crm` with SPA fallback. The Dockerfile gains the web build step.
 
+## 13a. Settings
+
+Page «Настройки» in the nav rail. Two tabs; the «Команда» tab is read-only
+for operators who are neither admin nor lead.
+
+**Команда** (admin or lead edits). Every change is written to
+`crm_settings_log` and shown as a history list under the form.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sla_first_minutes` | 5 | target for the first operator reply |
+| `sla_followup_minutes` | 15 | target for each later reply |
+| `sla_warn_percent` | 50 | badge turns amber at this share of the target |
+| `auto_assign_enabled` | true | queue auto-assignment on/off |
+| `auto_assign_minutes` | 5 | unclaimed time before auto-assignment |
+| `auto_assign_max_open` | null | skip operators already holding this many open tickets (null = no cap) |
+| `offline_after_minutes` | 15 | no heartbeat for this long turns «На смене» off |
+| `reopen_days` | 7 | user message on a resolved ticket within this window reopens it |
+| `tg_ping_new_ticket` | true | TG group ping on every new ticket |
+| `tg_ping_overdue` | true | TG group ping when a ticket goes overdue |
+| `tg_ping_no_one_on_shift` | true | TG group ping when auto-assign finds nobody |
+| `resolve_message_enabled` | false | send the user a message when the ticket is resolved |
+| `resolve_message_text` | «Мы закрыли обращение. Если вопрос остался, просто напишите сюда.» | that message |
+
+Values are validated server-side (minutes 1 to 240, percent 10 to 90, days 0
+to 30, text up to 1000 characters). Workers read settings on each tick, so
+changes apply within 30 s without a restart.
+
+**Операторы** (inside the Команда tab): list of operators with role, lead
+badge, on-shift state, open tickets, last active. Admins toggle «Support
+lead». Admins and leads toggle «Участвует в автоназначении» and can force an
+operator off shift.
+
+**Личные** (everyone, stored in `crm_operators.prefs`):
+- theme: system / light / dark
+- sound on/off and volume
+- desktop notifications on/off (with a button to grant browser permission)
+- notify me about: every new ticket in the queue, or only my tickets and
+  mentions
+- composer send key: Enter or Ctrl/Cmd+Enter
+
+Canned replies keep their own page «Шаблоны»: everyone creates and edits;
+deleting a reply someone else wrote needs admin or lead.
+
 ## 14. Cutover and rollback
 
 New env `SUPPORT_SURFACE` = `bitrix` (default, today's behaviour) or `crm`.
@@ -379,15 +437,42 @@ New env `SUPPORT_SURFACE` = `bitrix` (default, today's behaviour) or `crm`.
   are not in Bitrix; tickets stay readable in the CRM.
 - Bitrix and forum code are deleted in a follow-up PR after one clean week.
 
-## 15. Infra
+## 15. Hosting: move ops from Render to Fly.io
 
-- Render plan `free` → `starter` (always on; SSE and the workers need it).
-- New env on ops: `SUPPORT_SURFACE`, `CRM_SSO_SECRET`. Existing
-  `TURKARTA_API_URL` / `TURKARTA_API_SECRET` are reused.
-- New env on turkarta: `CRM_SSO_SECRET`, `OPS_PUBLIC_URL`.
-- Each prod change follows the global rule: blast radius and one-line rollback
-  stated before acting; temporary values get a dated `TEMP:` entry in
-  `docs/DEPLOY-STATE.md`.
+Ops moves to Fly.io before the CRM is used, mirroring the `turkarta-api` setup
+(`turkarta/infra/fly/api.fly.toml`). No Render and no Vercel: the SPA is built
+into the ops image and served by ops itself.
+
+- `fly.toml` in the ops repo: app `turkarta-operations`, region `ams`,
+  `auto_stop_machines = "off"`, `min_machines_running = 1`, one machine
+  (shared-cpu-1x, 512 MB), health check on `GET /health`. Single machine on
+  purpose: in-memory presence, in-process workers, and bot webhooks must not
+  run twice.
+- Custom domain `crm.turkarta.me` (`fly certs add`), which becomes
+  `PUBLIC_BASE_URL`. The CRM lives at `https://crm.turkarta.me/crm`.
+- Secrets: every current Render env var copied with `fly secrets set`, plus
+  `SUPPORT_SURFACE` and `CRM_SSO_SECRET`. Turkarta gets `CRM_SSO_SECRET`, and
+  its existing `ops_support_base_url` (default hard-coded to the Render URL in
+  `config.py:509`) is set to `https://crm.turkarta.me` in env on both Fly apps
+  and in the code default.
+- DB stays on Neon `turkarta-ops`; nothing to migrate.
+
+**Move sequence** (its own step, done in `SUPPORT_SURFACE=bitrix` mode so
+behaviour is unchanged):
+1. `fly deploy` with `PUBLIC_BASE_URL` set to the Fly URL. On boot ops calls
+   `setWebhook`, so both bots switch to Fly at that moment.
+2. **Immediately suspend the Render service.** Otherwise a Render cold start
+   calls `setWebhook` again and steals the bots back.
+3. Re-point Turkarta's ops URL to Fly and redeploy it.
+4. Bitrix: update the app handler and event URLs to the Fly host
+   (`event.bind` again), since Bitrix stays live until the CRM cutover.
+5. Smoke test: TG DM to the support bot, web ticket, Bitrix reply round trip.
+
+Blast radius: support intake on all channels and Bitrix replies for the
+minutes between steps 1 and 5. Rollback: resume Render and restart it (its
+boot re-points the bot webhooks), then point Turkarta and Bitrix back. Render
+is deleted after one clean week. Per the global rule, the interim state gets a
+dated `TEMP:` entry in `docs/DEPLOY-STATE.md`.
 
 ## 16. Error handling
 
