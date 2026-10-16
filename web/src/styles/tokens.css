@@ -1,0 +1,149 @@
+/* Design tokens. Values and rationale: web/DESIGN.md.
+ * Light is the :root default; theme.ts sets data-theme="light"|"dark" on <html>.
+ * Before JS runs (no data-theme yet) the OS preference picks the set, so keep
+ * the two dark blocks below identical. */
+
+:root {
+  color-scheme: light;
+
+  /* Neutrals: the ground, the working plate, the second layer (rail, toolbars). */
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --surface-2: #ebedf0;
+  --border: #dde0e5;
+  --border-strong: #8a919d; /* control outlines, 3:1 on surface */
+  --text: #16181d;
+  --text-muted: #5a6170;
+  --hover: rgb(22 24 29 / 0.05);
+  --pressed: rgb(22 24 29 / 0.09);
+
+  /* One accent: primary action, current selection, focus. */
+  --accent: #2160e0;
+  --accent-hover: #1a52c4;
+  --accent-fg: #ffffff;
+  --accent-soft: #e7eefd;
+  --focus: #2160e0;
+  --selection: #cddcfb;
+
+  /* Meaning colours. Never decorative. */
+  --sla-ok: #1d7a43;
+  --sla-ok-soft: #e3f3e9;
+  --sla-warn: #975600;
+  --sla-warn-soft: #fcf0d8;
+  --sla-late: #c8322f;
+  --sla-late-soft: #fbe9e8;
+  --note-bg: #fdf3d7;
+  --note-border: #ecd593;
+  --note-text: #6b4a00;
+  --danger: #c8322f;
+  --danger-soft: #fbe9e8;
+
+  /* Channel line colours (markers only, 3:1 graphic contrast). */
+  --ch-bot: #1a8fcc;
+  --ch-miniapp: #7a4fd6;
+  --ch-web: #0e8a80;
+
+  --scrim: rgb(16 18 22 / 0.4);
+  --shadow-pop: 0 10px 28px -8px rgb(16 24 40 / 0.18), 0 2px 6px -2px rgb(16 24 40 / 0.1);
+
+  /* Type */
+  --font-sans: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Motion */
+  --dur-press: 120ms;
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --press-scale: 0.97;
+  --enter-shift: 4px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1114;
+  --surface: #16191d;
+  --surface-2: #1c2025;
+  --border: #2a2f36;
+  --border-strong: #5f6773;
+  --text: #e6e8eb;
+  --text-muted: #9ba2ad;
+  --hover: rgb(230 232 235 / 0.06);
+  --pressed: rgb(230 232 235 / 0.1);
+  --accent: #6b9bff;
+  --accent-hover: #86adff;
+  --accent-fg: #0b0d10;
+  --accent-soft: #1a2740;
+  --focus: #6b9bff;
+  --selection: #26407a;
+  --sla-ok: #4cc27a;
+  --sla-ok-soft: #13291c;
+  --sla-warn: #e6a23c;
+  --sla-warn-soft: #33270f;
+  --sla-late: #ff6b63;
+  --sla-late-soft: #3a1c1c;
+  --note-bg: #2b2414;
+  --note-border: #4d3f1c;
+  --note-text: #e8c770;
+  --danger: #ff6b63;
+  --danger-soft: #3a1c1c;
+  --ch-bot: #3fb2ec;
+  --ch-miniapp: #a585f5;
+  --ch-web: #2fc2b4;
+  --scrim: rgb(0 0 0 / 0.55);
+  --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg: #0f1114;
+    --surface: #16191d;
+    --surface-2: #1c2025;
+    --border: #2a2f36;
+    --border-strong: #5f6773;
+    --text: #e6e8eb;
+    --text-muted: #9ba2ad;
+    --hover: rgb(230 232 235 / 0.06);
+    --pressed: rgb(230 232 235 / 0.1);
+    --accent: #6b9bff;
+    --accent-hover: #86adff;
+    --accent-fg: #0b0d10;
+    --accent-soft: #1a2740;
+    --focus: #6b9bff;
+    --selection: #26407a;
+    --sla-ok: #4cc27a;
+    --sla-ok-soft: #13291c;
+    --sla-warn: #e6a23c;
+    --sla-warn-soft: #33270f;
+    --sla-late: #ff6b63;
+    --sla-late-soft: #3a1c1c;
+    --note-bg: #2b2414;
+    --note-border: #4d3f1c;
+    --note-text: #e8c770;
+    --danger: #ff6b63;
+    --danger-soft: #3a1c1c;
+    --ch-bot: #3fb2ec;
+    --ch-miniapp: #a585f5;
+    --ch-web: #2fc2b4;
+    --scrim: rgb(0 0 0 / 0.55);
+    --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    /* Movement goes; colour and opacity transitions stay. */
+    --press-scale: 1;
+    --enter-shift: 0px;
+  }
+}

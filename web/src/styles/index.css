@@ -1,0 +1,84 @@
+@import "@fontsource/golos-text/400.css";
+@import "@fontsource/golos-text/600.css";
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    background: var(--bg);
+  }
+
+  ::selection {
+    background: var(--selection);
+    color: var(--text);
+  }
+
+  /* One focus language everywhere: keyboard only, 2px accent ring, offset off the edge. */
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--accent);
+  }
+
+  ::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  a {
+    color: inherit;
+    text-underline-offset: 3px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
+@layer components {
+  /* Pressable feedback for every button-like control. Hover is gated to fine
+     pointers so taps on touch screens do not leave a stuck highlight. */
+  .press {
+    transition:
+      transform var(--dur-press) var(--ease-out),
+      background-color var(--dur-fast) ease,
+      color var(--dur-fast) ease;
+  }
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hover-surface:hover {
+    background: var(--hover);
+  }
+}

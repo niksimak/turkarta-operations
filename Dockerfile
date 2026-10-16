@@ -9,6 +9,10 @@ RUN pnpm install --frozen-lockfile --ignore-scripts || pnpm install --ignore-scr
 COPY tsconfig.json ./
 COPY src ./src
 RUN pnpm build
+# CRM SPA (web/) builds into dist/web, which the runtime stage copies with dist.
+COPY pnpm-workspace.yaml ./
+COPY web ./web
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter crm-web... && pnpm --filter crm-web build
 
 FROM node:22-slim AS runtime
 WORKDIR /app
@@ -16,6 +20,7 @@ RUN corepack enable
 ENV NODE_ENV=production
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts || pnpm install --prod --ignore-scripts
+# dist includes dist/web (the CRM SPA).
 COPY --from=build /app/dist ./dist
 COPY migrations ./migrations
 EXPOSE 8000
