@@ -1,8 +1,10 @@
 import type { Message as TgMessage } from "grammy/types";
 import { sql, type Ticket } from "../db.js";
 import type { ValidPhoto } from "../support_media.js";
+import { activeAlerts, firstLine } from "./alerts.js";
 import { publish } from "./events.js";
 import { getSettings } from "./settings.js";
+import { ticketItem } from "./tickets.js";
 import type { TicketStatus, UnsupportedType } from "./types.js";
 
 export interface InboundPart {
@@ -93,7 +95,7 @@ interface LockedTicket {
 type TxOutcome =
   | { kind: "duplicate"; messageId: string }
   | { kind: "appended"; messageId: string }
-  | { kind: "inserted"; messageId: string; reopened: boolean; assignee: number | null; who: string };
+  | { kind: "inserted"; messageId: string; reopened: boolean; assignee: number | null; who: string; firstOfTicket: boolean };
 
 function displayName(t: { user_name: string | null; user_username: string | null }): string {
   return t.user_name || (t.user_username ? `@${t.user_username}` : "Клиент");
@@ -105,7 +107,7 @@ export async function recordUserMessage(
   part: InboundPart,
   meta: { authorId: string; sourceId?: string },
 ): Promise<RecordedMessage> {
-  const { reopen_days } = await getSettings();
+  const { reopen_days, tg_ping_new_ticket } = await getSettings();
   const body = legacyLabel(part);
   const sourceId = meta.sourceId ?? null;
 
@@ -157,6 +159,9 @@ export async function recordUserMessage(
       }
     }
 
+    const [prior] = await tx<{ any: boolean }[]>`
+      select exists (select 1 from support_messages where ticket_id = ${row.id} and sender = 'user') as any`;
+
     const [inserted] = await tx<{ id: string }[]>`
       insert into support_messages
         (ticket_id, sender, body, actor_type, author_id, source_message_id, kind, unsupported_type, tg_media_group_id)
@@ -206,6 +211,7 @@ export async function recordUserMessage(
       reopened: reopenTo !== null,
       assignee: updated!.assigned_operator_id == null ? null : Number(updated!.assigned_operator_id),
       who: displayName(updated!),
+      firstOfTicket: !prior!.any,
     };
   });
 
@@ -225,6 +231,15 @@ export async function recordUserMessage(
   await publish({ type: "message.created", ticketId: ticket.id, messageId: outcome.messageId });
   if (outcome.kind === "appended") return result;
   await publish({ type: "ticket.updated", ticketId: ticket.id });
+  if (outcome.firstOfTicket) {
+    const line = firstLine(body);
+    await publish({
+      type: "notify", operatorId: null, kind: "new_ticket", ticketId: ticket.id,
+      title: "Новое обращение", body: line ? `${outcome.who}: ${line}` : outcome.who,
+    });
+    // Not awaited: a slow Telegram must not hold the user's webhook or request.
+    if (tg_ping_new_ticket) void alertNewTicket(ticket.id);
+  }
   if (outcome.assignee !== null) {
     await publish({
       type: "notify", operatorId: outcome.assignee, kind: "user_replied",
@@ -232,4 +247,15 @@ export async function recordUserMessage(
     });
   }
   return result;
+}
+
+async function alertNewTicket(ticketId: string): Promise<void> {
+  const alerts = activeAlerts();
+  if (!alerts) return;
+  try {
+    const item = await ticketItem(ticketId);
+    if (item) await alerts.newTicket(item);
+  } catch (err) {
+    console.error(`[crm-alerts] new ticket alert failed ticket=${ticketId} code=${(err as { code?: string }).code ?? "error"}`);
+  }
 }

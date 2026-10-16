@@ -190,10 +190,12 @@ test("inbound capture: albums, timers, reopen, idempotent retries, events", { sk
       assert.deepEqual(events, [
         { type: "message.created", ticketId: tk.id, messageId: r.messageId },
         { type: "ticket.updated", ticketId: tk.id },
+        { type: "notify", operatorId: null, kind: "new_ticket", ticketId: tk.id, title: "Новое обращение", body: "Пётр: 📷 [фото]" },
         { type: "notify", operatorId: 7, kind: "user_replied", ticketId: tk.id, title: "Пётр", body: "📷 [фото]" },
         { type: "message.created", ticketId: tk.id, messageId: r.messageId },
-        { type: "message.created", ticketId: unassigned.id, messageId: events[4]!.messageId },
+        { type: "message.created", ticketId: unassigned.id, messageId: events[5]!.messageId },
         { type: "ticket.updated", ticketId: unassigned.id },
+        { type: "notify", operatorId: null, kind: "new_ticket", ticketId: unassigned.id, title: "Новое обращение", body: "Иван: hi" },
       ]);
     });
   } finally {

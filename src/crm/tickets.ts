@@ -93,8 +93,9 @@ function itemSelect(extra: postgres.PendingQuery<postgres.Row[]>) {
       ) p on true`;
 }
 
-function overdueCond(s: Settings) {
-  return sql`(r.status <> 'resolved' and r.waiting_since < now() - make_interval(mins =>
+/** `at` lets the worker evaluate SLA against an injected clock. */
+export function overdueCond(s: Settings, at: postgres.PendingQuery<postgres.Row[]> = sql`now()`) {
+  return sql`(r.status <> 'resolved' and r.waiting_since < ${at} - make_interval(mins =>
     case when r.first_response_at is null then ${s.sla_first_minutes}::int else ${s.sla_followup_minutes}::int end))`;
 }
 
@@ -169,6 +170,12 @@ export async function listTickets(
       from support_requests r
      where r.status <> 'resolved'`;
   return { items: page.map(toItem), nextCursor, counts: { queue: c!.queue, mine: c!.mine, overdue: c!.overdue } };
+}
+
+export async function ticketItem(id: string): Promise<TicketListItem | null> {
+  if (!UUID_RE.test(id)) return null;
+  const [r] = await sql`${itemSelect(sql``)} where r.id = ${id}`;
+  return r ? toItem(r) : null;
 }
 
 const messageSelect = () => sql`
@@ -246,14 +253,17 @@ async function operatorRef(tx: Sql, id: number): Promise<{ id: number; name: str
   return o ? { id, name: o.name } : undefined;
 }
 
-async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number, payload: Record<string, unknown>) {
+async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number | null, payload: Record<string, unknown>) {
   await tx`insert into crm_ticket_events (ticket_id, type, actor_operator_id, payload)
     values (${ticketId}, ${type}, ${actor}, ${JSON.stringify(payload)}::text::jsonb)`;
 }
 
-async function assignTo(tx: Sql, t: LockedTicket, to: { id: number; name: string }, type: TicketEventType, actor: number) {
+/** Writes the assignment and its event; `actor` is null for the auto-assign worker. */
+export async function assignTo(
+  tx: Sql, t: Pick<LockedTicket, "id">, to: { id: number; name: string }, type: TicketEventType, actor: number | null,
+) {
   await tx`update support_requests
-      set assigned_operator_id = ${to.id}, auto_assigned = false,
+      set assigned_operator_id = ${to.id}, auto_assigned = ${type === "auto_assigned"},
           status = case when status = 'new' then 'allocated' else status end
     where id = ${t.id}`;
   await tx`update crm_operators set last_assigned_at = now() where id = ${to.id}`;
@@ -298,19 +308,22 @@ export async function claim(tx: Sql, t: LockedTicket, me: Operator): Promise<boo
 async function mutate(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
   let who = "";
   const effects = await withLockedTicket(ticketId, (tx, t) => {
-    who = t.user_name || (t.user_username ? `@${t.user_username}` : "Без имени");
+    who = ticketWho(t);
     return fn(tx, t);
   });
   if (!effects) return null;
   await publish({ type: "ticket.updated", ticketId });
-  if (effects.notify) {
-    const e: CrmEvent = {
-      type: "notify", operatorId: effects.notify.operatorId, kind: "assigned", ticketId,
-      title: "Вам назначено обращение", body: who,
-    };
-    await publish(e);
-  }
+  if (effects.notify) await notifyAssigned(ticketId, effects.notify.operatorId, who);
   return effects;
+}
+
+export function ticketWho(t: { user_name: string | null; user_username: string | null }): string {
+  return t.user_name || (t.user_username ? `@${t.user_username}` : "Без имени");
+}
+
+export async function notifyAssigned(ticketId: string, operatorId: number, who: string): Promise<void> {
+  const e: CrmEvent = { type: "notify", operatorId, kind: "assigned", ticketId, title: "Вам назначено обращение", body: who };
+  await publish(e);
 }
 
 export async function take(ticketId: string, me: Operator): Promise<void> {
