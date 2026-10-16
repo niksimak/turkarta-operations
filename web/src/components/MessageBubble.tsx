@@ -134,11 +134,16 @@ function Delivery({
   fresh: boolean;
 }) {
   if (m.delivery_status === "pending") {
-    return <p className="px-1 text-xs text-text-muted">Отправляется…</p>;
+    // Keyed per status: a new element per outcome, so the fade-in below starts from 0.
+    return (
+      <p key="pending" className="px-1 text-xs text-text-muted">
+        Отправляется…
+      </p>
+    );
   }
   if (m.delivery_status === "sent") {
     return (
-      <p className={cx("flex items-center gap-1 px-1 text-xs text-text-muted", fresh && "fade-in")}>
+      <p key="sent" className={cx("flex items-center gap-1 px-1 text-xs text-text-muted", fresh && "fade-in")}>
         <Icon name="check" size={12} />
         Отправлено
       </p>
@@ -146,6 +151,7 @@ function Delivery({
   }
   return (
     <div
+      key="failed"
       role="alert"
       className={cx("flex items-center gap-2 px-1 text-xs text-danger", fresh && "fade-in")}
       title={m.delivery_error ?? undefined}

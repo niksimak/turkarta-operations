@@ -14,7 +14,7 @@ interface Outgoing {
 }
 
 const outgoing = new Map<string, Outgoing>();
-const keyByServerId = new Map<string, string>();
+const keyByServerId = new Map<string, { key: string; ticketId: string }>();
 let seq = 0;
 
 export function newClientKey(): string {
@@ -24,7 +24,7 @@ export function newClientKey(): string {
 
 /** Stable render key: the optimistic row and its server copy share it. */
 export function messageKey(m: CrmMessage): string {
-  return keyByServerId.get(m.id) ?? m.id;
+  return keyByServerId.get(m.id)?.key ?? m.id;
 }
 
 export function addOutgoing(ticketId: string, message: CrmMessage, knownIds: Iterable<string>): void {
@@ -32,9 +32,20 @@ export function addOutgoing(ticketId: string, message: CrmMessage, knownIds: Ite
 }
 
 export function bindServerId(clientKey: string, serverId: string): void {
-  keyByServerId.set(serverId, clientKey);
   const o = outgoing.get(clientKey);
-  if (o) o.serverId = serverId;
+  if (!o) return;
+  keyByServerId.set(serverId, { key: clientKey, ticketId: o.ticketId });
+  o.serverId = serverId;
+}
+
+/**
+ * Called when a thread closes: its rows unmount, so the next open keys them by
+ * server id from the start. A send still in flight keeps its mapping.
+ */
+export function releaseKeys(ticketId: string): void {
+  for (const [serverId, k] of keyByServerId) {
+    if (k.ticketId === ticketId && !outgoing.has(k.key)) keyByServerId.delete(serverId);
+  }
 }
 
 export function removeOutgoing(clientKey: string): void {

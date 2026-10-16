@@ -52,9 +52,11 @@ function fileKey(f: File): number {
 interface Props {
   files: File[];
   onRemove: (file: File) => void;
+  /** The photo the server refused on the last send, marked until removed. */
+  refused?: File | null;
 }
 
-export function PhotoStrip({ files, onRemove }: Props) {
+export function PhotoStrip({ files, onRemove, refused }: Props) {
   const urls = useObjectUrls(files);
   if (!files.length) return null;
   return (
@@ -62,10 +64,26 @@ export function PhotoStrip({ files, onRemove }: Props) {
       <ul aria-label="Фото к отправке" className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5 pt-1.5 pr-1.5">
         {files.map((f) => {
           const url = urls.get(f);
+          const bad = f === refused;
           return (
-            <li key={fileKey(f)} className="thumb-in relative size-14 shrink-0">
-              <div className="size-full overflow-hidden rounded-sm bg-hover shadow-[inset_0_0_0_1px_var(--border)]">
-                {url && <img src={url} alt={f.name} className="block size-full object-cover" draggable={false} />}
+            <li key={fileKey(f)} data-refused={bad ? "" : undefined} className="thumb-in relative size-14 shrink-0">
+              <div title={bad ? "Фото не принято" : undefined} className="relative size-full overflow-hidden rounded-sm bg-hover">
+                {url && (
+                  <img
+                    src={url}
+                    alt={bad ? `${f.name}, не принято` : f.name}
+                    className={"block size-full object-cover " + (bad ? "opacity-60" : "")}
+                    draggable={false}
+                  />
+                )}
+                {/* The outline sits over the photo; an inset shadow on the box would be painted under it. */}
+                <span
+                  aria-hidden="true"
+                  className={
+                    "pointer-events-none absolute inset-0 rounded-sm " +
+                    (bad ? "shadow-[inset_0_0_0_2px_var(--danger)]" : "shadow-[inset_0_0_0_1px_var(--border)]")
+                  }
+                />
               </div>
               <button
                 type="button"

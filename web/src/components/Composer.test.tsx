@@ -407,4 +407,147 @@ describe("Composer", () => {
     await waitFor(() => expect(within(row).getByText("Отправлено")).toBeTruthy());
     expect(within(thread).getAllByText("Сейчас проверю")).toHaveLength(1);
   });
+
+  // ---- review round 1 ----
+
+  it("closes the mention list after a pick, so the next Enter sends the note", async () => {
+    const { calls } = mockApi({
+      sendKey: "enter",
+      send: () => jsonResponse(200, { ...userMessage, id: "n1", sender: "agent", kind: "note", body: "Глянь @Олег", author_name: "Аня Смирнова" }),
+    });
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.click(screen.getByRole("radio", { name: "Заметка" }));
+    const box = textbox("Заметка");
+    fireEvent.change(box, { target: { value: "Глянь @Оле", selectionStart: 10 } });
+    await screen.findByRole("listbox", { name: "Упомянуть коллегу" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(box.value).toBe("Глянь @Олег ");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(box.value).toBe("");
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/messages"))).toHaveLength(1));
+    const form = calls.find((c) => c.path.endsWith("/messages"))!.body as FormData;
+    expect(form.get("kind")).toBe("note");
+    expect(form.get("body")).toBe("Глянь @Олег");
+  });
+
+  it("gives a failed note back in note mode, even if the mode was flipped during the send", async () => {
+    const reply = deferred<Response>();
+    mockApi({ send: () => reply.promise });
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.click(screen.getByRole("radio", { name: "Заметка" }));
+    fireEvent.change(textbox("Заметка"), { target: { value: "Внутреннее: клиент грубит" } });
+    fireEvent.keyDown(textbox("Заметка"), { key: "Enter", ctrlKey: true });
+    // The box is empty during the flight, so Tab flips to Ответ.
+    fireEvent.keyDown(textbox("Заметка"), { key: "Tab" });
+    expect(screen.getByRole("radio", { name: "Ответ" }).getAttribute("aria-checked")).toBe("true");
+    await act(async () => reply.resolve(jsonResponse(500, { error: "internal" })));
+    await within(toasts()).findByText("Не отправилось. Повторите.");
+    expect(screen.getByRole("radio", { name: "Заметка" }).getAttribute("aria-checked")).toBe("true");
+    expect(textbox("Заметка").value).toBe("Внутреннее: клиент грубит");
+  });
+
+  it("turns the overlay back on when a drag outlives the staleness reset", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockApi();
+      renderThread();
+      await screen.findByRole("list", { name: "Переписка" });
+      const drag = filesDrag([photo("a.jpg")]);
+      fireEvent.dragEnter(pane(), drag);
+      act(() => {
+        vi.advanceTimersByTime(1_100);
+      });
+      expect(overlay().hasAttribute("data-active")).toBe(false);
+      fireEvent.dragOver(pane(), drag);
+      expect(overlay().hasAttribute("data-active")).toBe(true);
+      fireEvent.drop(pane(), drag);
+      expect(within(screen.getByRole("list", { name: "Фото к отправке" })).getAllByRole("listitem")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("swaps the delivery line for a new element, so the outcome fade plays", async () => {
+    const reply = deferred<Response>();
+    const d = detail();
+    mockApi({ detail: d, send: () => reply.promise });
+    renderThread();
+    const thread = await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.change(textbox(), { target: { value: "Готово" } });
+    fireEvent.keyDown(textbox(), { key: "Enter", ctrlKey: true });
+    const pending = await within(thread).findByText("Отправляется…");
+    const server: CrmMessage = { ...userMessage, id: "s9", sender: "agent", body: "Готово", author_name: "Аня Смирнова", delivery_status: "sent", created_at: new Date().toISOString() };
+    d.messages = [...d.messages, server];
+    await act(async () => reply.resolve(jsonResponse(200, server)));
+    const sent = await within(thread).findByText("Отправлено");
+    expect(pending.isConnected).toBe(false);
+    expect(sent.closest("p")!.classList.contains("fade-in")).toBe(true);
+  });
+
+  it("marks the photo the server refused when the draft comes back", async () => {
+    mockApi({ send: () => jsonResponse(422, { error: "photo_invalid", index: 1 }) });
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.drop(pane(), filesDrag([photo("ok.jpg"), photo("broken.jpg")]));
+    fireEvent.keyDown(textbox(), { key: "Enter", ctrlKey: true });
+    await within(toasts()).findByText("Фото не принято. Уберите его и отправьте снова.");
+    const items = within(screen.getByRole("list", { name: "Фото к отправке" })).getAllByRole("listitem");
+    expect(items[0]!.hasAttribute("data-refused")).toBe(false);
+    expect(items[1]!.hasAttribute("data-refused")).toBe(true);
+    expect(within(items[1]!).getByRole("img").getAttribute("alt")).toBe("broken.jpg, не принято");
+  });
+
+  it("lets the browser paste text that comes with an image, and still attaches the image", async () => {
+    mockApi();
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    const notPrevented = fireEvent.paste(textbox(), {
+      clipboardData: { types: ["text/plain", "Files"], files: [photo("pic.png", "image/png")], getData: () => "pic.png" },
+    });
+    expect(notPrevented).toBe(true);
+    expect(within(screen.getByRole("list", { name: "Фото к отправке" })).getAllByRole("listitem")).toHaveLength(1);
+    const imageOnly = fireEvent.paste(textbox(), { clipboardData: { types: ["Files"], files: [photo("shot.png", "image/png")] } });
+    expect(imageOnly).toBe(false);
+  });
+
+  it("explains why a note with only photos cannot be sent", async () => {
+    mockApi();
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.click(screen.getByRole("radio", { name: "Заметка" }));
+    fireEvent.drop(pane(), filesDrag([photo("a.jpg")]));
+    expect(screen.getByText("Заметке нужен текст")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Добавить заметку" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(textbox("Заметка"), { target: { value: "Вот скрин" } });
+    expect(screen.queryByText("Заметке нужен текст")).toBeNull();
+  });
+
+  it("lets Enter send when the canned search found nothing", async () => {
+    const { calls } = mockApi({
+      sendKey: "enter",
+      send: () => jsonResponse(200, { ...userMessage, id: "x1", sender: "agent", body: "/xyz", author_name: "Аня Смирнова", delivery_status: "sent" }),
+    });
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.change(textbox(), { target: { value: "/xyz", selectionStart: 4 } });
+    await screen.findByText("Ничего не нашлось. Esc закроет поиск.");
+    fireEvent.keyDown(textbox(), { key: "Enter" });
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/messages"))).toHaveLength(1));
+  });
+
+  it("announces mode changes politely", async () => {
+    mockApi();
+    renderThread();
+    await screen.findByRole("list", { name: "Переписка" });
+    const status = () => document.querySelector("[data-mode-announcer]")!;
+    expect(status().getAttribute("aria-live")).toBe("polite");
+    expect(status().textContent).toBe("");
+    fireEvent.keyDown(textbox(), { key: "Tab" });
+    expect(status().textContent).toBe("Режим: заметка");
+    fireEvent.keyDown(textbox("Заметка"), { key: ".", ctrlKey: true });
+    expect(status().textContent).toBe("Режим: ответ");
+  });
 });

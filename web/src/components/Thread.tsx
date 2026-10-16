@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Composer, usePhotoDraft } from "./Composer";
 import { DropOverlay, useFileDrop, type DropBlock } from "./DropOverlay";
 import { Link } from "react-router-dom";
@@ -9,7 +9,7 @@ import { MessageBubble } from "./MessageBubble";
 import { Avatar, ChannelDot } from "./TicketRow";
 import { toast } from "./Toast";
 import { formatDay, formatTime, sameDay } from "../lib/format";
-import { messageKey } from "../lib/outbox";
+import { messageKey, releaseKeys } from "../lib/outbox";
 import { usePresence } from "../lib/presence";
 import type { Operator } from "../lib/queries";
 import {
@@ -241,6 +241,7 @@ function ThreadView({
   const seen = useRef<Set<string> | null>(null);
   const [lightbox, setLightbox] = useState<{ photos: Attachment[]; index: number; thumbs: Array<HTMLElement | null> } | null>(null);
   const retry = useRetryMessage(ticket.id);
+  useEffect(() => () => releaseKeys(ticket.id), [ticket.id]);
   const [mode, setMode] = useState<ComposeMode>("reply");
   const photos = usePhotoDraft();
   const input = useRef<HTMLTextAreaElement>(null);

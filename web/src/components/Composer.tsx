@@ -23,6 +23,7 @@ import { useTypingPresence } from "../lib/presence";
 import type { Operator } from "../lib/queries";
 import {
   isAssignedToOther,
+  refusedPhotoIndex,
   sendErrorText,
   useOperators,
   useSendMessage,
@@ -110,6 +111,9 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
   const [caret, setCaret] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [active, setActive] = useState(0);
+  const [refused, setRefused] = useState<File | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const firstMode = useRef(true);
   const nextCaret = useRef<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const listId = useId();
@@ -142,9 +146,18 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
   // An @ with no matching colleague is plain text (an email, a handle), not a question.
   const showMention = picker?.kind === "mention" && mentionItems.length > 0;
   const count = showCanned ? cannedItems.length : showMention ? mentionItems.length : 0;
+  // A canned search that found nothing leaves Enter and Tab to the composer.
+  const pickerKeys = showMention || (showCanned && (canned.isPending || cannedItems.length > 0));
   const activeIndex = Math.min(active, Math.max(0, count - 1));
 
   useEffect(() => setActive(0), [picker?.kind, picker?.range.query]);
+  useEffect(() => {
+    if (firstMode.current) {
+      firstMode.current = false;
+      return;
+    }
+    setAnnounce(mode === "note" ? "Режим: заметка" : "Режим: ответ");
+  }, [mode]);
   useEffect(() => {
     if (!tokenId) setDismissed(null);
   }, [tokenId]);
@@ -196,12 +209,15 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
   const pickMention = (o: OperatorSummary) => {
     if (picker?.kind !== "mention") return;
     replaceRange(picker.range, `@${o.name} `);
+    // The inserted name still reads as an `@query`; close it so Enter goes back to sending.
+    setDismissed(`mention:${picker.range.start}`);
   };
 
   // ---- sending ----
   const body = text.trim();
   const overLimit = body.length > MAX_BODY;
   const hasContent = note ? body.length > 0 : body.length > 0 || photos.files.length > 0;
+  const noteNeedsText = note && !body && photos.files.length > 0;
   const canSend = !resolved && !replyLocked && !send.isPending && hasContent && !overLimit;
 
   const submit = () => {
@@ -211,12 +227,17 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
     const vars = { clientKey: newClientKey(), kind: mode, body, photos: files };
     setText("");
     setCaret(0);
+    setRefused(null);
     photos.set([]);
     send.mutateAsync(vars).catch((err: unknown) => {
-      // Give the draft back unless the operator already started a new one.
+      // Give the draft back unless the operator already started a new one, in
+      // the mode it was sent in: a note must never come back as a reply.
       if (mounted.current && !textRef.current && !photos.peek().length) {
+        onMode(vars.kind);
         setText(draft);
         photos.set(files);
+        const bad = refusedPhotoIndex(err);
+        setRefused(bad === null ? null : files[bad] ?? null);
       }
       const { text: msg, detail } = sendErrorText(err, files.map((f) => f.name));
       const ticketId = ticket.id;
@@ -236,7 +257,7 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
-    if (showCanned || showMention) {
+    if (pickerKeys) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         if (count) setActive((activeIndex + (e.key === "ArrowDown" ? 1 : -1) + count) % count);
@@ -248,6 +269,8 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
         if (showMention && mentionItems[activeIndex]) pickMention(mentionItems[activeIndex]!);
         return;
       }
+    }
+    if (showCanned || showMention) {
       if (e.key === "Escape" && picker) {
         e.preventDefault();
         e.stopPropagation();
@@ -276,7 +299,8 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData?.files ?? []);
     if (!files.length) return;
-    e.preventDefault();
+    // Copies from a page or a document carry text too; the browser pastes it.
+    if (!Array.from(e.clipboardData.types ?? []).includes("text/plain")) e.preventDefault();
     photos.add(files);
   };
 
@@ -296,6 +320,9 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
       <div className="mx-auto flex max-w-4xl flex-col gap-2 px-4 pb-3 pt-2 lg:px-6">
         <div className="flex items-center gap-3">
           <ModeSwitch mode={mode} onMode={onMode} />
+          <p data-mode-announcer="" aria-live="polite" className="sr-only">
+            {announce}
+          </p>
           {note ? (
             <p className="min-w-0 truncate text-xs text-note-text">Клиент заметку не увидит</p>
           ) : (
@@ -349,7 +376,7 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
                 "has-[textarea:focus-visible]:shadow-[inset_0_0_0_1px_var(--focus),0_0_0_1px_var(--focus)]",
               )}
             >
-              <PhotoStrip files={photos.files} onRemove={photos.remove} />
+              <PhotoStrip files={photos.files} onRemove={photos.remove} refused={refused} />
               <textarea
                 ref={inputRef}
                 rows={1}
@@ -393,7 +420,8 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
                     inputRef.current?.focus();
                   }}
                 />
-                <p className="hidden min-w-0 flex-1 truncate text-xs text-text-muted sm:block">
+                {noteNeedsText && <p className="min-w-0 flex-1 truncate text-xs text-note-text">Заметке нужен текст</p>}
+                <p className={cx("hidden min-w-0 flex-1 truncate text-xs text-text-muted", !noteNeedsText && "sm:block")}>
                   {note ? (
                     <>
                       <Kbd>@</Kbd> упомянуть коллегу
@@ -404,7 +432,7 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
                     </>
                   )}
                 </p>
-                <span className="flex-1 sm:hidden" />
+                {!noteNeedsText && <span className="flex-1 sm:hidden" />}
                 {body.length > COUNTER_FROM && (
                   <span className={cx("num shrink-0 text-xs", overLimit ? "text-danger" : "text-text-muted")}>
                     {body.length} / {MAX_BODY}

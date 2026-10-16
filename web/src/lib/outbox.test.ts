@@ -6,6 +6,7 @@ import {
   dropOutgoing,
   messageKey,
   newClientKey,
+  releaseKeys,
   removeOutgoing,
   resetOutboxForTests,
   withOutbox,
@@ -85,5 +86,26 @@ describe("outbox", () => {
     const k = key();
     addOutgoing("t1", mine(k), []);
     expect(dropOutgoing(withOutbox("t1", detail([userMsg])), k).messages.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("forgets a closed thread's key mappings once nothing for it is in flight", () => {
+    const k = key();
+    addOutgoing("t1", mine(k), ["m1"]);
+    const server = mine("srv1", { delivery_status: "sent" });
+    bindServerId(k, server.id);
+    removeOutgoing(k);
+    expect(messageKey(server)).toBe(k);
+    releaseKeys("t2");
+    expect(messageKey(server)).toBe(k);
+    releaseKeys("t1");
+    expect(messageKey(server)).toBe("srv1");
+  });
+
+  it("keeps the mapping of a send still in flight", () => {
+    const k = key();
+    addOutgoing("t1", mine(k), ["m1"]);
+    bindServerId(k, "srv1");
+    releaseKeys("t1");
+    expect(messageKey(mine("srv1"))).toBe(k);
   });
 });

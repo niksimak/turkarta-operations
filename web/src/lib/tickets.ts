@@ -416,6 +416,13 @@ export function useSendMessage(ticketId: string) {
   });
 }
 
+/** Index of the photo a 422 `photo_invalid` refused, if that is what happened. */
+export function refusedPhotoIndex(err: unknown): number | null {
+  if (!(err instanceof ApiError) || err.status !== 422) return null;
+  const body = (err.body ?? {}) as { error?: string; index?: unknown };
+  return body.error === "photo_invalid" && typeof body.index === "number" ? body.index : null;
+}
+
 /** What happened to a send and what to do; `detail` names the photo the server refused. */
 export function sendErrorText(err: unknown, photoNames: string[]): { text: string; detail?: string } {
   if (err instanceof ApiError) {

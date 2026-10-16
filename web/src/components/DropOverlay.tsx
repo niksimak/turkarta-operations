@@ -74,6 +74,11 @@ export function useFileDrop({ block, onFiles }: DropOptions) {
       if (!dragHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       touch();
+      // The staleness reset can fire during a long hover; a live drag turns the overlay back on.
+      if (depth.current === 0) {
+        depth.current = 1;
+        setActive(true);
+      }
       e.dataTransfer.dropEffect = latest.current.block ? "none" : "copy";
     },
     onDragLeave(e: DragEvent) {
