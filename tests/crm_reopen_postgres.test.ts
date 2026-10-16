@@ -119,10 +119,13 @@ test("reopen on a returning user: CRM mode continues the resolved ticket, bitrix
       sent.length = 0;
       const tk = await resolved("1 day", { assigned_operator_id: 7, intake_step: "email" });
       await dm(tk.user_tg, "снова я");
+      assert.equal((await sql`select intake_step from support_requests where id = ${tk.id}`)[0]!.intake_step, null);
+      // An email-shaped text would be swallowed as the intake answer if intake survived the reopen.
+      await dm(tk.user_tg, "me@example.com");
       await dm(tk.user_tg, "карта не работает");
       const rows = await sql`select status, intake_step, email from support_requests where user_tg = ${tk.user_tg}`;
       assert.deepEqual(rows.map((r) => [r.status, r.intake_step, r.email]), [["allocated", null, null]]);
-      assert.deepEqual(await userMessages(tk.id), ["снова я", "карта не работает"]);
+      assert.deepEqual(await userMessages(tk.id), ["снова я", "me@example.com", "карта не работает"]);
       assert.deepEqual(sent, []);
     });
 
