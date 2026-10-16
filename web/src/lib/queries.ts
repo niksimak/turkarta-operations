@@ -85,26 +85,17 @@ export function useUpdatePrefs() {
   );
 }
 
-const HEARTBEAT_MS = 60_000;
+export const HEARTBEAT_MS = 60_000;
 
-/** Keeps «На смене» alive: a heartbeat every minute while the tab is visible. */
+/** Keeps «На смене» alive: a heartbeat every minute while the tab is open, visible or not. */
 export function useHeartbeat(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return;
-    let last = 0;
     const beat = () => {
-      if (document.visibilityState !== "visible") return;
-      // Tab switching fires visibilitychange often; one beat per 15 s is plenty.
-      if (Date.now() - last < 15_000) return;
-      last = Date.now();
       api("/me/heartbeat", json("POST")).catch(() => undefined);
     };
     beat();
     const timer = setInterval(beat, HEARTBEAT_MS);
-    document.addEventListener("visibilitychange", beat);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", beat);
-    };
+    return () => clearInterval(timer);
   }, [enabled]);
 }

@@ -136,16 +136,50 @@ describe("Shell", () => {
     });
     renderShell();
     await screen.findByRole("switch", { name: "На смене" });
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
     act(() => FakeEventSource.latest().onerror?.());
-    expect(screen.getByRole("status").textContent).toContain("Переподключение…");
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status.textContent).toContain("Переподключение…");
+    act(() => FakeEventSource.latest().onopen?.());
+    expect(status.textContent).toBe("");
+  });
+
+  it("keeps the shell when a background refetch of /me fails", async () => {
+    let meStatus = 200;
+    mockFetch({
+      "GET /crm/api/me": () => jsonResponse(meStatus, meStatus === 200 ? operator : { error: "bad_gateway" }),
+      "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 1, mine: 0, overdue: 0 } }),
+      "POST /crm/api/me/heartbeat": ok({ ok: true }),
+    });
+    const { client } = renderShell();
+    await screen.findByRole("switch", { name: "На смене" });
+    meStatus = 502;
+    client.setQueryDefaults(["me"], { retry: false });
+    await act(() => client.refetchQueries({ queryKey: ["me"] }));
+    await waitFor(() => expect(client.getQueryState(["me"])?.status).toBe("error"));
+    expect(screen.getByRole("switch", { name: "На смене" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Очередь: 1" })).toBeTruthy();
+    expect(screen.queryByText("Не удалось загрузить профиль")).toBeNull();
+  });
+
+  it("shows the load error only when /me never loaded", async () => {
+    mockFetch({ "GET /crm/api/me": () => jsonResponse(502, { error: "bad_gateway" }) });
+    const { client } = renderShell();
+    client.setQueryDefaults(["me"], { retry: false });
+    await act(() => client.refetchQueries({ queryKey: ["me"] }));
+    expect(await screen.findByText("Не удалось загрузить профиль")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Повторить" })).toBeTruthy();
   });
 
   it("sends a visitor without a session to login-failed", async () => {
     const location = stubLocationAssign();
     try {
       mockFetch({ "GET /crm/api/me": () => jsonResponse(401, { error: "unauthorized" }) });
-      renderShell();
+      const { client } = renderShell();
       await waitFor(() => expect(location.assign).toHaveBeenCalledWith("/crm/login-failed?reason=session"));
+      await waitFor(() => expect(client.getQueryState(["me"])?.status).toBe("error"));
+      expect(screen.queryByText("Не удалось загрузить профиль")).toBeNull();
     } finally {
       location.restore();
     }

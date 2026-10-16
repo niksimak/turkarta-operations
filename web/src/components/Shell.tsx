@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
 import { useCrmStream, type CrmEvent } from "../lib/sse";
+import { ApiError } from "../lib/api";
 import { useTheme, storedThemePref, type ThemePref } from "../lib/theme";
 import {
   keys,
@@ -18,7 +19,9 @@ const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(
 
 export function Shell() {
   const me = useMe();
-  const ready = me.isSuccess;
+  // Gate on data, not status: a failed background refetch keeps the last good
+  // operator, and the shell must survive a deploy restart.
+  const ready = me.data !== undefined;
   const counts = useCounts(ready);
   const qc = useQueryClient();
 
@@ -40,7 +43,11 @@ export function Shell() {
     document.title = "Поддержка";
   }, []);
 
-  if (me.isError && !me.isFetching) return <LoadError onRetry={() => void me.refetch()} />;
+  // A 401 is already redirecting to login-failed; keep the skeleton until it lands.
+  const unauthorized = me.error instanceof ApiError && me.error.status === 401;
+  if (me.isError && !me.data && !me.isFetching && !unauthorized) {
+    return <LoadError onRetry={() => void me.refetch()} />;
+  }
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg text-text">
@@ -70,7 +77,7 @@ export function Shell() {
               <NavItem to="/settings" icon="settings" label="Настройки" />
             </div>
             <div className="flex-1" />
-            {stream.reconnecting && <Reconnecting />}
+            <Reconnecting active={stream.reconnecting} />
             <OperatorControls me={me.data} />
           </>
         ) : (
@@ -154,15 +161,23 @@ function NavItem({ to, icon, label, count, tone = "neutral" }: NavItemProps) {
   );
 }
 
-function Reconnecting() {
+// The live region stays mounted so screen readers announce the text change.
+function Reconnecting({ active }: { active: boolean }) {
   return (
     <p
       role="status"
-      className="mx-2 mb-2 flex items-center justify-center gap-2 rounded-sm bg-sla-warn-soft px-2 py-1.5 text-xs text-sla-warn lg:justify-start"
-      title="Связь с сервером потеряна. Переподключаемся."
+      className={cx(
+        active &&
+          "mx-2 mb-2 flex items-center justify-center gap-2 rounded-sm bg-sla-warn-soft px-2 py-1.5 text-xs text-sla-warn lg:justify-start",
+      )}
+      title={active ? "Связь с сервером потеряна. Переподключаемся." : undefined}
     >
-      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-sla-warn" />
-      <span className="sr-only lg:not-sr-only">Переподключение…</span>
+      {active && (
+        <>
+          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-sla-warn" />
+          <span className="sr-only lg:not-sr-only">Переподключение…</span>
+        </>
+      )}
     </p>
   );
 }
@@ -197,10 +212,10 @@ function OperatorControls({ me }: { me: Operator }) {
       </div>
       {failed && (
         <p role="alert" className="text-xs text-danger">
-          <span className="lg:hidden" title="Не сохранилось. Повторите">
+          <span aria-hidden="true" className="lg:hidden" title="Не сохранилось. Повторите">
             <Icon name="alert" />
           </span>
-          <span className="hidden lg:inline">Не сохранилось. Повторите.</span>
+          <span className="sr-only lg:not-sr-only">Не сохранилось. Повторите.</span>
         </p>
       )}
       <div className="hidden min-w-0 lg:block">
@@ -242,7 +257,7 @@ function Switch({
         aria-hidden="true"
         className={cx(
           "absolute left-0.5 top-0.5 size-4 rounded-full bg-surface shadow-[0_1px_2px_rgb(0_0_0/0.2)]",
-          "transition-transform duration-base ease-out",
+          "transition-transform duration-base ease-out motion-reduce:transition-none",
           checked && "translate-x-4",
         )}
       />
