@@ -262,6 +262,9 @@ test("ticket workflow: take, take-over, assign, status, list, detail", { skip: !
         await ticket({ last_message_at: sql`now() - interval '3 minutes'` }),
         await ticket({}),
       ];
+      // Separate inserts get distinct now(); force an exact tie so the id tiebreak is exercised.
+      await sql`update support_requests set last_message_at = date_trunc('minute', now()) - interval '1 minute'
+        where id in ${sql(ids.slice(2, 5))}`;
       const seen: string[] = [];
       let cursor: string | undefined;
       let pages = 0;
@@ -277,6 +280,7 @@ test("ticket workflow: take, take-over, assign, status, list, detail", { skip: !
       const all = await tickets.listTickets(anna, { view: "all", limit: 100 }, s);
       assert.deepEqual(seen, all.items.map((i) => i.id));
       assert.deepEqual(seen.slice(0, 2), ids.slice(0, 2));
+      assert.deepEqual(seen.slice(2, 5), ids.slice(2, 5).sort());
       assert.equal(seen.at(-1), ids[6]);
       assert.equal(seen.at(-2), ids[5]);
       await assert.rejects(tickets.listTickets(anna, { view: "all", cursor: "garbage" }, s), tickets.BadCursor);
