@@ -9,6 +9,7 @@ const NO_ONE_THROTTLE_MS = 15 * 60_000;
 const STUCK_DELIVERY = "2 minutes";
 const STUCK_DELIVERY_ERROR = "tg_interrupted: повторите отправку";
 const ASSIGN_LOCK_KEY = 160010;
+// Queue work means a customer is waiting: onboarding welcome tickets stay untouched until the user writes.
 
 let lastNoOneAlertAt: number | null = null;
 
@@ -52,7 +53,8 @@ export async function tick(
       await tx`select pg_advisory_xact_lock(${ASSIGN_LOCK_KEY})`;
       const due = await tx<{ id: string; user_name: string | null; user_username: string | null }[]>`
         select id, user_name, user_username from support_requests
-         where status = 'new' and queued_at < ${at} - make_interval(mins => ${s.auto_assign_minutes})
+         where status = 'new' and waiting_since is not null
+           and queued_at < ${at} - make_interval(mins => ${s.auto_assign_minutes})
          order by queued_at
          for update skip locked
          limit ${BATCH}`;
@@ -82,7 +84,7 @@ export async function tick(
   const nowMs = (now ?? new Date()).getTime();
   if (unassigned && s.tg_ping_no_one_on_shift && alert
       && (lastNoOneAlertAt === null || nowMs - lastNoOneAlertAt >= NO_ONE_THROTTLE_MS)) {
-    const [q] = await sql<{ n: number }[]>`select count(*)::int as n from support_requests where status = 'new'`;
+    const [q] = await sql<{ n: number }[]>`select count(*)::int as n from support_requests where status = 'new' and waiting_since is not null`;
     lastNoOneAlertAt = nowMs;
     await safeAlert("no_one_on_shift", () => alert.noOneOnShift(q!.n));
     noOneAlerted = true;

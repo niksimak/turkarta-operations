@@ -36,7 +36,7 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
   async function ticket(fields: Record<string, unknown> = {}) {
     const row = {
       user_tg: ++userSeq, user_name: "Иван", source: "bot", first_message: "help",
-      queued_at: sql`now() - interval '10 minutes'`, ...fields,
+      queued_at: sql`now() - interval '10 minutes'`, waiting_since: sql`now()`, ...fields,
     };
     const [r] = await sql`insert into support_requests ${sql(row)} returning id`;
     return r!.id as string;
@@ -46,7 +46,7 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
     await sql`insert into crm_operators ${sql(row)}`;
   }
   async function load(opId: number, n: number) {
-    for (let i = 0; i < n; i++) await ticket({ status: "allocated", assigned_operator_id: opId, queued_at: null });
+    for (let i = 0; i < n; i++) await ticket({ status: "allocated", assigned_operator_id: opId, queued_at: null, waiting_since: null });
   }
   async function setting(key: string, value: unknown) {
     await sql`insert into crm_settings (key, value) values (${key}, ${JSON.stringify(value)}::text::jsonb)
@@ -170,6 +170,28 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       const r5 = await worker.tick(undefined, deps);
       assert.deepEqual(r5, { assigned: 0, overdue: 0, noOneAlerted: false });
       assert.equal((await row(off)).status, "new");
+    });
+
+    await t.test("welcome ticket with no customer message is neither assigned nor counted as queued", async () => {
+      await reset();
+      await operator(1, "Anna");
+      const welcome = await ticket({ source: "web-onboarding", waiting_since: null });
+      const r = await worker.tick(undefined, deps);
+      assert.deepEqual(r, { assigned: 0, overdue: 0, noOneAlerted: false });
+      const w = await row(welcome);
+      assert.equal(w.status, "new");
+      assert.equal(w.assigned_operator_id, null);
+
+      await sql`update crm_operators set on_shift = false`;
+      const r2 = await worker.tick(undefined, deps);
+      assert.equal(r2.noOneAlerted, false);
+      assert.deepEqual(sent.noOne, []);
+
+      // Once someone waits, the queue count excludes the welcome ticket.
+      await ticket();
+      const r3 = await worker.tick(undefined, deps);
+      assert.equal(r3.noOneAlerted, true);
+      assert.deepEqual(sent.noOne, [1]);
     });
 
     await t.test("two concurrent ticks assign each ticket exactly once", async () => {
