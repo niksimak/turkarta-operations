@@ -55,6 +55,11 @@ test("publish never throws when NOTIFY fails", async () => {
   await assert.doesNotReject(mod.publish({ type: "ticket.created", ticketId: "x" }));
 });
 
+test("startEventHub resolves with a no-op stop when listen fails", async () => {
+  const stop = await mod.startEventHub(async () => { throw Object.assign(new Error("down"), { code: "ECONNREFUSED" }); });
+  await assert.doesNotReject(stop());
+});
+
 const url = process.env.CRM_TEST_DATABASE_URL;
 
 test("PG round trip: publish -> LISTEN -> subscriber, body truncated to 140", { skip: !url }, async () => {

@@ -40,11 +40,19 @@ export async function publish(event: CrmEvent): Promise<void> {
   }
 }
 
-export async function startEventHub(): Promise<() => Promise<void>> {
-  const sub = await sql.listen(CHANNEL, (payload) => {
-    try { dispatch(JSON.parse(payload) as CrmEvent); } catch { console.error("crm event parse failed"); }
-  });
-  return async () => { await sub.unlisten(); };
+type Listen = (channel: string, onMessage: (payload: string) => void) => Promise<{ unlisten: () => Promise<void> }>;
+
+/** Live updates are optional: a failed LISTEN logs and boots without them. */
+export async function startEventHub(listen: Listen = (c, f) => sql.listen(c, f)): Promise<() => Promise<void>> {
+  try {
+    const sub = await listen(CHANNEL, (payload) => {
+      try { dispatch(JSON.parse(payload) as CrmEvent); } catch { console.error("crm event parse failed"); }
+    });
+    return async () => { await sub.unlisten(); };
+  } catch (err) {
+    console.error(`[crm-events] listen failed code=${(err as { code?: string }).code ?? "error"}`);
+    return async () => {};
+  }
 }
 
 const viewersByTicket = new Map<string, Map<number, Viewer & { at: number }>>();
