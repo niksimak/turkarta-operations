@@ -180,3 +180,24 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
 **2026-08-04: TEMP CLOSED** — turkarta promoted (PR #386), prod endpoint verified 403; `TURKARTA_API_URL` flipped back to `https://api.turkarta.me`. Support-reply pushes now LIVE for prod web users.
 
 **2026-08-04 session close:** Bitrix hub COMPLETE — all 3 support channels two-way in «Открытая линия 3» (web: log+push; tg: bot DM, dedup by bitrix_message_id). Support-reply push callback live against prod api. TG topic runs in parallel (primacy decision pending); TG media = placeholders. 🔴 Rotate: Bitrix webhook URL, app token, client_secret (all burned in build chat).
+
+## Fly.io (planned 2026-10-16)
+
+- App: `turkarta-operations`, region `ams`, config `fly.toml` (repo root).
+- Domain: `crm.turkarta.me` (`fly certs add`). It becomes `PUBLIC_BASE_URL`.
+  The CRM lives at `https://crm.turkarta.me/crm`.
+- Not created yet. No deploy, no secrets set. Spec: `docs/superpowers/specs/2026-10-16-support-crm-design.md` §15.
+- Rule: never scale above 1 machine. Presence is in memory, workers run in-process,
+  and bot webhooks must not run twice.
+
+Move sequence (run in `SUPPORT_SURFACE=bitrix` mode so behaviour is unchanged):
+1. `fly deploy` with `PUBLIC_BASE_URL` set to the Fly URL. On boot ops calls `setWebhook`,
+   so both bots switch to Fly.
+2. Suspend the Render service right away. A Render cold start would call `setWebhook`
+   again and take the bots back.
+3. Re-point Turkarta's ops URL to Fly and redeploy it.
+4. Bitrix: update the app handler and event URLs to the Fly host (`event.bind` again).
+5. Smoke test: TG DM to the support bot, web ticket, Bitrix reply round trip.
+
+Rollback: resume and restart Render (its boot re-points the bot webhooks), then point
+Turkarta and Bitrix back. Render is deleted after one clean week.
