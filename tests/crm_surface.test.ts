@@ -23,6 +23,10 @@ const sent: Array<{ method: string; payload: Record<string, unknown> }> = [];
 const recorded: Array<{ ticket: string; body: string }> = [];
 const published: Array<{ type: string; ticketId?: string }> = [];
 let reopenable: Ticket | null = null;
+// Simulates losing the one-open-ticket race: recording on this ticket fails with 23505
+// after `raceWinner` has become the user's open ticket.
+let raceOn: string | null = null;
+let raceWinner: Ticket | null = null;
 let reopenLookups: Array<{ who: unknown; days: number }> = [];
 
 function fixture(fields: Partial<Ticket>): Ticket {
@@ -91,6 +95,11 @@ mock.module("../dist/db.js", { namedExports: {
 mock.module("../dist/crm/inbound.js", { namedExports: {
   classifyTelegram: (m: { text?: string; caption?: string }) => ({ kind: "text", body: m.text ?? m.caption ?? "" }),
   recordUserMessage: async (ticket: Ticket, part: { body: string }) => {
+    if (raceOn === ticket.id) {
+      raceOn = null;
+      tickets.set(raceWinner!.id, raceWinner!);
+      throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+    }
     recorded.push({ ticket: ticket.id, body: part.body });
     return { messageId: "stored-message", appendedToAlbum: false, reopened: false, attachment: null };
   },
@@ -140,7 +149,7 @@ function dm(user: number, content: object) {
 const photo = (id: string) => ({ photo: [{ file_id: id, file_unique_id: id, width: 9, height: 9 }] });
 function reset() {
   tickets.clear(); dbCalls.length = 0; bitrix.length = 0; sent.length = 0; recorded.length = 0;
-  published.length = 0; reopenable = null; reopenLookups = [];
+  published.length = 0; reopenable = null; reopenLookups = []; raceOn = null; raceWinner = null;
   config.SUPPORT_SURFACE = "crm";
 }
 const toGroup = () => sent.filter(m => m.payload.chat_id === SUPPORT_CHAT);
@@ -299,4 +308,36 @@ test("bitrix (same process, switched back): cards, photo copy and Bitrix mirror 
   } finally {
     config.SUPPORT_SURFACE = "crm";
   }
+});
+
+test("crm: welcome is not injected into an open ticket; a fresh welcome ticket is published", async () => {
+  reset();
+  tickets.set("web-u5", fixture({ id: "web-u5", channel: "web", web_user_id: "u5", status: "allocated" }));
+  assert.equal((await post("/api/support/web/welcome", { web_user_id: "u5" })).status, 200);
+  assert.equal(dbCalls.includes("addMessage"), false);
+  assert.deepEqual(published, []);
+
+  assert.equal((await post("/api/support/web/welcome", { web_user_id: "u6" })).status, 200);
+  assert.equal(dbCalls.filter(c => c === "addMessage").length, 1);
+  assert.deepEqual(published, [{ type: "ticket.created", ticketId: "web-u6" }]);
+  assert.deepEqual(toGroup(), []);
+});
+
+test("crm: losing the one-open race on reopen keeps the message on the winning ticket", async () => {
+  reset();
+  const prior = fixture({ id: "resolved-7", user_tg: 7, status: "resolved" });
+  tickets.set(prior.id, prior);
+  reopenable = prior;
+  raceOn = prior.id;
+  raceWinner = fixture({ id: "open-7", user_tg: 7, status: "new" });
+  await dm(7, { text: "я тут" });
+  assert.deepEqual(recorded, [{ ticket: "open-7", body: "я тут" }]);
+
+  const webPrior = fixture({ id: "resolved-w7", channel: "web", web_user_id: "w7", status: "resolved" });
+  tickets.set(webPrior.id, webPrior);
+  reopenable = webPrior;
+  raceOn = webPrior.id;
+  raceWinner = fixture({ id: "open-w7", channel: "web", web_user_id: "w7", status: "new" });
+  assert.equal((await post("/api/support/web/message", { web_user_id: "w7", body: "и я" })).status, 200);
+  assert.deepEqual(recorded.at(-1), { ticket: "open-w7", body: "и я" });
 });

@@ -286,8 +286,8 @@ app.post("/api/support/web/photo", async (c) => {
       photo,
     });
   } else {
-    await pushWebUserMessage(ticket, body, photo);
-    if (ticket.status === "resolved") ticket = (await db.getTicket(ticket.id)) ?? ticket;
+    const took = await pushWebUserMessage(ticket, body, photo);
+    if (ticket.status === "resolved") ticket = (await db.getTicket(took.id)) ?? took;
   }
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
 });

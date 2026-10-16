@@ -189,10 +189,11 @@ export async function recordUserMessage(
       && row.within_reopen === true && !row.other_open;
     const reopenTo: TicketStatus | null = reopen ? (row.operator_on_shift ? "allocated" : "new") : null;
     const statusSet =
+      // A ticket resolved mid-intake must not keep asking for an email after it reopens.
       reopenTo === "new"
-        ? tx`status = 'new', queued_at = now(), assigned_operator_id = null, auto_assigned = false`
+        ? tx`status = 'new', queued_at = now(), assigned_operator_id = null, auto_assigned = false, intake_step = null`
         : reopenTo === "allocated"
-          ? tx`status = 'allocated'`
+          ? tx`status = 'allocated', intake_step = null`
           : tx`status = case when status = 'awaiting' then 'allocated' else status end`;
     const [updated] = await tx<{ assigned_operator_id: string | number | null; user_name: string | null; user_username: string | null }[]>`
       update support_requests

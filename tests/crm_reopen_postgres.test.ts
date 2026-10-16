@@ -54,6 +54,10 @@ test("reopen on a returning user: CRM mode continues the resolved ticket, bitrix
   const lastUserMessage = async (id: string) =>
     (await sql`select body from support_messages where ticket_id = ${id} and sender = 'user' order by seq desc limit 1`)[0]?.body;
   const ASK_EMAIL = "📧 Оставьте email для связи (или отправьте /skip).";
+  const QUEUED = "Принято! Подключаем оператора…";
+  const userMessages = async (id: string) =>
+    (await sql`select body from support_messages where ticket_id = ${id} and sender = 'user' order by seq`).map((m) => m.body);
+  const headers = { "x-webhook-secret": "test-secret", "content-type": "application/json" };
 
   try {
     await sql`insert into crm_operators (id, name, role, on_shift) values (7, 'Anna', 'support', true), (8, 'Boris', 'support', false)`;
@@ -99,7 +103,6 @@ test("reopen on a returning user: CRM mode continues the resolved ticket, bitrix
 
     await t.test("crm web: a message after a recent resolve reopens; an old resolve still 404s", async () => {
       const recent = await resolved("1 day", { channel: "web", user_tg: null, web_user_id: "w-recent", assigned_operator_id: 7 });
-      const headers = { "x-webhook-secret": "test-secret", "content-type": "application/json" };
       const res = await app.request("/api/support/web/message", { method: "POST", headers,
         body: JSON.stringify({ web_user_id: "w-recent", body: "ещё" }) });
       assert.equal(res.status, 200);
@@ -110,6 +113,57 @@ test("reopen on a returning user: CRM mode continues the resolved ticket, bitrix
       const old = await app.request("/api/support/web/message", { method: "POST", headers,
         body: JSON.stringify({ web_user_id: "w-old", body: "ещё" }) });
       assert.equal(old.status, 404);
+    });
+
+    await t.test("crm: reopening a ticket resolved during intake clears intake; the next text is a message", async () => {
+      sent.length = 0;
+      const tk = await resolved("1 day", { assigned_operator_id: 7, intake_step: "email" });
+      await dm(tk.user_tg, "снова я");
+      await dm(tk.user_tg, "карта не работает");
+      const rows = await sql`select status, intake_step, email from support_requests where user_tg = ${tk.user_tg}`;
+      assert.deepEqual(rows.map((r) => [r.status, r.intake_step, r.email]), [["allocated", null, null]]);
+      assert.deepEqual(await userMessages(tk.id), ["снова я", "карта не работает"]);
+      assert.deepEqual(sent, []);
+    });
+
+    await t.test("crm intake: non-email text ends intake as a message; a real email and /skip still finish it", async () => {
+      sent.length = 0;
+      const a = ++userSeq;
+      await dm(a, "help");
+      await dm(a, "у меня не проходит оплата");
+      const [ta] = await sql`select id, intake_step, email from support_requests where user_tg = ${a}`;
+      assert.deepEqual([ta!.intake_step, ta!.email], [null, null]);
+      assert.deepEqual(await userMessages(ta!.id), ["help", "у меня не проходит оплата"]);
+      assert.deepEqual(sent.map((m) => m.text), [ASK_EMAIL]);
+
+      sent.length = 0;
+      const b = ++userSeq;
+      await dm(b, "help");
+      await dm(b, "me@example.com");
+      const [tb] = await sql`select id, intake_step, email from support_requests where user_tg = ${b}`;
+      assert.deepEqual([tb!.intake_step, tb!.email], [null, "me@example.com"]);
+      assert.deepEqual(await userMessages(tb!.id), ["help"]);
+      assert.deepEqual(sent.map((m) => m.text), [ASK_EMAIL, QUEUED]);
+
+      sent.length = 0;
+      const c = ++userSeq;
+      await dm(c, "help");
+      await dm(c, "/skip");
+      const [tc] = await sql`select intake_step, email from support_requests where user_tg = ${c}`;
+      assert.deepEqual([tc!.intake_step, tc!.email], [null, null]);
+      assert.deepEqual(sent.map((m) => m.text), [ASK_EMAIL, QUEUED]);
+    });
+
+    await t.test("crm Mini App: a retried webhook on a reopened ticket records the message once", async () => {
+      const tk = await resolved("1 day", { assigned_operator_id: 7 });
+      for (let i = 0; i < 2; i++) {
+        const res = await app.request("/webhooks/support", { method: "POST", headers,
+          body: JSON.stringify({ tg: tk.user_tg, request: "снова из мини-аппа" }) });
+        assert.equal(res.status, 200);
+        assert.equal((await res.json()).ticketId, tk.id);
+      }
+      assert.equal((await ticketsOf(tk.user_tg)).length, 1);
+      assert.deepEqual(await userMessages(tk.id), ["снова из мини-аппа"]);
     });
 
     await t.test("bitrix: a recent resolve still opens a new ticket, and recordUserMessage never reopens", async () => {
@@ -129,6 +183,15 @@ test("reopen on a returning user: CRM mode continues the resolved ticket, bitrix
         const [row] = await sql`select status, assigned_operator_id from support_requests where id = ${other.id}`;
         assert.deepEqual([row!.status, Number(row!.assigned_operator_id)], ["resolved", 8]);
         assert.deepEqual(await eventsOf(other.id), []);
+
+        // Intake is unchanged: any text answers the email question.
+        sent.length = 0;
+        const u = ++userSeq;
+        await dm(u, "help");
+        await dm(u, "не email");
+        const [ti] = await sql`select intake_step, email from support_requests where user_tg = ${u}`;
+        assert.deepEqual([ti!.intake_step, ti!.email], [null, "не email"]);
+        assert.deepEqual(sent.filter((m) => m.method === "sendMessage" && m.chat === u).map((m) => m.text), [ASK_EMAIL, QUEUED]);
       } finally {
         config.SUPPORT_SURFACE = "crm";
       }
