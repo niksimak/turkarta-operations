@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { createQueryClient } from "../app";
@@ -83,7 +83,8 @@ describe("Canned replies page", () => {
     const body = await screen.findByLabelText("Текст");
     fireEvent.keyDown(body, { key: "Enter", ctrlKey: true });
     fireEvent.keyDown(body, { key: "Enter", metaKey: true });
-    // The fetch double throws on anything but the two GETs, so a PUT would surface as an error toast.
+    // Let a mutation, if one started, reach fetch.
+    await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(screen.queryByRole("alert")).toBeNull();
     const calls = (fetch as unknown as { mock: { calls: Array<[string, RequestInit?]> } }).mock.calls;
     expect(calls.some(([, init]) => init?.method === "PUT")).toBe(false);
