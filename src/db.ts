@@ -368,23 +368,33 @@ export async function addMessage(
   return row!;
 }
 
+export interface ThreadMessage {
+  id: string;
+  ticket_id: string;
+  sender: "user" | "agent" | "system";
+  body: string;
+  created_at: string;
+  seq: number;
+  attachments: Array<{ id: string; media_type: string; filename: string }>;
+}
+
 /**
- * Messages for a ticket after the `since` sequence cursor; all if omitted.
- * `seq` is a monotonic integer — an exact, URL-safe cursor (unlike a timestamp,
- * whose '+00' offset gets mangled to a space in query strings). `created_at` is
- * returned as text for display only.
+ * Customer-visible messages for a ticket after the `since` sequence cursor; all if
+ * omitted. Operator notes are excluded. `seq` is a monotonic integer — an exact,
+ * URL-safe cursor (unlike a timestamp, whose '+00' offset gets mangled to a space in
+ * query strings). `created_at` is returned as text for display only.
  */
 export async function messagesSince(
   ticketId: string,
   since?: number | null,
-): Promise<Message[]> {
-  return sql<Message[]>`
+): Promise<ThreadMessage[]> {
+  return sql<ThreadMessage[]>`
     select m.id, m.ticket_id, m.sender, m.body, m.created_at::text as created_at, m.seq,
-           a.id as attachment_id, a.media_type as attachment_media_type,
-           a.filename as attachment_filename
+           coalesce((select json_agg(json_build_object('id', a.id, 'media_type', a.media_type, 'filename', a.filename)
+                              order by a.position, a.created_at)
+                       from support_attachments a where a.message_id = m.id), '[]'::json) as attachments
       from support_messages m
-      left join support_attachments a on a.message_id = m.id
-     where m.ticket_id = ${ticketId}
+     where m.ticket_id = ${ticketId} and m.kind <> 'note'
        ${since != null ? sql`and m.seq > ${since}` : sql``}
      order by m.seq asc
      limit 200`;
@@ -414,7 +424,7 @@ export async function supportAttachmentForWebUser(
       from support_attachments a
       join support_messages m on m.id = a.message_id
       join support_requests r on r.id = m.ticket_id
-     where a.id = ${id} and r.web_user_id = ${webUserId}`;
+     where a.id = ${id} and r.web_user_id = ${webUserId} and m.kind <> 'note'`;
   return rows[0] ?? null;
 }
 

@@ -171,18 +171,39 @@ export async function listTickets(
   return { items: page.map(toItem), nextCursor, counts: { queue: c!.queue, mine: c!.mine, overdue: c!.overdue } };
 }
 
+const messageSelect = () => sql`
+  select m.id, m.sender, m.kind, m.body, m.unsupported_type, m.author_name, m.created_at, m.delivery_status, m.delivery_error,
+         coalesce((select json_agg(json_build_object('id', a.id, 'media_type', a.media_type, 'position', a.position)
+                            order by a.position, a.created_at)
+                     from support_attachments a where a.message_id = m.id), '[]'::json) as attachments
+    from support_messages m`;
+
+function toMessage(m: Row): CrmMessage {
+  return {
+    id: m.id as string,
+    sender: m.sender as CrmMessage["sender"],
+    kind: m.kind as MessageKind,
+    body: m.body as string,
+    unsupported_type: (m.unsupported_type as string | null) ?? null,
+    author_name: (m.author_name as string | null) ?? null,
+    created_at: iso(m.created_at)!,
+    delivery_status: (m.delivery_status as DeliveryStatus | null) ?? null,
+    delivery_error: (m.delivery_error as string | null) ?? null,
+    attachments: m.attachments as CrmMessage["attachments"],
+  };
+}
+
+export async function crmMessage(id: string): Promise<CrmMessage | null> {
+  if (!UUID_RE.test(id)) return null;
+  const [m] = await sql`${messageSelect()} where m.id = ${id}`;
+  return m ? toMessage(m) : null;
+}
+
 export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailItem; messages: CrmMessage[]; events: TicketEventRow[] } | null> {
   if (!UUID_RE.test(id)) return null;
   const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id`)} where r.id = ${id}`;
   if (!r) return null;
-  const msgs = await sql`
-    select m.id, m.sender, m.kind, m.body, m.unsupported_type, m.author_name, m.created_at, m.delivery_status, m.delivery_error,
-           coalesce((select json_agg(json_build_object('id', a.id, 'media_type', a.media_type, 'position', a.position)
-                              order by a.position, a.created_at)
-                       from support_attachments a where a.message_id = m.id), '[]'::json) as attachments
-      from support_messages m
-     where m.ticket_id = ${id}
-     order by m.seq`;
+  const msgs = await sql`${messageSelect()} where m.ticket_id = ${id} order by m.seq`;
   const evs = await sql`
     select e.id, e.type, o.name as actor_name, e.payload, e.created_at
       from crm_ticket_events e
@@ -196,18 +217,7 @@ export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailIt
       category: (r.category as string | null) ?? null,
       web_user_id: (r.web_user_id as string | null) ?? null,
     },
-    messages: msgs.map((m) => ({
-      id: m.id as string,
-      sender: m.sender as CrmMessage["sender"],
-      kind: m.kind as MessageKind,
-      body: m.body as string,
-      unsupported_type: (m.unsupported_type as string | null) ?? null,
-      author_name: (m.author_name as string | null) ?? null,
-      created_at: iso(m.created_at)!,
-      delivery_status: (m.delivery_status as DeliveryStatus | null) ?? null,
-      delivery_error: (m.delivery_error as string | null) ?? null,
-      attachments: m.attachments as CrmMessage["attachments"],
-    })),
+    messages: msgs.map(toMessage),
     events: evs.map((e) => ({
       id: Number(e.id),
       type: e.type as TicketEventType,
@@ -218,7 +228,7 @@ export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailIt
   };
 }
 
-interface Locked {
+export interface LockedTicket {
   id: string;
   status: TicketStatus;
   assigned_operator_id: number | null;
@@ -241,7 +251,7 @@ async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor:
     values (${ticketId}, ${type}, ${actor}, ${JSON.stringify(payload)}::text::jsonb)`;
 }
 
-async function assignTo(tx: Sql, t: Locked, to: { id: number; name: string }, type: TicketEventType, actor: number) {
+async function assignTo(tx: Sql, t: LockedTicket, to: { id: number; name: string }, type: TicketEventType, actor: number) {
   await tx`update support_requests
       set assigned_operator_id = ${to.id}, auto_assigned = false,
           status = case when status = 'new' then 'allocated' else status end
@@ -250,32 +260,47 @@ async function assignTo(tx: Sql, t: Locked, to: { id: number; name: string }, ty
   await logEvent(tx, t.id, type, actor, { operator_id: to.id, operator_name: to.name });
 }
 
-async function toQueue(tx: Sql, t: Locked, actor: number) {
+async function toQueue(tx: Sql, t: LockedTicket, actor: number) {
   await tx`update support_requests
       set status = 'new', assigned_operator_id = null, auto_assigned = false, queued_at = now()
     where id = ${t.id}`;
   if (t.assigned_operator_id !== null) await logEvent(tx, t.id, "unassigned", actor, { operator_id: null, operator_name: null });
 }
 
-/** Row-locks the ticket, applies `fn`, then publishes after commit. `fn` returns null for a no-op. */
-async function mutate(ticketId: string, fn: (tx: Sql, t: Locked) => Promise<Effects | null>): Promise<Effects | null> {
+/** Runs `fn` in a transaction holding the ticket's row lock. */
+export async function withLockedTicket<T>(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<T>): Promise<T> {
   if (!UUID_RE.test(ticketId)) throw new NotFound();
-  let effects: Effects | null;
-  let who = "";
   try {
-    effects = await sql.begin(async (tx) => {
+    return await sql.begin(async (tx) => {
       const [r] = await tx<{ id: string; status: TicketStatus; assigned_operator_id: string | null; user_name: string | null; user_username: string | null }[]>`
         select id, status, assigned_operator_id::text as assigned_operator_id, user_name, user_username
           from support_requests where id = ${ticketId} for update`;
       if (!r) throw new NotFound();
-      who = r.user_name || (r.user_username ? `@${r.user_username}` : "Без имени");
       return fn(tx, { ...r, assigned_operator_id: num(r.assigned_operator_id) });
-    });
+    }) as T;
   } catch (err) {
     // Reopening a ticket while the same user has another open one hits the one-open-per-user index.
     if ((err as { code?: string }).code === "23505") throw new Conflict("other_open");
     throw err;
   }
+}
+
+/** Claims an open ticket for `me` (take / first reply). Returns false when it is already mine. */
+export async function claim(tx: Sql, t: LockedTicket, me: Operator): Promise<boolean> {
+  if (t.status === "resolved") throw new Conflict("resolved");
+  if (t.assigned_operator_id === me.id) return false;
+  if (t.assigned_operator_id !== null) throw new Conflict("assigned_to_other", await operatorRef(tx, t.assigned_operator_id));
+  await assignTo(tx, t, me, "assigned", me.id);
+  return true;
+}
+
+/** Row-locks the ticket, applies `fn`, then publishes after commit. `fn` returns null for a no-op. */
+async function mutate(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
+  let who = "";
+  const effects = await withLockedTicket(ticketId, (tx, t) => {
+    who = t.user_name || (t.user_username ? `@${t.user_username}` : "Без имени");
+    return fn(tx, t);
+  });
   if (!effects) return null;
   await publish({ type: "ticket.updated", ticketId });
   if (effects.notify) {
@@ -289,13 +314,7 @@ async function mutate(ticketId: string, fn: (tx: Sql, t: Locked) => Promise<Effe
 }
 
 export async function take(ticketId: string, me: Operator): Promise<void> {
-  await mutate(ticketId, async (tx, t) => {
-    if (t.status === "resolved") throw new Conflict("resolved");
-    if (t.assigned_operator_id === me.id) return null;
-    if (t.assigned_operator_id !== null) throw new Conflict("assigned_to_other", await operatorRef(tx, t.assigned_operator_id));
-    await assignTo(tx, t, me, "assigned", me.id);
-    return {};
-  });
+  await mutate(ticketId, async (tx, t) => ((await claim(tx, t, me)) ? {} : null));
 }
 
 export async function takeOver(ticketId: string, me: Operator): Promise<void> {
@@ -326,7 +345,7 @@ export async function assign(ticketId: string, to: number | null, me: Operator):
 
 export async function setStatus(
   ticketId: string, status: TicketStatus, me: Operator,
-  deps: { onResolved?: (ticket: Ticket) => Promise<void> } = {},
+  deps: { onResolved?: (ticket: Ticket, text: string) => Promise<void> } = {},
 ): Promise<void> {
   const effects = await mutate(ticketId, async (tx, t) => {
     if (t.status === status) return null;
@@ -346,13 +365,19 @@ export async function setStatus(
     const [row] = await tx<Ticket[]>`select * from support_requests where id = ${t.id}`;
     return { resolved: row! };
   });
-  if (!effects?.resolved || !deps.onResolved) return;
+  if (!effects?.resolved) return;
   const s = await getSettings();
   if (!s.resolve_message_enabled) return;
   try {
-    await deps.onResolved(effects.resolved);
+    await (deps.onResolved ?? sendResolveMessage)(effects.resolved, s.resolve_message_text);
   } catch (err) {
     // The ticket is already resolved; a failed courtesy message must not undo or fail that.
     console.error(`[crm-tickets] resolve message failed ticket=${ticketId} code=${(err as { code?: string }).code ?? "error"}`);
   }
+}
+
+// Lazy: reply.ts imports this module, so a static import would be a cycle.
+async function sendResolveMessage(ticket: Ticket, text: string): Promise<void> {
+  const { sendSystemText } = await import("./reply.js");
+  await sendSystemText(ticket, text);
 }

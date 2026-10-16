@@ -166,21 +166,20 @@ function appAuthed(c: Context): boolean {
   return c.req.header("x-webhook-secret") === expected;
 }
 
-const serializeMessages = (msgs: db.Message[]) =>
-  msgs.map((m) => ({
-    id: m.id,
-    seq: m.seq,
-    sender: m.sender,
-    body: m.body,
-    at: m.created_at,
-    attachment: m.attachment_id
-      ? {
-          id: m.attachment_id,
-          mediaType: m.attachment_media_type,
-          filename: m.attachment_filename,
-        }
-      : null,
-  }));
+// `attachment` (first item) stays until the web chat reads `attachments`.
+const serializeMessages = (msgs: db.ThreadMessage[]) =>
+  msgs.map((m) => {
+    const attachments = m.attachments.map((a) => ({ id: a.id, mediaType: a.media_type, filename: a.filename }));
+    return {
+      id: m.id,
+      seq: m.seq,
+      sender: m.sender,
+      body: m.body,
+      at: m.created_at,
+      attachments,
+      attachment: attachments[0] ?? null,
+    };
+  });
 
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
