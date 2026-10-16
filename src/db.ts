@@ -510,12 +510,30 @@ export async function addAgentMessageFromBitrix(
   bitrixMessageId: string,
 ): Promise<Message | null> {
   const rows = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
-    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
-    on conflict (bitrix_message_id) where bitrix_message_id is not null
-      do nothing
-    returning *`;
+    with m as (
+      insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
+      values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
+      on conflict (bitrix_message_id) where bitrix_message_id is not null
+        do nothing
+      returning *
+    ), stamp as (
+      update support_requests
+         set waiting_since = null, first_response_at = coalesce(first_response_at, now())
+       where id = ${ticketId} and exists (select 1 from m)
+    )
+    select * from m`;
   return rows[0] ?? null;
+}
+
+/**
+ * An operator answered outside the CRM (Bitrix or the forum topic): stop the CRM
+ * SLA clock so cutover does not inherit tickets that look overdue.
+ */
+export async function markAgentReplied(ticketId: string): Promise<void> {
+  await sql`
+    update support_requests
+       set waiting_since = null, first_response_at = coalesce(first_response_at, now())
+     where id = ${ticketId}`;
 }
 
 export async function markBitrixConnectorRegistered(memberId: string): Promise<void> {

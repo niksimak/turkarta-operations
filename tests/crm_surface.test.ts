@@ -86,7 +86,9 @@ mock.module("../dist/db.js", { namedExports: {
   }),
   getTicket: track("getTicket", async (id: string) => tickets.get(id) ?? null),
   setCard: track("setCard", async () => {}),
-  ticketByThread: track("ticketByThread", async () => null),
+  ticketByThread: track("ticketByThread", async (thread: number) =>
+    openOf(t => t.thread_id === thread)),
+  markAgentReplied: track("markAgentReplied", async () => {}),
   ticketByCardMessage: track("ticketByCardMessage", async () => null),
   claim: track("claim", async () => null),
   addMessage: track("addMessage", async () => ({ id: "stored-message" })),
@@ -305,6 +307,24 @@ test("bitrix (same process, switched back): cards, photo copy and Bitrix mirror 
     assert.ok(bitrix.includes("sendUserMessage"));
     assert.deepEqual(reopenLookups, []);
     assert.equal(dbCalls.includes("resolvedTicketWithin"), false);
+  } finally {
+    config.SUPPORT_SURFACE = "crm";
+  }
+});
+
+test("bitrix: an operator reply in the forum topic is relayed and stops the CRM clock", async () => {
+  reset();
+  config.SUPPORT_SURFACE = "bitrix";
+  try {
+    tickets.set("topic-8", fixture({ id: "topic-8", user_tg: 8, status: "allocated", thread_id: 77 }));
+    await supportBot.handleUpdate({ update_id: ++sequence, message: {
+      message_id: sequence, date: 1, message_thread_id: 77, is_topic_message: true,
+      chat: { id: SUPPORT_CHAT, type: "supergroup", title: "Support", is_forum: true },
+      from: { id: 900, is_bot: false, first_name: "Oleg" }, text: "Проверяю",
+    } });
+    const relay = dbCalls.filter(c => c === "addMessage" || c === "markAgentReplied");
+    assert.deepEqual(relay, ["addMessage", "markAgentReplied"]);
+    assert.equal(toUser(8).length, 1);
   } finally {
     config.SUPPORT_SURFACE = "crm";
   }

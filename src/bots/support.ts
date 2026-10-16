@@ -714,6 +714,10 @@ supportBot.on("message", async (ctx, next) => {
     actor: "human", authorId: `tg:${ctx.from.id}`,
     sourceId: `tg:${ctx.chat.id}:${msg.message_id}`,
   });
+  // Best-effort: a stale CRM timer must never block the relay to the customer.
+  await db.markAgentReplied(ticket.id).catch((err: { code?: string }) => {
+    console.error(`[support] mark replied failed ticket=${ticket.id} code=${err?.code ?? "error"}`);
+  });
 
   // Web channel: store the reply for the app to poll (media isn't relayable to web).
   if (ticket.channel === "web") {
