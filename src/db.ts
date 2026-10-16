@@ -26,7 +26,11 @@ const CRM_MIGRATION = fileURLToPath(new URL("../migrations/0016_support_crm.sql"
 
 /** Apply the idempotent CRM migration on boot (same file `pnpm migrate` runs). */
 export async function ensureCrmSchema(): Promise<void> {
-  await sql.unsafe(readFileSync(CRM_MIGRATION, "utf8"));
+  // ALTER TABLE queues behind any open lock; fail boot fast instead of hanging the deploy.
+  await sql.begin(async (tx) => {
+    await tx`set local lock_timeout = '5s'`;
+    await tx.unsafe(readFileSync(CRM_MIGRATION, "utf8"));
+  });
 }
 
 /** Fail before registering webhooks if the required additive migration is missing. */

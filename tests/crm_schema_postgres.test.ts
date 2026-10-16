@@ -24,6 +24,20 @@ test("crm schema: constraints, multi-attachment, backfill, idempotence, addMessa
     await dbMod.ensureCrmSchema();
     await dbMod.ensureCrmSchema();
 
+    // A held lock fails boot after lock_timeout instead of hanging it.
+    const holder = await sql.reserve();
+    try {
+      await holder`begin`;
+      await holder`lock table support_requests in access exclusive mode`;
+      const started = Date.now();
+      await assert.rejects(dbMod.ensureCrmSchema(), (e: any) => e.code === "55P03");
+      const waited = Date.now() - started;
+      assert.ok(waited >= 4_500 && waited < 10_000, `waited ${waited} ms`);
+    } finally {
+      await holder`rollback`;
+      holder.release();
+    }
+
     const [q] = await sql`select queued_at, created_at from support_requests where id = ${ticketId}`;
     assert.ok(q!.queued_at, "queued_at backfilled");
 
