@@ -345,3 +345,101 @@ test("static SPA: assets, deep links and login-failed; API paths stay JSON", asy
   const bare = new Hono().route("/crm", crmRoutes({ webRoot: join(webRoot, "missing") }));
   assert.equal((await bare.request("/crm/tickets/abc")).status, 404);
 });
+
+const multipart = (fd: FormData): RequestInit => ({ method: "POST", headers: H("tok-support"), body: fd });
+
+test("multipart reply: duplicated or unknown kind and duplicated body fail closed", async () => {
+  const before = callsOf("sendReply").length;
+  for (const kinds of [["note", "note"], ["reply", "note"], ["bogus"]]) {
+    const fd = new FormData();
+    fd.set("body", "внутренняя заметка");
+    for (const k of kinds) fd.append("kind", k);
+    const res = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(fd));
+    assert.equal(res.status, 422, kinds.join(","));
+    const b = await res.json();
+    assert.equal(b.error, "validation");
+    assert.ok(b.fields.kind, JSON.stringify(b));
+  }
+  const fd = new FormData();
+  fd.set("kind", "note");
+  fd.append("body", "a");
+  fd.append("body", "b");
+  const dup = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(fd));
+  assert.equal(dup.status, 422);
+  assert.ok((await dup.json()).fields.body);
+  assert.equal(callsOf("sendReply").length, before);
+});
+
+test("multipart reply: photos[] is accepted; any other file field is rejected", async () => {
+  const fd = new FormData();
+  fd.set("kind", "reply");
+  fd.append("photos[]", jpeg(1));
+  fd.append("photos[]", jpeg(2));
+  fd.append("photos", jpeg(3));
+  const ok = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(fd));
+  assert.equal(ok.status, 200);
+  const input = callsOf("sendReply").at(-1)!.args[2] as { photos: Array<{ filename: string }> };
+  assert.deepEqual(input.photos.map((p) => p.filename).sort(), ["p1.jpg", "p2.jpg", "p3.jpg"]);
+
+  const before = callsOf("sendReply").length;
+  const bad = new FormData();
+  bad.set("body", "hi");
+  bad.set("file", jpeg(4));
+  const res = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(bad));
+  assert.equal(res.status, 422);
+  assert.deepEqual(await res.json(), { error: "validation", fields: { file: "unknown_field" } });
+
+  const many = new FormData();
+  for (let i = 0; i < 6; i++) many.append("photos", jpeg(i));
+  for (let i = 0; i < 5; i++) many.append("photos[]", jpeg(i));
+  const tooMany = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(many));
+  assert.equal((await tooMany.json()).error, "too_many_photos");
+  assert.equal(callsOf("sendReply").length, before);
+});
+
+test("JSON routes cap the body at 1 MB; the reply route keeps its photo limit", async () => {
+  const big = { resolve_message_text: "x".repeat(1024 * 1024 + 10) };
+  assert.equal((await req("/crm/api/settings", json("PUT", "tok-lead", big))).status, 413);
+  assert.equal((await req("/crm/api/canned", json("POST", "tok-support", { title: "t", body: "x".repeat(1024 * 1024 + 10) }))).status, 413);
+  const bytes = new Uint8Array(1536 * 1024);
+  bytes.set([0xff, 0xd8, 0xff, 0xe0]);
+  const fd = new FormData();
+  fd.set("photos", new File([bytes], "big.jpg", { type: "image/jpeg" }));
+  const res = await req(`/crm/api/tickets/${TICKET}/messages`, multipart(fd));
+  assert.equal(res.status, 200);
+});
+
+test("SSE ends when the session is gone at the next ping", async () => {
+  const hash = createHash("sha256").update("tok-sse").digest("hex");
+  byHash.set(hash, { id: 5, name: "Sveta", role: "support", is_lead: false });
+  const fast = new Hono().route("/crm", crmRoutes({ webRoot, pingMs: 25 }));
+  const res = await fast.request("/crm/api/stream", { headers: H("tok-sse", false) });
+  assert.equal(res.status, 200);
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let closed = false;
+  const read = async (stop: () => boolean) => {
+    const deadline = Date.now() + 3000;
+    while (!stop() && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) { closed = true; break; }
+      text += decoder.decode(value);
+    }
+  };
+  try {
+    await read(() => text.includes(": ping"));
+    assert.ok(text.includes(": ping"), "pings while the session is valid");
+    assert.equal(listeners.size, 1);
+    byHash.delete(hash);
+    const at = text.length;
+    await read(() => closed);
+    assert.equal(closed, true, "stream closes after the session is deleted");
+    assert.equal(listeners.size, 0);
+    for (const fn of listeners) fn({ type: "notify", operatorId: null, ticketId: "after-logout" });
+    assert.ok(!text.slice(at).includes("event:"), text.slice(at));
+  } finally {
+    byHash.delete(hash);
+    if (!closed) await reader.cancel();
+  }
+});

@@ -31,6 +31,9 @@ const BASE = "/crm";
 // dist/crm/routes.js -> dist/web, independent of the process cwd.
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL("../web/", import.meta.url));
 const PING_MS = 20_000;
+const JSON_MAX_BYTES = 1024 * 1024;
+const PHOTO_FIELDS = new Set(["photos", "photos[]"]);
+const MESSAGES_PATH = new RegExp(`^${BASE}/api/tickets/[^/]+/messages$`);
 const MAX_PHOTOS = 10;
 const DAY_MS = 86_400_000;
 const MSK_OFFSET_MS = 3 * 3_600_000;
@@ -119,9 +122,19 @@ async function replyInput(c: Context): Promise<ReplyInput | { photoInvalid: numb
     return { kind: j.kind, body: j.body, photos: [] };
   }
   const form = await c.req.parseBody({ all: true });
-  const kind = ReplyKind.parse(typeof form.kind === "string" ? form.kind : "reply");
-  const body = typeof form.body === "string" ? form.body : "";
-  const raw = form.photos === undefined ? [] : Array.isArray(form.photos) ? form.photos : [form.photos];
+  // Fail closed: a duplicated or unknown `kind` must never default a note into a customer reply.
+  if (form.kind !== undefined && (typeof form.kind !== "string" || !ReplyKind.safeParse(form.kind).success)) {
+    throw invalid({ kind: "invalid_kind" });
+  }
+  if (form.body !== undefined && typeof form.body !== "string") throw invalid({ body: "invalid_body" });
+  const kind = (form.kind ?? "reply") as ReplyInput["kind"];
+  const body = form.body ?? "";
+  const raw: unknown[] = [];
+  for (const [name, value] of Object.entries(form)) {
+    const values = Array.isArray(value) ? value : [value];
+    if (PHOTO_FIELDS.has(name)) raw.push(...values);
+    else if (values.some((v) => v instanceof File)) throw invalid({ [name]: "unknown_field" });
+  }
   if (raw.length > MAX_PHOTOS) throw new InvalidReply("too_many_photos");
   const photos: ValidPhoto[] = [];
   for (const [index, f] of raw.entries()) {
@@ -155,7 +168,7 @@ function spa(webRoot: string): MiddlewareHandler {
   };
 }
 
-export function crmRoutes(opts: { webRoot?: string } = {}): Hono<Env> {
+export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hono<Env> {
   const r = new Hono<Env>();
   r.onError(onError);
 
@@ -187,6 +200,9 @@ export function crmRoutes(opts: { webRoot?: string } = {}): Hono<Env> {
   const auth = requireOperator();
   const streamAuth = cookieOperator();
   r.use("/api/*", (c, next) => (c.req.method === "GET" && c.req.path === `${BASE}/api/stream` ? streamAuth : auth)(c, next));
+  // The reply route carries photos and sets its own, larger limit.
+  const jsonLimit = bodyLimit({ maxSize: JSON_MAX_BYTES, onError: (c) => c.json({ error: "too_large" }, 413) });
+  r.use("/api/*", (c, next) => (c.req.method === "POST" && MESSAGES_PATH.test(c.req.path) ? next() : jsonLimit(c, next)));
 
   r.post("/api/logout", async (c) => {
     await deleteSession(getCookie(c, SESSION_COOKIE) ?? "");
@@ -305,25 +321,41 @@ export function crmRoutes(opts: { webRoot?: string } = {}): Hono<Env> {
 
   r.get("/api/stream", (c) => {
     const me = c.get("operator");
+    const cookie = getCookie(c, SESSION_COOKIE) ?? "";
     c.header("X-Accel-Buffering", "no");
     return streamSSE(c, async (stream) => {
+      let ended = false;
+      let end = () => {};
+      const done = new Promise<void>((resolve) => { end = () => { ended = true; resolve(); }; });
       // Serialized so concurrent events never interleave inside one frame.
       let chain = Promise.resolve();
-      const send = (chunk: string) => { chain = chain.then(async () => { await stream.write(chunk); }); };
+      const send = (chunk: string) => {
+        if (ended) return;
+        chain = chain.then(async () => { await stream.write(chunk); });
+      };
       const unsubscribe = subscribe((e) => {
         if (e.type === "notify" && e.operatorId !== null && e.operatorId !== me.id) return;
         send(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
       });
-      const ping = setInterval(() => send(": ping\n\n"), PING_MS);
+      // The cookie is checked only at connect, so re-check on every ping: logout or expiry ends the stream.
+      let checking = false;
+      const ping = setInterval(() => {
+        if (checking || ended) return;
+        checking = true;
+        operatorForSession(cookie)
+          .then((op) => { if (op) send(": ping\n\n"); else end(); })
+          .catch((err) => { console.error(`[crm-api] stream session check failed code=${code(err)}`); end(); })
+          .finally(() => { checking = false; });
+      }, opts.pingMs ?? PING_MS);
       send(": connected\n\n");
-      await new Promise<void>((resolve) => {
-        stream.onAbort(resolve);
-        const signal = c.req.raw.signal;
-        if (signal.aborted) resolve();
-        else signal.addEventListener("abort", () => resolve(), { once: true });
-      });
+      stream.onAbort(end);
+      const signal = c.req.raw.signal;
+      if (signal.aborted) end();
+      else signal.addEventListener("abort", end, { once: true });
+      await done;
       clearInterval(ping);
       unsubscribe();
+      await chain;
     });
   });
 
