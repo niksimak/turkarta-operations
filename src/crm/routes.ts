@@ -9,6 +9,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
+import { config, legacySurface } from "../config.js";
 import { MAX_PHOTO_BYTES, validatePhoto, type ValidPhoto } from "../support_media.js";
 import { attachmentResponse } from "./attachments.js";
 import { consumeSso, deleteSession, operatorForSession, requireOperator, SESSION_COOKIE, SESSION_TTL_HOURS } from "./auth.js";
@@ -113,6 +114,12 @@ const cookieOperator = (): MiddlewareHandler<Env> => async (c, next) => {
   await next();
 };
 
+/** Spec §14: before cutover Bitrix owns replies and assignment, so the CRM is read-only for tickets. */
+const crmWritable = (): MiddlewareHandler<Env> => async (c, next) => {
+  if (legacySurface()) return c.json({ error: "surface_bitrix" }, 409);
+  await next();
+};
+
 function defaultStatsRange(now: number): { from: Date; to: Date } {
   const mskMidnight = Math.floor((now + MSK_OFFSET_MS) / DAY_MS) * DAY_MS - MSK_OFFSET_MS;
   return { from: new Date(mskMidnight - 6 * DAY_MS), to: new Date(now) };
@@ -212,7 +219,7 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     return c.json({ ok: true });
   });
 
-  r.get("/api/me", (c) => c.json(c.get("operator")));
+  r.get("/api/me", (c) => c.json({ ...c.get("operator"), surface: config.SUPPORT_SURFACE }));
   r.post("/api/me/shift", async (c) => {
     const { on } = ShiftBody.parse(await readJson(c));
     return c.json(await setShift(c.get("operator"), on));
@@ -244,8 +251,10 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     return c.json({ ...d, user, viewers: presence.list(id) });
   });
 
+  const writable = crmWritable();
   r.post(
     "/api/tickets/:id/messages",
+    writable,
     bodyLimit({ maxSize: MAX_PHOTOS * MAX_PHOTO_BYTES + 1024 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }),
     async (c) => {
       const input = await replyInput(c);
@@ -253,23 +262,23 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
       return c.json(await sendReply(c.req.param("id"), c.get("operator"), input));
     },
   );
-  r.post("/api/messages/:id/retry", async (c) => c.json(await retryDelivery(c.req.param("id"), c.get("operator"))));
+  r.post("/api/messages/:id/retry", writable, async (c) => c.json(await retryDelivery(c.req.param("id"), c.get("operator"))));
 
   const ticketAck = async (c: Context<Env>) => c.json({ ok: true, ticket: await ticketItem(c.req.param("id") ?? "") });
-  r.post("/api/tickets/:id/take", async (c) => {
+  r.post("/api/tickets/:id/take", writable, async (c) => {
     await take(c.req.param("id"), c.get("operator"));
     return ticketAck(c);
   });
-  r.post("/api/tickets/:id/take-over", async (c) => {
+  r.post("/api/tickets/:id/take-over", writable, async (c) => {
     await takeOver(c.req.param("id"), c.get("operator"));
     return ticketAck(c);
   });
-  r.post("/api/tickets/:id/assign", async (c) => {
+  r.post("/api/tickets/:id/assign", writable, async (c) => {
     const { operator_id } = AssignBody.parse(await readJson(c));
     await assign(c.req.param("id"), operator_id, c.get("operator"));
     return ticketAck(c);
   });
-  r.post("/api/tickets/:id/status", async (c) => {
+  r.post("/api/tickets/:id/status", writable, async (c) => {
     const { status } = StatusBody.parse(await readJson(c));
     await setStatus(c.req.param("id"), status, c.get("operator"));
     return ticketAck(c);

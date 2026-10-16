@@ -11,11 +11,12 @@ import { toast } from "./Toast";
 import { formatDay, formatTime, sameDay } from "../lib/format";
 import { messageKey, releaseKeys } from "../lib/outbox";
 import { usePresence } from "../lib/presence";
-import type { Operator } from "../lib/queries";
+import { READ_ONLY_TEXT, type Operator } from "../lib/queries";
 import {
   actionErrorText,
   displayName,
   isAssignedToOther,
+  isSurfaceBitrix,
   STATUS_LABEL,
   useOperators,
   useRetryMessage,
@@ -69,8 +70,9 @@ export function useThreadActions(ticket: TicketDetailItem | undefined, me: Opera
   const run = useCallback((action: TicketAction) => {
     if (id) runOn(id, action);
   }, [id, runOn]);
+  const readOnly = me?.surface === "bitrix";
   const take = useCallback(() => {
-    if (!ticket || !me) return;
+    if (!ticket || !me || readOnly) return;
     if (ticket.assigned_operator_id === me.id) return;
     if (ticket.assigned_operator_id !== null && ticket.status !== "new") {
       const who = ticket.assigned_operator_name ? `оператора ${ticket.assigned_operator_name}` : "другого оператора";
@@ -79,10 +81,10 @@ export function useThreadActions(ticket: TicketDetailItem | undefined, me: Opera
       return;
     }
     run({ kind: "take" });
-  }, [me, run, runOn, ticket]);
+  }, [me, readOnly, run, runOn, ticket]);
   const resolve = useCallback(() => {
-    if (ticket && ticket.status !== "resolved") run({ kind: "status", status: "resolved" });
-  }, [run, ticket]);
+    if (ticket && !readOnly && ticket.status !== "resolved") run({ kind: "status", status: "resolved" });
+  }, [readOnly, run, ticket]);
   return { run, runOn, pending: isPending, take, resolve };
 }
 
@@ -245,6 +247,7 @@ function ThreadView({
   const [mode, setMode] = useState<ComposeMode>("reply");
   const photos = usePhotoDraft();
   const input = useRef<HTMLTextAreaElement>(null);
+  const readOnly = me.surface === "bitrix";
   const locked = ticket.assigned_operator_id !== null && ticket.assigned_operator_id !== me.id && ticket.status !== "new";
   const dropBlock: DropBlock = ticket.status === "resolved" ? "resolved" : locked && mode === "reply" ? "locked" : null;
   // The whole pane takes dropped photos, not just the composer.
@@ -271,10 +274,13 @@ function ThreadView({
   }, [lastKey, lastIsMine]);
 
   const onRetry = (id: string) =>
-    retry.mutate(id, { onError: () => toast("Не удалось повторить. Попробуйте ещё раз.", { tone: "danger" }) });
+    retry.mutate(id, {
+      onError: (err) =>
+        toast(isSurfaceBitrix(err) ? READ_ONLY_TEXT : "Не удалось повторить. Попробуйте ещё раз.", { tone: "danger" }),
+    });
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" {...drop.handlers}>
+    <div className="relative flex min-h-0 flex-1 flex-col" {...(readOnly ? {} : drop.handlers)}>
       <ThreadHeader
         ticket={ticket}
         me={me}
@@ -282,7 +288,13 @@ function ThreadView({
         backHref={backHref}
         panelOpen={panelOpen}
         onTogglePanel={onTogglePanel}
+        readOnly={readOnly}
       />
+      {readOnly && (
+        <p role="status" className="shrink-0 border-b border-border px-4 py-2 text-sm text-text-muted lg:px-6">
+          {READ_ONLY_TEXT}
+        </p>
+      )}
       <div
         ref={scroller}
         onScroll={(e) => {
@@ -309,7 +321,7 @@ function ThreadView({
                       message={item.message}
                       entering={isNew(item.key)}
                       onOpenPhoto={(photos, index, thumbs) => setLightbox({ photos, index, thumbs })}
-                      onRetry={onRetry}
+                      onRetry={readOnly ? undefined : onRetry}
                       retrying={retry.isPending && retry.variables === item.message.id}
                     />
                   ) : (
@@ -323,17 +335,19 @@ function ThreadView({
           })}
         </ol>
       </div>
-      <Composer
-        ticket={ticket}
-        me={me}
-        locked={locked}
-        mode={mode}
-        onMode={setMode}
-        photos={photos}
-        inputRef={input}
-        runOn={actions.runOn}
-        actionPending={actions.pending}
-      />
+      {!readOnly && (
+        <Composer
+          ticket={ticket}
+          me={me}
+          locked={locked}
+          mode={mode}
+          onMode={setMode}
+          photos={photos}
+          inputRef={input}
+          runOn={actions.runOn}
+          actionPending={actions.pending}
+        />
+      )}
       <DropOverlay active={drop.active} block={dropBlock} />
       {lightbox && (
         <Lightbox
@@ -365,6 +379,7 @@ function ThreadHeader({
   backHref,
   panelOpen,
   onTogglePanel,
+  readOnly,
 }: {
   ticket: TicketDetailItem;
   me: Operator;
@@ -372,6 +387,7 @@ function ThreadHeader({
   backHref: string;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  readOnly: boolean;
 }) {
   const operators = useOperators();
   const free = ticket.assigned_operator_id === null || ticket.status === "new";
@@ -435,7 +451,7 @@ function ThreadHeader({
           <h1 className="min-w-0 truncate text-md font-semibold sm:text-lg">{name}</h1>
           {handle && handle !== name && <span className="hidden min-w-0 truncate text-sm text-text-muted sm:inline">{handle}</span>}
         </div>
-        {free && !resolved && (
+        {!readOnly && free && !resolved && (
           <button
             type="button"
             onClick={actions.take}
@@ -446,7 +462,7 @@ function ThreadHeader({
             Взять
           </button>
         )}
-        {!free && !mine && !resolved && (
+        {!readOnly && !free && !mine && !resolved && (
           <button
             type="button"
             onClick={() => actions.run({ kind: "take-over" })}
@@ -457,7 +473,7 @@ function ThreadHeader({
             Перехватить
           </button>
         )}
-        {!resolved && (
+        {!readOnly && !resolved && (
           <button
             type="button"
             onClick={actions.resolve}
@@ -487,32 +503,41 @@ function ThreadHeader({
         </button>
       </div>
       <div className="flex h-10 items-center gap-2 px-2 lg:px-4">
-        <Menu
-          label={`Статус: ${STATUS_LABEL[ticket.status]}`}
-          title="Статус"
-          items={statusItems}
-          disabled={actions.pending}
-          triggerClassName="h-7 px-2 text-sm"
-          trigger={<span>{STATUS_LABEL[ticket.status]}</span>}
-        />
-        <Menu
-          label={free ? "Назначить" : `Назначен: ${ticket.assigned_operator_name ?? ""}`}
-          title="Назначить"
-          items={assignItems}
-          disabled={actions.pending}
-          triggerClassName="h-7 px-2 text-sm max-w-[14rem]"
-          trigger={
-            free ? (
-              <span className="text-text-muted">Не назначен</span>
-            ) : (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Avatar name={ticket.assigned_operator_name ?? "?"} />
-                <span className="truncate">{ticket.assigned_operator_name}</span>
-                {ticket.auto_assigned && <span className="text-xs text-text-muted">авто</span>}
-              </span>
-            )
-          }
-        />
+        {readOnly ? (
+          <span className="flex min-w-0 items-center gap-2 text-sm">
+            <span>{STATUS_LABEL[ticket.status]}</span>
+            <span className="truncate text-text-muted">{free ? "Не назначен" : ticket.assigned_operator_name}</span>
+          </span>
+        ) : (
+          <>
+            <Menu
+              label={`Статус: ${STATUS_LABEL[ticket.status]}`}
+              title="Статус"
+              items={statusItems}
+              disabled={actions.pending}
+              triggerClassName="h-7 px-2 text-sm"
+              trigger={<span>{STATUS_LABEL[ticket.status]}</span>}
+            />
+            <Menu
+              label={free ? "Назначить" : `Назначен: ${ticket.assigned_operator_name ?? ""}`}
+              title="Назначить"
+              items={assignItems}
+              disabled={actions.pending}
+              triggerClassName="h-7 px-2 text-sm max-w-[14rem]"
+              trigger={
+                free ? (
+                  <span className="text-text-muted">Не назначен</span>
+                ) : (
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Avatar name={ticket.assigned_operator_name ?? "?"} />
+                    <span className="truncate">{ticket.assigned_operator_name}</span>
+                    {ticket.auto_assigned && <span className="text-xs text-text-muted">авто</span>}
+                  </span>
+                )
+              }
+            />
+          </>
+        )}
         <p aria-live="polite" className="ml-auto min-w-0 truncate text-xs text-text-muted">
           {presence}
         </p>

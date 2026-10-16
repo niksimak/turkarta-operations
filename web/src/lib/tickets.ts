@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, json } from "./api";
 import { addOutgoing, bindServerId, confirmOutgoing, dropOutgoing, removeOutgoing, withOutbox } from "./outbox";
-import { keys, useMe, type Operator, type TicketCounts } from "./queries";
+import { keys, READ_ONLY_TEXT, useMe, type Operator, type TicketCounts } from "./queries";
 import { DEFAULT_SLA, type SlaSettings } from "./sla";
 
 // Mirrors src/crm/tickets.ts (TicketListItem, TicketDetailItem, CrmMessage, TicketEventRow).
@@ -296,6 +296,17 @@ export interface TicketActionVars {
   action: TicketAction;
 }
 
+export function isSurfaceBitrix(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409 && (err.body as ConflictBody | undefined)?.error === "surface_bitrix";
+}
+
+/** The server switched back to Bitrix under us: flip the cached operator so the thread goes read-only. */
+function followSurface(qc: ReturnType<typeof useQueryClient>, err: unknown): void {
+  if (!isSurfaceBitrix(err)) return;
+  qc.setQueryData<Operator>(keys.me, (me) => (me ? { ...me, surface: "bitrix" } : me));
+  void qc.invalidateQueries({ queryKey: keys.me });
+}
+
 /**
  * Header actions: optimistic on the ticket's detail cache, rolled back when the server refuses.
  * The ticket id travels with each call, so a late retry from a toast hits the ticket it was about.
@@ -312,8 +323,9 @@ export function useTicketAction() {
       if (prev) qc.setQueryData<TicketDetail>(key, { ...prev, ticket: applyAction(prev.ticket, action, me) });
       return { prev };
     },
-    onError: (_e, { id }, ctx) => {
+    onError: (e, { id }, ctx) => {
       if (ctx?.prev) qc.setQueryData(ticketKeys.detail(id), ctx.prev);
+      followSurface(qc, e);
     },
     onSuccess: (res: { ok: true; ticket: TicketListItem }, { id }) => {
       // The server's row replaces the optimistic guess before the refetch lands.
@@ -341,8 +353,9 @@ export function useRetryMessage(ticketId: string) {
       }
       return { prev };
     },
-    onError: (_e, _id, ctx) => {
+    onError: (e, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(ticketKeys.detail(ticketId), ctx.prev);
+      followSurface(qc, e);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ticketKeys.detail(ticketId) }),
   });
@@ -404,8 +417,9 @@ export function useSendMessage(ticketId: string) {
       bindServerId(vars.clientKey, server.id);
       qc.setQueryData<TicketDetail>(key, (d) => (d ? confirmOutgoing(d, vars.clientKey, server) : d));
     },
-    onError: (_e, vars) => {
+    onError: (e, vars) => {
       qc.setQueryData<TicketDetail>(key, (d) => (d ? dropOutgoing(d, vars.clientKey) : d));
+      followSurface(qc, e);
     },
     onSettled: (_d, _e, vars, ctx) => {
       removeOutgoing(vars.clientKey);
@@ -466,6 +480,7 @@ export function actionErrorText(err: unknown): string {
       }
       if (body.error === "resolved") return "Обращение уже решено. Откройте его снова через статус.";
       if (body.error === "other_open") return "У клиента есть другое открытое обращение. Работайте в нём.";
+      if (body.error === "surface_bitrix") return READ_ONLY_TEXT;
     }
     if (err.status === 403) return "Нет прав на это действие.";
     if (err.status === 404) return "Обращение не найдено. Обновите список.";

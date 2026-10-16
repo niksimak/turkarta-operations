@@ -36,7 +36,8 @@ interface Props {
   /** Arrived after the thread was opened: plays the enter motion. */
   entering: boolean;
   onOpenPhoto: (photos: Attachment[], index: number, thumbs: Array<HTMLElement | null>) => void;
-  onRetry: (messageId: string) => void;
+  /** Omitted when the CRM is read-only: a failed delivery shows without «Повторить». */
+  onRetry?: (messageId: string) => void;
   retrying: boolean;
 }
 
@@ -128,7 +129,7 @@ function Delivery({
   fresh,
 }: {
   message: CrmMessage;
-  onRetry: (id: string) => void;
+  onRetry?: (id: string) => void;
   retrying: boolean;
   /** Sent while the thread was open: the outcome fades in over «Отправляется…». History does not animate. */
   fresh: boolean;
@@ -157,15 +158,17 @@ function Delivery({
       title={m.delivery_error ?? undefined}
     >
       <span>{["Не доставлено.", deliveryErrorText(m.delivery_error)].filter(Boolean).join(" ")}</span>
-      <button
-        type="button"
-        onClick={() => onRetry(m.id)}
-        disabled={retrying}
-        className="press hover-surface inline-flex h-6 items-center gap-1 rounded-xs px-1.5 font-semibold text-danger shadow-[inset_0_0_0_1px_var(--danger)] disabled:opacity-60"
-      >
-        <Icon name="retry" size={12} />
-        Повторить
-      </button>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={() => onRetry(m.id)}
+          disabled={retrying}
+          className="press hover-surface inline-flex h-6 items-center gap-1 rounded-xs px-1.5 font-semibold text-danger shadow-[inset_0_0_0_1px_var(--danger)] disabled:opacity-60"
+        >
+          <Icon name="retry" size={12} />
+          Повторить
+        </button>
+      )}
     </div>
   );
 }

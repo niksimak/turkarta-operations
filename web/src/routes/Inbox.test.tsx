@@ -348,6 +348,44 @@ describe("Inbox", () => {
     await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/status")).at(-1)?.body).toBe('{"status":"resolved"}'));
   });
 
+  it("is read-only before cutover: one line, no composer, no write actions", async () => {
+    const { calls } = mockApi([["GET /crm/api/me", ok({ ...operator, surface: "bitrix" })], ...baseRoutes()]);
+    renderAt(`/t/${T1.id}?v=queue`);
+    await screen.findByRole("list", { name: "Переписка" });
+    expect(screen.getAllByRole("status").filter((el) => el.tagName === "P" && el.textContent === "CRM в режиме просмотра до переключения.")).toHaveLength(1);
+    expect(screen.queryByRole("textbox", { name: "Ответ клиенту" })).toBeNull();
+    for (const name of ["Взять", "Перехватить", "Решить", "Повторить", "Статус: Новый", "Назначить"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.getByText("Не назначен")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "a", code: "KeyA" });
+    fireEvent.keyDown(document.body, { key: "e", code: "KeyE" });
+    await act(async () => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(calls.some((c) => c.method === "POST" && c.path.startsWith("/crm/api/tickets/") && !c.path.endsWith("/presence"))).toBe(false);
+  });
+
+  it("a 409 surface_bitrix explains itself and turns the thread read-only", async () => {
+    let surface = "crm";
+    mockApi([
+      ["GET /crm/api/me", () => jsonResponse(200, { ...operator, surface })],
+      ["POST /crm/api/tickets/*", (_i, url) => {
+        if (!url.pathname.endsWith("/take")) return jsonResponse(200, { ok: true });
+        surface = "bitrix";
+        return jsonResponse(409, { error: "surface_bitrix" });
+      }],
+      ...baseRoutes(),
+    ]);
+    renderAt(`/t/${T1.id}?v=queue`);
+    expect(await screen.findByRole("textbox", { name: "Ответ клиенту" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Взять" }));
+    expect(await within(screen.getByLabelText("Уведомления")).findByText("CRM в режиме просмотра до переключения.")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Ответ клиенту" })).toBeNull());
+    expect(screen.getAllByRole("status").filter((el) => el.tagName === "P" && el.textContent === "CRM в режиме просмотра до переключения.")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Взять" })).toBeNull();
+  });
+
   it("assigns to a colleague from the operators menu", async () => {
     const { calls } = mockApi([["POST /crm/api/tickets/*", ok({ ok: true })], ...baseRoutes()]);
     renderAt(`/t/${T1.id}?v=queue`);

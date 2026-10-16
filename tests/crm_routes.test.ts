@@ -14,7 +14,7 @@ Object.assign(process.env, {
   DATABASE_URL: "postgres://test:test@127.0.0.1:1/not-used",
   PUBLIC_BASE_URL: "https://ops.example",
   LEADS_WEBHOOK_SECRET: "test-secret", TELEGRAM_WEBHOOK_SECRET: "test-secret",
-  ROSTER: "[]", CRM_SSO_SECRET: SSO_SECRET,
+  ROSTER: "[]", CRM_SSO_SECRET: SSO_SECRET, SUPPORT_SURFACE: "crm",
 });
 
 type Op = { id: number; name: string; role: "admin" | "support"; is_lead: boolean };
@@ -112,6 +112,7 @@ mock.module("../dist/crm/events.js", { namedExports: {
 } });
 
 const { crmRoutes } = await import("../dist/crm/routes.js");
+const { config } = await import("../dist/config.js");
 const { Hono } = await import("hono");
 
 const webRoot = mkdtempSync(join(tmpdir(), "crm-web-"));
@@ -271,6 +272,37 @@ test("attachments: GET authenticates by cookie alone; other methods and paths st
   assert.equal((await req("/crm/api/attachments", { headers: H("tok-support", false) })).status, 401);
   assert.equal((await req("/crm/api/me", { headers: H("tok-support", false) })).status, 401);
   assert.equal((await req(`/crm/api/tickets/${TICKET}`, { headers: H("tok-support", false) })).status, 401);
+});
+
+test("bitrix surface: ticket writes are 409 surface_bitrix; reads, canned, prefs and shift stay open", async () => {
+  config.SUPPORT_SURFACE = "bitrix";
+  try {
+    const before = calls.length;
+    const writes: Array<[string, unknown]> = [
+      [`/crm/api/tickets/${TICKET}/messages`, { kind: "reply", body: "hi" }],
+      ["/crm/api/messages/m1/retry", {}],
+      [`/crm/api/tickets/${TICKET}/take`, {}],
+      [`/crm/api/tickets/${TICKET}/take-over`, {}],
+      [`/crm/api/tickets/${TICKET}/assign`, { operator_id: 2 }],
+      [`/crm/api/tickets/${TICKET}/status`, { status: "resolved" }],
+    ];
+    for (const [path, body] of writes) {
+      const res = await req(path, json("POST", "tok-support", body));
+      assert.equal(res.status, 409, path);
+      assert.deepEqual(await res.json(), { error: "surface_bitrix" }, path);
+    }
+    assert.equal(calls.length, before, "no store was called");
+    const me = await req("/crm/api/me", { headers: H("tok-support") });
+    assert.equal((await me.json()).surface, "bitrix");
+    assert.equal((await req(`/crm/api/tickets/${TICKET}`, { headers: H("tok-support") })).status, 200);
+    assert.equal((await req("/crm/api/me/shift", json("POST", "tok-support", { on: true }))).status !== 409, true);
+    assert.equal((await req("/crm/api/me/prefs", json("PUT", "tok-support", { theme: "dark" }))).status !== 409, true);
+    assert.equal((await req("/crm/api/canned", json("POST", "tok-support", { title: "a", body: "b" }))).status !== 409, true);
+    assert.equal((await req("/crm/api/settings", json("PUT", "tok-lead", { sla_first_minutes: 7 }))).status, 200);
+  } finally {
+    config.SUPPORT_SURFACE = "crm";
+  }
+  assert.equal((await (await req("/crm/api/me", { headers: H("tok-support") })).json()).surface, "crm");
 });
 
 test("SSE: cookie only, own and broadcast notifies, unsubscribes on close", async () => {

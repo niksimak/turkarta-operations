@@ -13,6 +13,11 @@ export interface OperatorPrefs {
   send_key: "enter" | "mod_enter";
 }
 
+/** Spec §14: `bitrix` until cutover; the CRM is read-only for tickets then. */
+export type Surface = "bitrix" | "crm";
+
+export const READ_ONLY_TEXT = "CRM в режиме просмотра до переключения.";
+
 export interface Operator {
   id: number;
   name: string;
@@ -24,6 +29,8 @@ export interface Operator {
   last_active_at: string | null;
   last_assigned_at: string | null;
   prefs: OperatorPrefs;
+  /** Only on GET /me. */
+  surface?: Surface;
 }
 
 export interface TicketCounts {
