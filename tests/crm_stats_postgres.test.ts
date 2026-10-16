@@ -70,8 +70,10 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
     await msg(T2, "agent", "text", msk("10-02T01:10:00"), "crm:2", 600);
     await ev(T2, "status_changed", 2, { from: "awaiting", to: "resolved" }, msk("10-02T01:20:00"));
 
-    // T3 web-onboarding. Anna assigns to Boris (counts for nobody). Boris: first 180 (in), note, photo 1000 (out), unmeasured reply.
-    await ticket(T3, "web-onboarding", msk("10-02T12:00:00"), "awaiting", { first_response_at: msk("10-02T12:03:00"), assigned: 2 });
+    // T3 web-onboarding: a welcome ticket created at signup, 3 h before the customer wrote. Its first-response
+    // time is the reply's 180 s, not first_response_at - created_at. Anna assigns to Boris (counts for nobody).
+    // Boris: first 180 (in), note, photo 1000 (out), unmeasured reply.
+    await ticket(T3, "web-onboarding", msk("10-02T09:00:00"), "awaiting", { first_response_at: msk("10-02T12:03:00"), assigned: 2 });
     await ev(T3, "assigned", 1, { operator_id: 2, operator_name: "Boris" }, msk("10-02T12:00:30"));
     await msg(T3, "agent", "text", msk("10-02T12:03:00"), "crm:2", 180);
     await msg(T3, "agent", "note", msk("10-02T12:05:00"), "crm:2", null);
@@ -118,7 +120,7 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
     const boris = {
       operator_id: 2, name: "Boris", taken: 0, auto_assigned: 1, resolved: 1, replies: 4,
       response_median_s: 600, response_p90_s: 920, // [180, 600, 1000]
-      first_response_median_s: 390, first_response_p90_s: 558, // [180, 600]
+      first_response_median_s: 390, first_response_p90_s: 558, // [180, 600]; T3 is not 10980
       within_sla_pct: 33.3, reopen_rate_pct: 0,
     };
     const zoeRow = {

@@ -26,10 +26,11 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
   const seeAll = canEditTeamSettings(me);
 
   // CRM replies in range. The ticket's first reply is the one stamped as first_response_at and gets the first-response target.
+  // First-response time is that reply's response_seconds (from when the customer wrote), never
+  // first_response_at - created_at: welcome tickets are created at signup, long before anyone writes.
   const replies = sql`
     select m.author_id, m.response_seconds,
-           (m.created_at = r.first_response_at) as is_first,
-           extract(epoch from r.first_response_at - r.created_at) as first_wait
+           (m.created_at = r.first_response_at) as is_first
       from public.support_messages m
       join public.support_requests r on r.id = m.ticket_id
      where m.sender = 'agent' and m.kind in ('text','photo') and m.author_id like 'crm:%'
@@ -94,8 +95,8 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       select author_id, count(*)::int as n,
              round((percentile_cont(0.5) within group (order by response_seconds))::numeric) as med,
              round((percentile_cont(0.9) within group (order by response_seconds))::numeric) as p90,
-             round((percentile_cont(0.5) within group (order by first_wait) filter (where is_first))::numeric) as first_med,
-             round((percentile_cont(0.9) within group (order by first_wait) filter (where is_first))::numeric) as first_p90,
+             round((percentile_cont(0.5) within group (order by response_seconds) filter (where is_first))::numeric) as first_med,
+             round((percentile_cont(0.9) within group (order by response_seconds) filter (where is_first))::numeric) as first_p90,
              round(100.0 * count(*) filter (where ${inSla})
                    / nullif(count(*) filter (where response_seconds is not null), 0), 1) as sla
         from (${replies}) x group by 1
