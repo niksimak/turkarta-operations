@@ -430,16 +430,24 @@ describe("Inbox", () => {
   });
 
   it("keeps focus inside the client sheet across re-renders and traps Tab", async () => {
-    mockApi(baseRoutes());
+    let listVersion = 0;
+    mockApi([
+      ["GET /crm/api/tickets", () => {
+        listVersion += 1;
+        const preview = listVersion > 1 ? "Новое сообщение" : T2.last_message_preview;
+        return jsonResponse(200, { items: [T1, { ...T2, last_message_preview: preview }], nextCursor: null, counts: { queue: 1, mine: 1, overdue: 1 } });
+      }],
+      ...baseRoutes(),
+    ]);
     renderAt(`/t/${T1.id}?v=queue`);
     fireEvent.click(await screen.findByRole("button", { name: "Клиент" }));
     const sheet = screen.getByRole("dialog", { name: "Клиент" });
     expect(document.activeElement).toBe(sheet);
     const close = within(sheet).getByRole("button", { name: "Закрыть панель" });
     close.focus();
+    // New list data re-renders the whole inbox behind the sheet.
     act(() => FakeEventSource.latest().emit("ticket.updated", { ticketId: T2.id }));
-    act(() => FakeEventSource.latest().emit("presence", { ticketId: T1.id, viewers: [{ operatorId: 9, name: "Олег", state: "viewing" }] }));
-    await screen.findByText("Олег смотрит");
+    await screen.findByText("Новое сообщение");
     expect(document.activeElement).toBe(close);
     const focusables = within(sheet).getAllByRole("button");
     focusables.at(-1)!.focus();
