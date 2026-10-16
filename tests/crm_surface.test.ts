@@ -205,6 +205,7 @@ test("crm: forum card buttons answer without claiming, closing or messaging", as
   }
   assert.deepEqual(sent.map(m => m.method), Array(4).fill("answerCallbackQuery"));
   assert.deepEqual(dbCalls, []);
+  for (const m of sent) assert.equal(m.payload.text, "Поддержка переехала в CRM. Откройте обращение там.");
 });
 
 test("crm: no open ticket but a recently resolved one: the message goes there, no intake", async () => {

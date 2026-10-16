@@ -29,7 +29,7 @@ const ASK_EMAIL = "📧 Оставьте email для связи (или отп�
 
 const QUEUED = "Принято! Подключаем оператора…";
 
-const MOVED_TO_CRM = "Поддержка переехала в CRM. Откройте тикет там.";
+const MOVED_TO_CRM = "Поддержка переехала в CRM. Откройте обращение там.";
 
 async function acknowledgeTopic(ticketId: string, messageId: string) {
   await greetCustomer(ticketId, messageId, async (userId, text) => {
