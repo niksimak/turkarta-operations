@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { createQueryClient } from "../app";
@@ -43,13 +43,15 @@ function mockFetch(handlers: Record<string, Handler>) {
 const ok = (body: unknown) => () => jsonResponse(200, body);
 
 function renderSettings() {
+  const client = createQueryClient();
   render(
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/settings"]}>
         <Settings />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 describe("Settings, Команда", () => {
@@ -112,6 +114,7 @@ describe("Settings, Команда", () => {
     expect(JSON.parse(putBody)).toEqual({ sla_first_minutes: 500 });
     expect(first.getAttribute("aria-invalid")).toBe("true");
     expect(first.getAttribute("aria-describedby")).toContain(error.id);
+    expect(document.activeElement).toBe(first);
     // Other fields stay clean and the draft survives the failed save.
     expect(screen.getByLabelText("Следующие ответы").getAttribute("aria-invalid")).toBeNull();
     expect(first.value).toBe("500");
@@ -134,5 +137,60 @@ describe("Settings, Команда", () => {
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
     expect(await screen.findByText("Введите целое число.")).toBeTruthy();
     expect(fetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PUT")).toBe(false);
+  });
+
+  it("saves only the keys this operator changed when the server moved on meanwhile", async () => {
+    let server = { ...settings };
+    let putBody = "";
+    mockFetch({
+      "GET /crm/api/me": ok(lead),
+      "GET /crm/api/settings": () => jsonResponse(200, server),
+      "GET /crm/api/settings/log": ok([]),
+      "GET /crm/api/operators": ok(operators),
+      "PUT /crm/api/settings": (init) => {
+        putBody = String(init.body);
+        server = { ...server, ...(JSON.parse(putBody) as object) };
+        return jsonResponse(200, server);
+      },
+    });
+    const client = renderSettings();
+
+    const first = (await screen.findByLabelText("Первый ответ")) as HTMLInputElement;
+    fireEvent.change(first, { target: { value: "9" } });
+
+    // Another lead changes a different key; the refetch lands while this form is dirty.
+    server = { ...server, reopen_days: 3 };
+    await act(() => client.invalidateQueries({ queryKey: ["settings"] }));
+    await waitFor(() => expect(client.getQueryData<typeof settings>(["settings"])?.reopen_days).toBe(3));
+
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() => expect(putBody).not.toBe(""));
+    expect(JSON.parse(putBody)).toEqual({ sla_first_minutes: 9 });
+    expect(server.reopen_days).toBe(3);
+    // After the save the form shows the server copy, including the other lead's change.
+    await waitFor(() => expect((screen.getByLabelText("Переоткрывать") as HTMLInputElement).value).toBe("3"));
+  });
+
+  it("gives a lead who is not an admin the shift and auto-assign controls but not the lead toggle", async () => {
+    mockFetch({
+      "GET /crm/api/me": ok(lead),
+      "GET /crm/api/settings": ok(settings),
+      "GET /crm/api/settings/log": ok([]),
+      "GET /crm/api/operators": ok(operators),
+    });
+    renderSettings();
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    const anya = rows.find((r) => r.textContent?.includes("Аня Смирнова"))!;
+    const oleg = rows.find((r) => r.textContent?.includes("Олег Петров"))!;
+
+    // «Лид» stays text: only an admin toggles it.
+    expect(within(anya).getByText("Нет")).toBeTruthy();
+    expect(within(table).queryByRole("switch", { name: /Лид/ })).toBeNull();
+    // Auto-assign is a switch on every row; «Снять со смены» only for operators on shift.
+    expect(within(anya).getByRole("switch", { name: /Аня Смирнова.*Автоназначение/ })).toBeTruthy();
+    expect(within(oleg).getByRole("switch")).toBeTruthy();
+    expect(within(anya).getByRole("button", { name: "Снять со смены: Аня Смирнова" })).toBeTruthy();
+    expect(within(oleg).queryByRole("button", { name: /Снять со смены/ })).toBeNull();
   });
 });

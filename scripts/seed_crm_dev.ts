@@ -1,5 +1,6 @@
 // Local CRM demo data: 2 operators, 12 tickets, canned replies, a settings change.
-// Resets every CRM and support table in the target DB, so it refuses anything but localhost.
+// Resets every CRM and support table in the target DB, so it refuses anything but localhost,
+// and any database other than crm_test unless --yes is passed.
 //   DATABASE_URL=postgres://postgres@127.0.0.1:5433/crm_test CRM_SSO_SECRET=<32+ chars> \
 //     node --import tsx scripts/seed_crm_dev.ts
 import { randomUUID } from "node:crypto";
@@ -17,12 +18,18 @@ function fail(message: string): never {
 }
 
 let host = "";
+let dbName = "";
 try {
-  host = new URL(url).hostname;
+  const parsed = new URL(url);
+  host = parsed.hostname;
+  dbName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
 } catch {
   fail("DATABASE_URL is missing or not a URL.");
 }
 if (host !== "localhost" && host !== "127.0.0.1") fail(`Refusing to seed ${host}: DATABASE_URL must point at localhost.`);
+if (dbName !== "crm_test" && !process.argv.includes("--yes")) {
+  fail(`Refusing to wipe the CRM tables in "${dbName}". Use the crm_test database, or pass --yes if this local DB is disposable.`);
+}
 if (secret.length < 32) fail("CRM_SSO_SECRET must be at least 32 characters (the same value the local server runs with).");
 
 // auth.ts loads config.ts, which validates the whole service env; the token signer needs none of it.

@@ -76,4 +76,16 @@ describe("Canned replies page", () => {
       "1 раз", "2 раза", "5 раз", "11 раз", "12 раз", "22 раза", "25 раз", "104 раза",
     ]);
   });
+
+  it("Ctrl/Cmd+Enter does not save an unchanged reply", async () => {
+    renderCanned(support);
+    fireEvent.click(await screen.findByRole("button", { name: /Мой шаблон/ }));
+    const body = await screen.findByLabelText("Текст");
+    fireEvent.keyDown(body, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(body, { key: "Enter", metaKey: true });
+    // The fetch double throws on anything but the two GETs, so a PUT would surface as an error toast.
+    expect(screen.queryByRole("alert")).toBeNull();
+    const calls = (fetch as unknown as { mock: { calls: Array<[string, RequestInit?]> } }).mock.calls;
+    expect(calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
 });

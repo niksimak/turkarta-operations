@@ -111,8 +111,11 @@ function toDraft(s: CrmSettings): Draft {
   return out as Draft;
 }
 
-/** The changed keys as API values, or per-field errors for input the server would never accept. */
-export function draftPatch(draft: Draft, saved: CrmSettings): { patch: Partial<CrmSettings>; errors: Record<string, string> } {
+/**
+ * The keys the operator changed since `baseline` (the server copy the draft was loaded from), as API values,
+ * or per-field errors for input the server would never accept.
+ */
+export function draftPatch(draft: Draft, baseline: CrmSettings): { patch: Partial<CrmSettings>; errors: Record<string, string> } {
   const patch: Record<string, unknown> = {};
   const errors: Record<string, string> = {};
   for (const group of SETTING_GROUPS) {
@@ -127,33 +130,54 @@ export function draftPatch(draft: Draft, saved: CrmSettings): { patch: Partial<C
           continue;
         } else value = Number(s);
       }
-      if (value !== saved[f.key]) patch[f.key] = value;
+      if (value !== baseline[f.key]) patch[f.key] = value;
     }
   }
   return { patch: patch as Partial<CrmSettings>, errors };
 }
 
+const FIELD_ORDER = SETTING_GROUPS.flatMap((g) => g.fields.map((f) => f.key));
+
+/** Focus the first field (in page order) that carries an error. */
+function focusFirstError(errors: Record<string, string>) {
+  const key = FIELD_ORDER.find((k) => k in errors);
+  if (!key) return;
+  const el =
+    document.getElementById(`setting-${key}`) ??
+    document.querySelector<HTMLElement>(`[aria-labelledby="setting-${key}-label"]`);
+  el?.focus();
+}
+
+interface FormState {
+  /** The server copy the draft started from; a save sends only what differs from it. */
+  baseline: CrmSettings;
+  draft: Draft;
+}
+
+const formFrom = (s: CrmSettings): FormState => ({ baseline: s, draft: toDraft(s) });
+
 function TeamTab({ me }: { me: Operator }) {
   const canEdit = canEditTeamSettings(me);
   const settings = useTeamSettings();
   const save = useSaveSettings();
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [form, setForm] = useState<FormState | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
   const saved = settings.data;
-  const pending = draft && saved ? draftPatch(draft, saved) : null;
+  const draft = form?.draft ?? null;
+  const pending = form ? draftPatch(form.draft, form.baseline) : null;
   const dirty = Boolean(pending && (Object.keys(pending.patch).length || Object.keys(pending.errors).length));
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
 
-  // Fresh server data resets the form unless the operator has unsaved edits.
+  // Fresh server data (refetch on focus, another lead's save) resets the form unless the operator has unsaved edits.
   useEffect(() => {
-    if (saved && !dirtyRef.current) setDraft(toDraft(saved));
+    if (saved && !dirtyRef.current) setForm(formFrom(saved));
   }, [saved]);
 
   const setField = (key: SettingKey, value: string | boolean) => {
-    setDraft((d) => (d ? { ...d, [key]: value } : d));
+    setForm((f) => (f ? { ...f, draft: { ...f.draft, [key]: value } } : f));
     setErrors((e) => {
       if (!(key in e)) return e;
       const { [key]: _drop, ...rest } = e;
@@ -163,16 +187,17 @@ function TeamTab({ me }: { me: Operator }) {
   };
 
   const onSave = () => {
-    if (!draft || !saved) return;
-    const { patch, errors: local } = draftPatch(draft, saved);
+    if (!form || save.isPending) return;
+    const { patch, errors: local } = draftPatch(form.draft, form.baseline);
     if (Object.keys(local).length) {
       setErrors(local);
+      focusFirstError(local);
       return;
     }
     if (!Object.keys(patch).length) return;
     save.mutate(patch, {
       onSuccess: (next) => {
-        setDraft(toDraft(next));
+        setForm(formFrom(next));
         setErrors({});
         setFormError(null);
         toast("Настройки сохранены.");
@@ -183,6 +208,7 @@ function TeamTab({ me }: { me: Operator }) {
           const { _form, ...rest } = fields;
           setErrors(rest);
           setFormError(_form ?? null);
+          focusFirstError(rest);
         } else if (err instanceof ApiError && err.status === 403) {
           setFormError("Нет прав менять настройки команды.");
         } else {
@@ -193,7 +219,7 @@ function TeamTab({ me }: { me: Operator }) {
   };
 
   const onReset = () => {
-    if (saved) setDraft(toDraft(saved));
+    if (saved) setForm(formFrom(saved));
     setErrors({});
     setFormError(null);
   };

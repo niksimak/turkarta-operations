@@ -192,7 +192,11 @@ function Editor({
     setFormError(null);
   };
 
+  // The same guards as the «Сохранить» button, so Ctrl/Cmd+Enter cannot double-submit or save nothing.
+  const canSubmit = !save.isPending && (reply === null || dirty);
+
   const onSave = () => {
+    if (!canSubmit) return;
     const local = validateCanned(draft);
     if (local.title || local.body) {
       setErrors(local);
@@ -357,7 +361,7 @@ function Editor({
           <>
             <button
               type="submit"
-              disabled={save.isPending || (reply !== null && !dirty)}
+              disabled={!canSubmit}
               className="press h-9 rounded-sm bg-accent px-4 font-semibold text-accent-fg hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
               {save.isPending ? "Сохраняем…" : reply ? "Сохранить" : "Создать"}

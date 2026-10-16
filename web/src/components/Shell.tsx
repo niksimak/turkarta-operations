@@ -281,7 +281,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "press relative h-5 w-9 shrink-0 rounded-full transition-colors duration-fast disabled:cursor-not-allowed",
+        "press relative h-5 w-9 shrink-0 rounded-full transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50",
         checked ? "bg-accent" : "bg-border-strong",
       )}
     >

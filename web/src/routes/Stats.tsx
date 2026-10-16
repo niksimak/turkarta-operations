@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Segmented } from "../components/Segmented";
@@ -21,14 +21,34 @@ const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(
 
 const isPreset = (v: string | null): v is Preset => PRESETS.some((p) => p.value === v);
 
+const DAY_CHECK_MS = 60_000;
+
+/** The current Moscow date, re-read every minute and when the tab regains focus. */
+export function useMskToday(): string {
+  const [today, setToday] = useState(() => mskDate(Date.now()));
+  useEffect(() => {
+    const check = () => setToday(mskDate(Date.now()));
+    const timer = setInterval(check, DAY_CHECK_MS);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
+  return today;
+}
+
 export function Stats() {
   const me = useMe().data;
   const [sp, setSp] = useSearchParams();
   const preset: Preset = isPreset(sp.get("range")) ? (sp.get("range") as Preset) : "7d";
-  const today = mskDate(Date.now());
+  const today = useMskToday();
   const from = sp.get("from") ?? "";
   const to = sp.get("to") ?? "";
-  const range = useMemo(() => rangeQuery({ preset, from, to }, Date.now()), [preset, from, to]);
+  // `today` is in the deps so presets move to the new Moscow day at midnight.
+  const range = useMemo(() => rangeQuery({ preset, from, to }, Date.now()), [preset, from, to, today]);
   const stats = useStats(range.ok ? { from: range.from, to: range.to } : null);
 
   useEffect(() => {
@@ -124,7 +144,7 @@ function DateField({ label, value, max, onChange }: { label: string; value: stri
 }
 
 function Block({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
-  const id = `block-${title}`;
+  const id = useId();
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">

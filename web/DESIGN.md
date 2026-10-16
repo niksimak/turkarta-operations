@@ -45,14 +45,18 @@ Strategy: Restrained. Neutrals plus one accent; meaning colours are small
 | `sla-late` / `-soft` | `#c8322f` / `#fbe9e8` | `#ff6b63` / `#3a1c1c` | overdue |
 | `note-bg` / `note-border` / `note-text` | `#fdf3d7` / `#ecd593` / `#6b4a00` | `#2b2414` / `#4d3f1c` / `#e8c770` | internal notes (amber) |
 | `danger` / `-soft` | `#c8322f` / `#fbe9e8` | `#ff6b63` / `#3a1c1c` | delivery failure, destructive actions, save errors |
-| `ch-bot` | `#1a8fcc` | `#3fb2ec` | Telegram bot marker |
-| `ch-miniapp` | `#7a4fd6` | `#a585f5` | Mini App marker |
-| `ch-web` | `#0e8a80` | `#2fc2b4` | Web/PWA marker |
+| `ch-bot` | `#198edb` | `#3198d6` | Telegram bot marker |
+| `ch-miniapp` | `#583bab` | `#8459db` | Mini App marker |
+| `ch-web` | `#128d6f` | `#158561` | Web/PWA marker |
 
 Contrast (WCAG): every text token, SLA and accent colour included, is ≥4.5:1
 on `bg`, `surface` and `surface-2` in both themes; SLA text on its own soft tint
-is ≥4.5:1. Light `ch-*` are graphic markers only (≥3:1), so never set text in
-a channel colour.
+is ≥4.5:1. `ch-*` are graphic markers only (≥3:1 on `bg`, `surface`,
+`surface-2` and the selected-row tint), so never set text in a channel colour.
+They also colour the stats chart, so the three are tuned as one categorical
+set: the dataviz validator passes them all-pairs in both themes (worst CVD
+ΔE 16.1 light / 9.9 dark, normal vision 16.8 / 17.4). Re-run it before
+changing any of them.
 
 Rules:
 - Accent marks the current thing and the primary action. Not headings, not icons
