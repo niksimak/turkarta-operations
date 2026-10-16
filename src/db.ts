@@ -163,10 +163,10 @@ export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
       (user_tg, user_username, user_name, source, first_message, email, device, intake_step,
-       first_photo_file_id)
+       first_photo_file_id, queued_at, last_message_at)
     values (${t.user_tg}, ${t.user_username}, ${t.user_name}, ${t.source},
             ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.intake_step ?? null},
-            ${t.first_photo_file_id ?? null})
+            ${t.first_photo_file_id ?? null}, now(), now())
     on conflict (user_tg) where status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
     returning *`;
@@ -266,9 +266,9 @@ export async function openWebTicket(t: {
 }): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
-      (channel, web_user_id, user_name, source, first_message, email, device)
+      (channel, web_user_id, user_name, source, first_message, email, device, queued_at, last_message_at)
     values ('web', ${t.web_user_id}, ${t.user_name}, ${t.source},
-            ${t.request}, ${t.email ?? null}, ${t.device ?? null})
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, now(), now())
     on conflict (web_user_id)
       where web_user_id is not null and status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
