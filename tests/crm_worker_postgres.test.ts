@@ -188,6 +188,20 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       assert.deepEqual(loads.map((l) => [l.op, l.n]), [[1, 3], [2, 3], [3, 3]]);
     });
 
+    await t.test("two concurrent ticks over more than one batch never exceed the cap", async () => {
+      await reset();
+      await setting("auto_assign_max_open", 5);
+      await operator(1, "Anna");
+      await operator(2, "Boris");
+      await operator(3, "Vera");
+      for (let i = 0; i < 30; i++) await ticket({ queued_at: sql`now() - make_interval(mins => ${10 + i})` });
+      const [a, b] = await Promise.all([worker.tick(undefined, deps), worker.tick(undefined, deps)]);
+      assert.equal(a.assigned + b.assigned, 15);
+      const loads = await sql`select assigned_operator_id::int as op, count(*)::int as n from support_requests
+        where assigned_operator_id is not null group by 1 order by 1`;
+      assert.deepEqual(loads.map((l) => [l.op, l.n]), [[1, 5], [2, 5], [3, 5]]);
+    });
+
     await t.test("auto_assign_minutes changed between ticks takes effect", async () => {
       await reset();
       await operator(1, "Anna");
