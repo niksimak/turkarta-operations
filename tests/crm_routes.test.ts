@@ -275,22 +275,29 @@ test("SSE: cookie only, own and broadcast notifies, unsubscribes on close", asyn
       text += decoder.decode(value);
     }
   };
-  await readUntil("\n\n");
-  assert.equal(listeners.size, 1);
-  for (const fn of listeners) {
-    fn({ type: "notify", operatorId: 2, ticketId: "for-lena" });
-    fn({ type: "notify", operatorId: 1, ticketId: "for-anna" });
-    fn({ type: "notify", operatorId: null, ticketId: "for-all" });
-    fn({ type: "ticket.updated", ticketId: "t-upd" });
+  let cancelled = false;
+  try {
+    await readUntil("\n\n");
+    assert.equal(listeners.size, 1);
+    for (const fn of listeners) {
+      fn({ type: "notify", operatorId: 2, ticketId: "for-lena" });
+      fn({ type: "notify", operatorId: 1, ticketId: "for-anna" });
+      fn({ type: "notify", operatorId: null, ticketId: "for-all" });
+      fn({ type: "ticket.updated", ticketId: "t-upd" });
+    }
+    await readUntil("t-upd");
+    assert.ok(text.includes('event: notify\ndata: {"type":"notify","operatorId":1,"ticketId":"for-anna"}\n\n'));
+    assert.ok(text.includes("for-all"));
+    assert.ok(text.includes("event: ticket.updated\n"));
+    assert.ok(!text.includes("for-lena"));
+    await reader.cancel();
+    cancelled = true;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(listeners.size, 0);
+  } finally {
+    // An open stream keeps its ping timer alive and would hang the run on a failed assertion.
+    if (!cancelled) await reader.cancel();
   }
-  await readUntil("t-upd");
-  assert.ok(text.includes('event: notify\ndata: {"type":"notify","operatorId":1,"ticketId":"for-anna"}\n\n'));
-  assert.ok(text.includes("for-all"));
-  assert.ok(text.includes("event: ticket.updated\n"));
-  assert.ok(!text.includes("for-lena"));
-  await reader.cancel();
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal(listeners.size, 0);
 });
 
 test("SSO failure redirects with a reason and never logs the token", async () => {
