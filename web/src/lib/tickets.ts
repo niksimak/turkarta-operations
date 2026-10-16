@@ -97,9 +97,7 @@ export interface TicketDetail {
   messages: CrmMessage[];
   events: TicketEventRow[];
   user: UserContext | null;
-  /** The router sends `viewers`; the task contract named it `presence`. Read both. */
-  viewers?: Viewer[];
-  presence?: Viewer[];
+  viewers: Viewer[];
 }
 
 export interface TicketPage {
@@ -118,7 +116,7 @@ export interface ListFilters {
 }
 
 export const STATUS_LABEL: Record<TicketStatus, string> = {
-  new: "В очереди",
+  new: "Новый",
   allocated: "В работе",
   awaiting: "Ждём клиента",
   resolved: "Решён",
@@ -211,22 +209,26 @@ export function usePastTickets(t: TicketDetailItem | undefined) {
   });
 }
 
-function unwrapList<T>(body: unknown, field: string): T[] {
-  if (Array.isArray(body)) return body as T[];
-  if (body && typeof body === "object") {
-    const o = body as Record<string, unknown>;
-    const inner = o[field] ?? o.items;
-    if (Array.isArray(inner)) return inner as T[];
-  }
-  return [];
-}
+// Mirrors src/crm/operators.ts (OperatorSummary) and src/crm/settings.ts (Settings).
+export type OperatorSummary = Omit<Operator, "prefs"> & { open_tickets: number };
 
-export type OperatorRow = Pick<Operator, "id" | "name" | "role" | "on_shift"> & { open_tickets?: number };
+export interface CrmSettings extends SlaSettings {
+  auto_assign_enabled: boolean;
+  auto_assign_minutes: number;
+  auto_assign_max_open: number | null;
+  offline_after_minutes: number;
+  reopen_days: number;
+  tg_ping_new_ticket: boolean;
+  tg_ping_overdue: boolean;
+  tg_ping_no_one_on_shift: boolean;
+  resolve_message_enabled: boolean;
+  resolve_message_text: string;
+}
 
 export function useOperators(enabled = true) {
   return useQuery({
     queryKey: ticketKeys.operators,
-    queryFn: async () => unwrapList<OperatorRow>(await api<unknown>("/operators"), "operators"),
+    queryFn: () => api<OperatorSummary[]>("/operators"),
     enabled,
     staleTime: 60_000,
   });
@@ -235,22 +237,19 @@ export function useOperators(enabled = true) {
 export function useSlaSettings(): SlaSettings {
   const q = useQuery({
     queryKey: ticketKeys.settings,
-    queryFn: async () => {
-      const body = await api<Record<string, unknown>>("/settings");
-      return (body.settings ?? body) as Partial<SlaSettings>;
-    },
+    queryFn: () => api<CrmSettings>("/settings"),
     staleTime: 5 * 60_000,
   });
-  return { ...DEFAULT_SLA, ...q.data };
+  return q.data ?? DEFAULT_SLA;
 }
 
 export type TicketAction =
   | { kind: "take" }
   | { kind: "take-over" }
-  | { kind: "assign"; operator: Pick<OperatorRow, "id" | "name"> | null }
+  | { kind: "assign"; operator: Pick<OperatorSummary, "id" | "name"> | null }
   | { kind: "status"; status: TicketStatus };
 
-function requestFor(id: string, a: TicketAction): Promise<unknown> {
+function requestFor(id: string, a: TicketAction): Promise<{ ok: true; ticket: TicketListItem }> {
   const base = `/tickets/${encodeURIComponent(id)}`;
   switch (a.kind) {
     case "take":
@@ -286,27 +285,33 @@ function applyAction(t: TicketDetailItem, a: TicketAction, me: Operator | undefi
   }
 }
 
-/** Header actions: optimistic on the open ticket, rolled back when the server refuses. */
-export function useTicketAction(id: string) {
+export interface TicketActionVars {
+  id: string;
+  action: TicketAction;
+}
+
+/**
+ * Header actions: optimistic on the ticket's detail cache, rolled back when the server refuses.
+ * The ticket id travels with each call, so a late retry from a toast hits the ticket it was about.
+ */
+export function useTicketAction() {
   const qc = useQueryClient();
   const me = useMe().data;
   return useMutation({
-    mutationFn: (a: TicketAction) => requestFor(id, a),
-    onMutate: async (a) => {
+    mutationFn: ({ id, action }: TicketActionVars) => requestFor(id, action),
+    onMutate: async ({ id, action }) => {
       const key = ticketKeys.detail(id);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<TicketDetail>(key);
-      if (prev) qc.setQueryData<TicketDetail>(key, { ...prev, ticket: applyAction(prev.ticket, a, me) });
+      if (prev) qc.setQueryData<TicketDetail>(key, { ...prev, ticket: applyAction(prev.ticket, action, me) });
       return { prev };
     },
-    onError: (_e, _a, ctx) => {
+    onError: (_e, { id }, ctx) => {
       if (ctx?.prev) qc.setQueryData(ticketKeys.detail(id), ctx.prev);
     },
-    onSuccess: (res) => {
-      // The server answers {ok, ticket}; its row replaces the guess before the refetch lands.
-      const fresh = (res as { ticket?: TicketListItem | null } | undefined)?.ticket;
-      if (!fresh) return;
-      qc.setQueryData<TicketDetail>(ticketKeys.detail(id), (d) => (d ? { ...d, ticket: { ...d.ticket, ...fresh } } : d));
+    onSuccess: (res: { ok: true; ticket: TicketListItem }, { id }) => {
+      // The server's row replaces the optimistic guess before the refetch lands.
+      qc.setQueryData<TicketDetail>(ticketKeys.detail(id), (d) => (d ? { ...d, ticket: { ...d.ticket, ...res.ticket } } : d));
     },
     onSettled: () => qc.invalidateQueries({ queryKey: keys.tickets }),
   });

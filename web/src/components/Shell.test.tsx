@@ -185,7 +185,7 @@ describe("Shell", () => {
     }
   });
 
-  it("reports a notify event as a toast with «Открыть»", async () => {
+  it("shows a notify event as one toast per ticket with title, body and «Открыть»", async () => {
     mockFetch({
       "GET /crm/api/me": ok(operator),
       "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 0, mine: 0, overdue: 0 } }),
@@ -202,7 +202,20 @@ describe("Shell", () => {
         body: "Иван",
       }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    expect(await screen.findByText("Иван")).toBeTruthy();
+    act(() =>
+      FakeEventSource.latest().emit("notify", {
+        operatorId: 7,
+        kind: "user_replied",
+        ticketId: "t-5",
+        title: "Клиент ответил",
+        body: "Код пришёл",
+      }),
+    );
+    expect(await screen.findByText("Код пришёл")).toBeTruthy();
+    expect(screen.queryByText("Вам назначено обращение")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Открыть" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/t/t-5"));
   });
 });

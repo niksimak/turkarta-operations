@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { Link } from "react-router-dom";
 import { SlaBadge } from "./SlaBadge";
+import { usePresence } from "../lib/presence";
 import type { SlaSettings } from "../lib/sla";
 import {
   CHANNEL_LABEL,
@@ -84,13 +85,14 @@ interface Props {
   settings: SlaSettings;
   open: boolean;
   cursor: boolean;
-  viewers: Viewer[];
+  meId: number | undefined;
 }
 
 export const TicketRow = forwardRef<HTMLAnchorElement, Props>(function TicketRow(
-  { ticket, href, settings, open, cursor, viewers },
+  { ticket, href, settings, open, cursor, meId },
   ref,
 ) {
+  const viewers = usePresence(ticket.id, meId);
   const name = displayName(ticket);
   const showHandle = Boolean(ticket.user_name?.trim() && ticket.user_username);
   return (

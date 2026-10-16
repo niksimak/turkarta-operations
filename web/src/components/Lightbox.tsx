@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
+import { useModal } from "../lib/modal";
 import { attachmentUrl, type Attachment } from "../lib/tickets";
 
 const OPEN_MS = 260;
@@ -39,6 +40,7 @@ export function Lightbox({ photos, index, onIndex, thumbFor, onClose }: Props) {
   const img = useRef<HTMLImageElement>(null);
   const scrim = useRef<HTMLDivElement>(null);
   const closeBtn = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const opened = useRef(false);
   const [closing, setClosing] = useState(false);
   const photo = photos[index];
@@ -87,52 +89,40 @@ export function Lightbox({ photos, index, onIndex, thumbFor, onClose }: Props) {
   }, [closing, index, onClose, thumbFor]);
 
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    closeBtn.current?.focus();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prevOverflow;
-      previous?.focus?.();
     };
   }, []);
 
   const step = (delta: number) => onIndex((index + delta + photos.length) % photos.length);
 
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-    } else if (many && e.key === "ArrowRight") {
-      e.preventDefault();
-      step(1);
-    } else if (many && e.key === "ArrowLeft") {
-      e.preventDefault();
-      step(-1);
-    } else if (e.key === "Tab") {
-      // Keep focus inside the dialog.
-      const focusables = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("button"));
-      const first = focusables[0];
-      const last = focusables.at(-1);
-      if (e.shiftKey && document.activeElement === first) {
+  useModal(dialog, {
+    onClose: close,
+    initialFocus: closeBtn,
+    onKey: (e) => {
+      if (!many) return;
+      if (e.key === "ArrowRight") {
         e.preventDefault();
-        last?.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+        step(1);
+      } else if (e.key === "ArrowLeft") {
         e.preventDefault();
-        first?.focus();
+        step(-1);
       }
-    }
-  };
+    },
+  });
 
   if (!photo) return null;
 
   return createPortal(
     <div
+      ref={dialog}
       role="dialog"
       aria-modal="true"
       aria-label={many ? `Фото ${index + 1} из ${photos.length}` : "Фото"}
-      onKeyDown={onKeyDown}
-      className="fixed inset-0 z-50 grid place-items-center"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 grid place-items-center focus-visible:outline-none"
     >
       <div ref={scrim} className="absolute inset-0 bg-scrim" onClick={close} aria-hidden="true" />
       <img

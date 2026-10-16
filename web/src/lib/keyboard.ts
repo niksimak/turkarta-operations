@@ -23,7 +23,8 @@ export const SEQUENCE_MS = 1_000;
 /** Typing, choosing in a menu or a dialog owns the keyboard; shortcuts stay out of the way. */
 export function isShortcutBlocked(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return true;
+  if (target.closest("input, textarea, select")) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
   if (target.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return true;
   return false;
 }

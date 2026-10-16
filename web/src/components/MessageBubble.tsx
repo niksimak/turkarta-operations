@@ -93,7 +93,8 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
                 onClick={() => onOpenPhoto(photos, i, thumbs.current)}
                 className={cx(
                   "press block cursor-zoom-in overflow-hidden rounded-sm bg-hover",
-                  photos.length === 1 ? "max-h-72" : "aspect-square",
+                  // A fixed box before the bytes arrive, so lazy loading never shifts the scroll position.
+                  photos.length === 1 ? "aspect-[4/3]" : "aspect-square",
                 )}
               >
                 <img
@@ -101,7 +102,7 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
                   alt=""
                   loading="lazy"
                   decoding="async"
-                  className={cx("block size-full", photos.length === 1 ? "max-h-72 object-contain" : "object-cover")}
+                  className={cx("block size-full", photos.length === 1 ? "object-contain" : "object-cover")}
                 />
               </button>
             ))}

@@ -8,7 +8,10 @@ export interface ToastAction {
 
 export interface ToastItem {
   id: number;
+  key: string;
   text: string;
+  /** Muted second line. */
+  detail?: string;
   tone: "default" | "danger";
   action?: ToastAction;
 }
@@ -25,10 +28,20 @@ function set(next: ToastItem[]) {
   for (const fn of subscribers) fn();
 }
 
+interface ToastOptions {
+  tone?: ToastItem["tone"];
+  action?: ToastAction;
+  detail?: string;
+  /** A newer toast with the same key replaces the older one. Defaults to the text. */
+  key?: string;
+}
+
 /** Call from anywhere; the one <Toaster /> in the shell renders it. */
-export function toast(text: string, opts: { tone?: ToastItem["tone"]; action?: ToastAction } = {}): number {
+export function toast(text: string, opts: ToastOptions = {}): number {
   const id = nextId++;
-  set([...items.filter((t) => t.text !== text), { id, text, tone: opts.tone ?? "default", action: opts.action }].slice(-MAX_VISIBLE));
+  const key = opts.key ?? text;
+  const item: ToastItem = { id, key, text, detail: opts.detail, tone: opts.tone ?? "default", action: opts.action };
+  set([...items.filter((t) => t.key !== key), item].slice(-MAX_VISIBLE));
   return id;
 }
 
@@ -94,7 +107,10 @@ function ToastView({ item }: { item: ToastItem }) {
         (item.tone === "danger" ? "text-danger" : "text-text")
       }
     >
-      <p className="min-w-0 flex-1">{item.text}</p>
+      <div className="min-w-0 flex-1">
+        <p>{item.text}</p>
+        {item.detail && <p className="line-clamp-2 text-sm text-text-muted">{item.detail}</p>}
+      </div>
       {item.action && (
         <button
           type="button"

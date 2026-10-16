@@ -41,35 +41,43 @@ export interface ThreadActions {
 }
 
 export function useThreadActions(ticket: TicketDetailItem | undefined, me: Operator | undefined): ThreadActions {
-  const mutation = useTicketAction(ticket?.id ?? "");
-  const run = useCallback(
-    (a: TicketAction) => {
-      if (!ticket) return;
-      mutation.mutate(a, {
-        onError: (err) => {
-          toast(actionErrorText(err), {
-            tone: "danger",
-            action: isAssignedToOther(err) ? { label: "Перехватить", onClick: () => mutation.mutate({ kind: "take-over" }) } : undefined,
-          });
+  const { mutate, isPending } = useTicketAction();
+  const id = ticket?.id;
+  const runOn = useCallback(
+    function runOn(ticketId: string, action: TicketAction) {
+      mutate(
+        { id: ticketId, action },
+        {
+          onError: (err) =>
+            toast(actionErrorText(err), {
+              tone: "danger",
+              action: isAssignedToOther(err)
+                ? { label: "Перехватить", onClick: () => runOn(ticketId, { kind: "take-over" }) }
+                : undefined,
+            }),
         },
-      });
+      );
     },
-    [mutation, ticket],
+    [mutate],
   );
+  const run = useCallback((action: TicketAction) => {
+    if (id) runOn(id, action);
+  }, [id, runOn]);
   const take = useCallback(() => {
     if (!ticket || !me) return;
     if (ticket.assigned_operator_id === me.id) return;
     if (ticket.assigned_operator_id !== null && ticket.status !== "new") {
       const who = ticket.assigned_operator_name ? `оператора ${ticket.assigned_operator_name}` : "другого оператора";
-      toast(`Обращение у ${who}. Чтобы забрать, нажмите «Перехватить».`);
+      const ticketId = ticket.id;
+      toast(`Обращение у ${who}.`, { action: { label: "Перехватить", onClick: () => runOn(ticketId, { kind: "take-over" }) } });
       return;
     }
     run({ kind: "take" });
-  }, [me, run, ticket]);
+  }, [me, run, runOn, ticket]);
   const resolve = useCallback(() => {
     if (ticket && ticket.status !== "resolved") run({ kind: "status", status: "resolved" });
   }, [run, ticket]);
-  return { run, pending: mutation.isPending, take, resolve };
+  return { run, pending: isPending, take, resolve };
 }
 
 // ---------- timeline ----------
@@ -238,14 +246,15 @@ function ThreadView({
   const seen = useRef<Set<string> | null>(null);
   const [lightbox, setLightbox] = useState<{ photos: Attachment[]; index: number; thumbs: Array<HTMLElement | null> } | null>(null);
   const retry = useRetryMessage(ticket.id);
-  const viewers = usePresence(ticket.id, me.id);
 
   // Everything present on first paint is history; only later arrivals play the enter motion.
   if (seen.current === null) seen.current = new Set(timeline.map((t) => t.key));
   const isNew = (key: string) => !seen.current!.has(key);
 
   const lastKey = timeline.at(-1)?.key;
-  const lastIsMine = timeline.at(-1)?.kind === "message" && (timeline.at(-1) as { message: CrmMessage }).message.sender === "agent";
+  const last = timeline.at(-1);
+  // Messages carry the author's name, not id; my own reply is the one case that scrolls without being at the bottom.
+  const lastIsMine = last?.kind === "message" && last.message.sender === "agent" && last.message.author_name === me.name;
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -261,7 +270,6 @@ function ThreadView({
         ticket={ticket}
         me={me}
         actions={actions}
-        viewers={viewers}
         backHref={backHref}
         panelOpen={panelOpen}
         onTogglePanel={onTogglePanel}
@@ -338,7 +346,6 @@ function ThreadHeader({
   ticket,
   me,
   actions,
-  viewers,
   backHref,
   panelOpen,
   onTogglePanel,
@@ -346,7 +353,6 @@ function ThreadHeader({
   ticket: TicketDetailItem;
   me: Operator;
   actions: ThreadActions;
-  viewers: Viewer[];
   backHref: string;
   panelOpen: boolean;
   onTogglePanel: () => void;
@@ -355,7 +361,7 @@ function ThreadHeader({
   const free = ticket.assigned_operator_id === null || ticket.status === "new";
   const mine = ticket.assigned_operator_id === me.id && !free;
   const resolved = ticket.status === "resolved";
-  const presence = presenceLine(viewers);
+  const presence = presenceLine(usePresence(ticket.id, me.id));
 
   const statusItems: MenuItem[] = STATUS_ORDER.filter((s) => s !== "new" || ticket.status === "new").map((s) => ({
     key: s,

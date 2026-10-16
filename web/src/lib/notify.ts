@@ -75,7 +75,8 @@ export const NOTIFY_FALLBACK_TITLE: Record<NotifyKind, string> = {
 };
 
 export interface NotifyDeps {
-  toast: (text: string, open: () => void) => void;
+  /** In-app toast; `key` dedupes per ticket. */
+  toast: (title: string, body: string, key: string, open: () => void) => void;
   open: (ticketId: string) => void;
   hidden?: () => boolean;
   permission?: () => string;
@@ -109,6 +110,6 @@ export function handleNotify(e: NotifyEvent, me: Pick<Operator, "id" | "prefs">,
     (deps.showDesktop ?? defaultDesktop)(title, e.body, `crm-${e.kind}-${e.ticketId}`, open);
   } else if (!hidden && e.kind !== "new_ticket") {
     // New tickets already appear in the live list; personal events deserve a toast.
-    deps.toast(title, open);
+    deps.toast(title, e.body, `notify-${e.ticketId}`, open);
   }
 }

@@ -171,7 +171,7 @@ function Account({ user }: { user: TicketDetail["user"] }) {
   if (!user) {
     return (
       <Section title="Аккаунт Turkarta">
-        <p className="text-sm text-text-muted">Данные аккаунта не загрузились. Обновите страницу позже.</p>
+        <p className="text-sm text-text-muted">Нет данных аккаунта</p>
       </Section>
     );
   }

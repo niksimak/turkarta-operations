@@ -53,6 +53,18 @@ describe("createKeyMatcher", () => {
     expect(m(key("KeyA", { shiftKey: true }))).toBeNull();
   });
 
+  it("ignores keys typed into an editable region, nested or not", () => {
+    const editor = document.createElement("div");
+    const inner = document.createElement("span");
+    editor.append(inner);
+    // jsdom has no isContentEditable; browsers inherit it down the tree, so stub both.
+    Object.defineProperty(editor, "isContentEditable", { value: true });
+    Object.defineProperty(inner, "isContentEditable", { value: true });
+    const m = createKeyMatcher();
+    expect(m(key("KeyJ", { target: editor }))).toBeNull();
+    expect(m(key("KeyE", { target: inner }))).toBeNull();
+  });
+
   it("ignores keys typed into inputs, menus and dialogs", () => {
     const input = document.createElement("input");
     const textarea = document.createElement("textarea");

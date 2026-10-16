@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
 import { toast, Toaster } from "./Toast";
 import { handleNotify, isNotifyEvent } from "../lib/notify";
+import { ticketKeys } from "../lib/tickets";
 import { useCrmStream, type CrmEvent } from "../lib/sse";
 import { ApiError } from "../lib/api";
 import { useTheme, storedThemePref, type ThemePref } from "../lib/theme";
@@ -35,15 +36,24 @@ export function Shell() {
 
   const onEvent = useCallback(
     (event: CrmEvent) => {
-      if (event.type === "operator.updated") void qc.invalidateQueries({ queryKey: keys.me });
+      if (event.type === "operator.updated") {
+        void qc.invalidateQueries({ queryKey: keys.me });
+        void qc.invalidateQueries({ queryKey: ticketKeys.operators });
+      }
       if (event.type.startsWith("ticket.") || event.type === "message.created") {
-        void qc.invalidateQueries({ queryKey: keys.tickets });
+        // Lists and counts refetch; of the open threads only the one the event is about.
+        void qc.invalidateQueries({ queryKey: keys.tickets, predicate: (q) => q.queryKey[1] !== "detail" });
+        const ticketId = (event.data as { ticketId?: unknown } | null)?.ticketId;
+        void qc.invalidateQueries({
+          queryKey: typeof ticketId === "string" ? ticketKeys.detail(ticketId) : ["tickets", "detail"],
+        });
       }
       if (event.type === "notify" && meRef.current && isNotifyEvent(event.data)) {
         const open = (ticketId: string) => navigate(`/t/${encodeURIComponent(ticketId)}`);
         handleNotify(event.data, meRef.current, {
           open,
-          toast: (text, onOpen) => toast(text, { action: { label: "Открыть", onClick: onOpen } }),
+          toast: (title, body, key, onOpen) =>
+            toast(title, { detail: body || undefined, key, action: { label: "Открыть", onClick: onOpen } }),
         });
       }
     },

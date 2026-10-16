@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
 import { TicketRow } from "./TicketRow";
-import { usePresenceMap } from "../lib/presence";
 import type { SlaSettings } from "../lib/sla";
 import type { TicketListItem } from "../lib/tickets";
 
@@ -34,7 +33,6 @@ export function TicketList(props: Props) {
   const { items, scopeKey, openId, cursorId, hrefFor, settings, meId } = props;
   const rows = useRef(new Map<string, HTMLAnchorElement>());
   const tops = useRef<{ scope: string; byId: Map<string, number> } | null>(null);
-  const presence = usePresenceMap(meId);
   const order = items.map((t) => t.id).join(",");
 
   // FLIP: rows that moved because the data changed glide to their new slot;
@@ -109,7 +107,7 @@ export function TicketList(props: Props) {
               settings={settings}
               open={t.id === openId}
               cursor={t.id === cursorId && t.id !== openId}
-              viewers={presence.get(t.id) ?? NO_VIEWERS}
+              meId={meId}
             />
           </li>
         ))}
@@ -129,8 +127,6 @@ export function TicketList(props: Props) {
     </>
   );
 }
-
-const NO_VIEWERS: never[] = [];
 
 function ListSkeleton() {
   return (

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useMatch, useNavigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Thread, useThreadActions } from "../components/Thread";
 import { TicketList } from "../components/TicketList";
 import { UserPanel } from "../components/UserPanel";
 import { useShortcuts, type KeyAction } from "../lib/keyboard";
+import { useModal } from "../lib/modal";
 import { setPresence, usePresenceFeed, useViewingPresence } from "../lib/presence";
 import { useMe } from "../lib/queries";
 import {
@@ -17,6 +19,7 @@ import {
   useTicketList,
   type ChannelFilter,
   type ListFilters,
+  type TicketDetail,
   type TicketStatus,
   type View,
 } from "../lib/tickets";
@@ -83,12 +86,14 @@ export function Inbox() {
   const ticket = detail.data?.ticket;
   const actions = useThreadActions(ticket, me);
   const [panelOpen, setPanelOpen] = useState(false);
+  const closePanel = useCallback(() => setPanelOpen(false), []);
+  const togglePanel = useCallback(() => setPanelOpen((o) => !o), []);
   const [cursorId, setCursorId] = useState<string | undefined>(undefined);
 
   usePresenceFeed();
   useViewingPresence(openId);
   useEffect(() => {
-    if (openId && detail.data) setPresence(openId, detail.data.viewers ?? detail.data.presence ?? []);
+    if (openId && detail.data) setPresence(openId, detail.data.viewers);
   }, [openId, detail.data]);
 
   const filterQs = filterQuery(sp);
@@ -220,7 +225,7 @@ export function Inbox() {
             actions={actions}
             backHref={backHref}
             panelOpen={panelOpen}
-            onTogglePanel={() => setPanelOpen((o) => !o)}
+            onTogglePanel={togglePanel}
           />
         ) : (
           <div className="grid flex-1 place-items-center px-6 text-center text-text-muted">
@@ -241,28 +246,17 @@ export function Inbox() {
           >
             <UserPanel detail={detail.data} view={view} />
           </aside>
-          {panelOpen && <PanelSheet detail={detail.data} view={view} onClose={() => setPanelOpen(false)} />}
+          {panelOpen && <PanelSheet detail={detail.data} view={view} onClose={closePanel} />}
         </>
       )}
     </div>
   );
 }
 
-function PanelSheet({ detail, view, onClose }: { detail: NonNullable<ReturnType<typeof useTicket>["data"]>; view: View; onClose: () => void }) {
+function PanelSheet({ detail, view, onClose }: { detail: TicketDetail; view: View; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previous?.focus?.();
-    };
-  }, [onClose]);
-  return (
+  useModal(ref, { onClose });
+  return createPortal(
     <div className="fixed inset-0 z-40 xl:hidden">
       <div className="scrim-in absolute inset-0 bg-scrim" onClick={onClose} aria-hidden="true" />
       <div
@@ -271,11 +265,12 @@ function PanelSheet({ detail, view, onClose }: { detail: NonNullable<ReturnType<
         aria-modal="true"
         aria-label="Клиент"
         tabIndex={-1}
-        className="sheet-in absolute inset-y-0 right-0 w-[min(20rem,100vw)] border-l border-border bg-surface-2 shadow-pop"
+        className="sheet-in absolute inset-y-0 right-0 w-[min(20rem,100vw)] border-l border-border bg-surface-2 shadow-pop focus-visible:outline-none"
       >
         <UserPanel detail={detail} view={view} onClose={onClose} />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

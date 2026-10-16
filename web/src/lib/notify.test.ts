@@ -71,7 +71,7 @@ describe("handleNotify", () => {
   it("toasts personal events in a visible tab, not new tickets", () => {
     const d = deps(false);
     handleNotify(event({ operatorId: 7, kind: "assigned", title: "Вам назначено: Иван" }), me(), d);
-    expect(d.toast).toHaveBeenCalledWith("Вам назначено: Иван", expect.any(Function));
+    expect(d.toast).toHaveBeenCalledWith("Вам назначено: Иван", "Иван: не пришёл код", "notify-t-1", expect.any(Function));
     const q = deps(false);
     handleNotify(event(), me(), q);
     expect(q.toast).not.toHaveBeenCalled();

@@ -89,6 +89,27 @@ function detail(over: Partial<TicketDetail> = {}): TicketDetail {
   };
 }
 
+const settings = {
+  sla_first_minutes: 5,
+  sla_followup_minutes: 15,
+  sla_warn_percent: 50,
+  auto_assign_enabled: true,
+  auto_assign_minutes: 5,
+  auto_assign_max_open: null,
+  offline_after_minutes: 15,
+  reopen_days: 7,
+  tg_ping_new_ticket: true,
+  tg_ping_overdue: true,
+  tg_ping_no_one_on_shift: true,
+  resolve_message_enabled: false,
+  resolve_message_text: "Мы закрыли обращение.",
+};
+
+function summary(id: number, name: string, onShift: boolean) {
+  const { prefs: _prefs, ...rest } = operator;
+  return { ...rest, id, name, role: id === 9 ? "admin" : "support", on_shift: onShift, open_tickets: 2 };
+}
+
 type Handler = (init: RequestInit, url: URL) => Response;
 
 function mockApi(routes: Array<[string, Handler]>) {
@@ -118,8 +139,8 @@ const baseRoutes = (d: TicketDetail = detail()): Array<[string, Handler]> => [
   ["GET /crm/api/me", ok(operator)],
   ["GET /crm/api/tickets", page([T1, T2])],
   ["GET /crm/api/tickets/*", ok(d)],
-  ["GET /crm/api/settings", ok({ sla_first_minutes: 5, sla_followup_minutes: 15, sla_warn_percent: 50 })],
-  ["GET /crm/api/operators", ok([{ id: 7, name: "Аня Смирнова", role: "support", on_shift: true }, { id: 9, name: "Олег", role: "admin", on_shift: false }])],
+  ["GET /crm/api/settings", ok(settings)],
+  ["GET /crm/api/operators", ok([summary(7, "Аня Смирнова", true), summary(9, "Олег", false)])],
 ];
 
 function renderAt(path: string) {
@@ -220,8 +241,27 @@ describe("Inbox", () => {
     expect(dialog.querySelector("img")!.getAttribute("src")).toBe("/crm/api/attachments/a2");
     fireEvent.keyDown(dialog, { key: "ArrowRight" });
     expect(screen.getByRole("dialog", { name: "Фото 1 из 2" })).toBeTruthy();
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps Tab inside the lightbox and keeps j from reaching the list behind it", async () => {
+    mockApi(baseRoutes());
+    const { router } = renderAt(`/t/${T1.id}?v=queue`);
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть фото 1 из 2" }));
+    const dialog = screen.getByRole("dialog");
+    const buttons = within(dialog).getAllByRole("button");
+    buttons.at(-1)!.focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(document.activeElement).toBe(buttons[0]);
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.body, { key: "j", code: "KeyJ" });
+    fireEvent.keyDown(document.body, { key: "Enter", code: "Enter" });
+    expect(router.state.location.pathname).toBe(`/t/${T1.id}`);
   });
 
   it("takes a queued ticket from the header and shows the server's row", async () => {
@@ -262,10 +302,43 @@ describe("Inbox", () => {
     await waitFor(() => expect(calls.some((c) => c.path === `/crm/api/tickets/${T1.id}/take-over`)).toBe(true));
   });
 
+  it("reports a failed take-over started from the 409 toast", async () => {
+    mockApi([
+      ["POST /crm/api/tickets/*", (_i, url) =>
+        url.pathname.endsWith("/take")
+          ? jsonResponse(409, { error: "assigned_to_other", assignee: { id: 9, name: "Олег" } })
+          : url.pathname.endsWith("/take-over")
+            ? jsonResponse(403, { error: "forbidden" })
+            : jsonResponse(200, { ok: true })],
+      ...baseRoutes(),
+    ]);
+    renderAt(`/t/${T1.id}?v=queue`);
+    fireEvent.click(await screen.findByRole("button", { name: "Взять" }));
+    await screen.findByText("Обращение уже у оператора Олег.");
+    fireEvent.click(within(screen.getByLabelText("Уведомления")).getByRole("button", { name: "Перехватить" }));
+    expect(await screen.findByText("Нет прав на это действие.")).toBeTruthy();
+  });
+
+  it("answers a on a colleague's ticket with a «Перехватить» toast", async () => {
+    const theirs = { ...T1, status: "allocated" as const, assigned_operator_id: 9, assigned_operator_name: "Олег" };
+    const { calls } = mockApi([
+      ["POST /crm/api/tickets/*", ok({ ok: true, ticket: theirs })],
+      ["GET /crm/api/tickets/*", ok(detail({ ticket: { ...theirs, device: null, category: null, web_user_id: null } }))],
+      ...baseRoutes(),
+    ]);
+    renderAt(`/t/${T1.id}?v=queue`);
+    await screen.findByRole("button", { name: "Перехватить" });
+    fireEvent.keyDown(document.body, { key: "a", code: "KeyA" });
+    expect(await screen.findByText("Обращение у оператора Олег.")).toBeTruthy();
+    expect(calls.some((c) => c.path.endsWith("/take"))).toBe(false);
+    fireEvent.click(within(screen.getByLabelText("Уведомления")).getByRole("button", { name: "Перехватить" }));
+    await waitFor(() => expect(calls.some((c) => c.path === `/crm/api/tickets/${T1.id}/take-over`)).toBe(true));
+  });
+
   it("changes status from the menu and resolves with e", async () => {
     const { calls } = mockApi([["POST /crm/api/tickets/*", ok({ ok: true })], ...baseRoutes()]);
     renderAt(`/t/${T1.id}?v=queue`);
-    fireEvent.click(await screen.findByRole("button", { name: "Статус: В очереди" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Статус: Новый" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Ждём клиента" }));
     await waitFor(() =>
       expect(calls.find((c) => c.path.endsWith("/status"))?.body).toBe('{"status":"awaiting"}'),
@@ -342,6 +415,45 @@ describe("Inbox", () => {
     act(() => FakeEventSource.latest().emit("message.created", { ticketId: T1.id, messageId: "m9" }));
     act(() => FakeEventSource.latest().emit("message.created", { ticketId: T1.id, messageId: "m9" }));
     await waitFor(() => expect(detailCalls()).toBeGreaterThan(before));
+  });
+
+  it("leaves the open thread alone on another ticket's message", async () => {
+    const { calls } = mockApi(baseRoutes());
+    renderAt(`/t/${T1.id}?v=queue`);
+    await screen.findByRole("list", { name: "Переписка" });
+    const listCalls = () => calls.filter((c) => c.path.startsWith("/crm/api/tickets?view=queue")).length;
+    const detailCalls = () => calls.filter((c) => c.method === "GET" && c.path === `/crm/api/tickets/${T1.id}`).length;
+    const [lists, details] = [listCalls(), detailCalls()];
+    act(() => FakeEventSource.latest().emit("message.created", { ticketId: T2.id, messageId: "m9" }));
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(lists));
+    expect(detailCalls()).toBe(details);
+  });
+
+  it("keeps focus inside the client sheet across re-renders and traps Tab", async () => {
+    mockApi(baseRoutes());
+    renderAt(`/t/${T1.id}?v=queue`);
+    fireEvent.click(await screen.findByRole("button", { name: "Клиент" }));
+    const sheet = screen.getByRole("dialog", { name: "Клиент" });
+    expect(document.activeElement).toBe(sheet);
+    const close = within(sheet).getByRole("button", { name: "Закрыть панель" });
+    close.focus();
+    act(() => FakeEventSource.latest().emit("ticket.updated", { ticketId: T2.id }));
+    act(() => FakeEventSource.latest().emit("presence", { ticketId: T1.id, viewers: [{ operatorId: 9, name: "Олег", state: "viewing" }] }));
+    await screen.findByText("Олег смотрит");
+    expect(document.activeElement).toBe(close);
+    const focusables = within(sheet).getAllByRole("button");
+    focusables.at(-1)!.focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(sheet.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Клиент" })).toBeNull();
+  });
+
+  it("says «Нет данных аккаунта» when the account lookup returned nothing", async () => {
+    mockApi(baseRoutes(detail({ user: null })));
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(within(panel).getByText("Нет данных аккаунта")).toBeTruthy();
   });
 
   it("pings presence while open and shows who else is here", async () => {
