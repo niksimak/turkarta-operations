@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, json, LOGIN_FAILED_SESSION, resetApiStateForTests, shouldRetry } from "./api";
+import { api, ApiError, json, LOGIN_FAILED_SESSION, loginFailedUrl, resetApiStateForTests, shouldRetry } from "./api";
 import { jsonResponse, stubLocationAssign } from "../test/fakes";
 
 describe("api", () => {
@@ -46,6 +46,24 @@ describe("api", () => {
     expect(location.assign).toHaveBeenCalledTimes(1);
     expect(location.assign).toHaveBeenCalledWith(LOGIN_FAILED_SESSION);
     expect(LOGIN_FAILED_SESSION).toBe("/crm/login-failed?reason=session");
+  });
+
+  it("keeps the CRM path on a 401 so re-login returns to it", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, pathname: "/crm/t/7c1e-ab", assign: location.assign },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: "unauthorized" })));
+    await api("/tickets/7c1e-ab").catch(() => undefined);
+    expect(location.assign).toHaveBeenCalledWith("/crm/login-failed?reason=session&next=%2Fcrm%2Ft%2F7c1e-ab");
+  });
+
+  it("passes only paths the SSO issuer accepts as next", () => {
+    expect(loginFailedUrl("session", "/crm")).toBe("/crm/login-failed?reason=session&next=%2Fcrm");
+    expect(loginFailedUrl("session", "/crm/all/")).toBe("/crm/login-failed?reason=session&next=%2Fcrm%2Fall%2F");
+    for (const bad of ["/", "/crm/login-failed", "/crm/t/a.b", "//evil.example/crm", "/crm/../admin", "/crmx", undefined]) {
+      expect(loginFailedUrl("session", bad)).toBe(LOGIN_FAILED_SESSION);
+    }
   });
 
   it("throws ApiError with the parsed body on other failures, without redirecting", async () => {

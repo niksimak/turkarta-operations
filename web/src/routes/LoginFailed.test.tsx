@@ -13,7 +13,7 @@ function renderAt(search: string) {
 afterEach(cleanup);
 
 describe("LoginFailed", () => {
-  const reasons = ["malformed", "signature", "expired", "role", "replay", "disabled", "session"];
+  const reasons = ["malformed", "signature", "expired", "role", "replay", "disabled", "session", "logout"];
 
   it.each(reasons)("explains %s and offers the admin login", (reason) => {
     renderAt(`?reason=${reason}`);
@@ -27,6 +27,21 @@ describe("LoginFailed", () => {
     const lines = reasons.map((r) => LOGIN_FAILED_COPY[r]);
     expect(new Set(lines).size).toBe(reasons.length);
     for (const line of lines) expect(line).not.toMatch(/[—–]/);
+  });
+
+  it("says what to do when SSO is not configured, and confirms a logout", () => {
+    expect(LOGIN_FAILED_COPY.disabled).toBe("Вход в CRM не настроен. Напишите администратору.");
+    expect(LOGIN_FAILED_COPY.logout).toBe("Вы вышли.");
+  });
+
+  it("carries the original CRM path to the admin login", () => {
+    renderAt(`?reason=session&next=${encodeURIComponent("/crm/t/7c1e-ab")}`);
+    expect(screen.getByRole("link", { name: "Войти через админку" }).getAttribute("href")).toBe(
+      `${ADMIN_SUPPORT_URL}?next=%2Fcrm%2Ft%2F7c1e-ab`,
+    );
+    cleanup();
+    renderAt(`?reason=session&next=${encodeURIComponent("https://evil.example/crm")}`);
+    expect(screen.getByRole("link", { name: "Войти через админку" }).getAttribute("href")).toBe(ADMIN_SUPPORT_URL);
   });
 
   it("falls back for an unknown or missing reason", () => {

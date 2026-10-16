@@ -1,5 +1,14 @@
 export const LOGIN_FAILED_SESSION = "/crm/login-failed?reason=session";
 
+/** Paths the Turkarta SSO issuer accepts as `next`; anything else is dropped. */
+export const NEXT_PATH_RE = /^\/crm(\/[\w-]+)*\/?$/;
+
+/** Login-failed URL that remembers where the operator was, so a re-login lands there (TG alert links). */
+export function loginFailedUrl(reason: string, from?: string): string {
+  const url = `/crm/login-failed?reason=${encodeURIComponent(reason)}`;
+  return from && NEXT_PATH_RE.test(from) && !from.startsWith("/crm/login-failed") ? `${url}&next=${encodeURIComponent(from)}` : url;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: unknown;
@@ -14,6 +23,13 @@ export class ApiError extends Error {
 // Several queries can 401 at once when the session ends; only the first one
 // navigates, so the browser never queues a chain of redirects.
 let redirecting = false;
+
+/** Leave the SPA for a full page load; later 401s from in-flight calls stay quiet. */
+export function leaveTo(url: string): void {
+  if (redirecting) return;
+  redirecting = true;
+  window.location.assign(url);
+}
 
 export function resetApiStateForTests(): void {
   redirecting = false;
@@ -38,10 +54,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`/crm/api${path}`, { ...init, headers, credentials: "same-origin" });
   const body = await readBody(res);
   if (res.status === 401) {
-    if (!redirecting) {
-      redirecting = true;
-      window.location.assign(LOGIN_FAILED_SESSION);
-    }
+    leaveTo(loginFailedUrl("session", window.location.pathname));
     throw new ApiError(401, body);
   }
   if (!res.ok) throw new ApiError(res.status, body);
