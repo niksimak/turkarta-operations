@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, type KeyboardEvent } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
+import { toast, Toaster } from "./Toast";
+import { handleNotify, isNotifyEvent } from "../lib/notify";
 import { useCrmStream, type CrmEvent } from "../lib/sse";
 import { ApiError } from "../lib/api";
 import { useTheme, storedThemePref, type ThemePref } from "../lib/theme";
@@ -24,6 +26,9 @@ export function Shell() {
   const ready = me.data !== undefined;
   const counts = useCounts(ready);
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const meRef = useRef(me.data);
+  meRef.current = me.data;
 
   useTheme(me.data?.prefs.theme ?? storedThemePref());
   useHeartbeat(ready);
@@ -34,8 +39,15 @@ export function Shell() {
       if (event.type.startsWith("ticket.") || event.type === "message.created") {
         void qc.invalidateQueries({ queryKey: keys.tickets });
       }
+      if (event.type === "notify" && meRef.current && isNotifyEvent(event.data)) {
+        const open = (ticketId: string) => navigate(`/t/${encodeURIComponent(ticketId)}`);
+        handleNotify(event.data, meRef.current, {
+          open,
+          toast: (text, onOpen) => toast(text, { action: { label: "Открыть", onClick: onOpen } }),
+        });
+      }
     },
-    [qc],
+    [qc, navigate],
   );
   const stream = useCrmStream(onEvent);
 
@@ -85,6 +97,7 @@ export function Shell() {
         )}
       </nav>
       <main className="min-w-0 flex-1 overflow-auto">{ready && <Outlet />}</main>
+      <Toaster />
     </div>
   );
 }
@@ -111,9 +124,15 @@ interface NavItemProps {
   tone?: "neutral" | "late";
 }
 
+const VIEW_PATHS: Record<string, string> = { queue: "/", mine: "/mine", all: "/all" };
+
 // «Все» and «Просрочено» share /all, so activeness looks at the overdue param too.
-export function navIsActive(to: string, pathname: string, search: string): boolean {
+// An open ticket (/t/:id) belongs to the view it was opened from (`v`).
+export function navIsActive(to: string, rawPathname: string, search: string): boolean {
   const [path = "/", query] = to.split("?");
+  const pathname = rawPathname.startsWith("/t/")
+    ? (VIEW_PATHS[new URLSearchParams(search).get("v") ?? "queue"] ?? "/")
+    : rawPathname;
   const pathMatch = path === "/" ? pathname === "/" : pathname === path || pathname.startsWith(`${path}/`);
   const overdue = new URLSearchParams(search).get("overdue") === "1";
   return pathMatch && overdue === Boolean(query?.includes("overdue=1"));

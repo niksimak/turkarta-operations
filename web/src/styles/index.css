@@ -82,3 +82,55 @@
     background: var(--hover);
   }
 }
+
+/* State-change motion (DESIGN.md, Motion). Entries use @starting-style so a
+   re-render never replays them; browsers without it just skip the motion. */
+@layer components {
+  .enter-rise,
+  .pop-in {
+    transition:
+      opacity var(--dur-base) var(--ease-out),
+      transform var(--dur-base) var(--ease-out);
+  }
+  .pop-in {
+    transform-origin: var(--origin, top right);
+  }
+  .sheet-in {
+    transition:
+      transform var(--dur-slow) var(--ease-drawer),
+      opacity var(--dur-fast) ease;
+  }
+  .scrim-in {
+    transition: opacity var(--dur-slow) var(--ease-out);
+  }
+}
+
+@starting-style {
+  .enter-rise {
+    opacity: 0;
+    transform: translateY(var(--enter-shift));
+  }
+  .pop-in {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  .sheet-in {
+    transform: translateX(100%);
+  }
+  .scrim-in {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in,
+  .sheet-in {
+    transition-property: opacity;
+  }
+  @starting-style {
+    .sheet-in {
+      transform: none;
+      opacity: 0;
+    }
+  }
+}

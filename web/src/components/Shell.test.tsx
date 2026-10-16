@@ -184,6 +184,27 @@ describe("Shell", () => {
       location.restore();
     }
   });
+
+  it("reports a notify event as a toast with «Открыть»", async () => {
+    mockFetch({
+      "GET /crm/api/me": ok(operator),
+      "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 0, mine: 0, overdue: 0 } }),
+      "POST /crm/api/me/heartbeat": ok({ ok: true }),
+    });
+    const { router } = renderShell("/stats");
+    await screen.findByRole("switch", { name: "На смене" });
+    act(() =>
+      FakeEventSource.latest().emit("notify", {
+        operatorId: 7,
+        kind: "assigned",
+        ticketId: "t-5",
+        title: "Вам назначено обращение",
+        body: "Иван",
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/t/t-5"));
+  });
 });
 
 describe("navIsActive", () => {
@@ -197,5 +218,12 @@ describe("navIsActive", () => {
     expect(navIsActive("/", "/", "")).toBe(true);
     expect(navIsActive("/", "/mine", "")).toBe(false);
     expect(navIsActive("/mine", "/mine/t/42", "")).toBe(true);
+  });
+  it("keeps the view an open ticket came from active", () => {
+    expect(navIsActive("/mine", "/t/42", "?v=mine")).toBe(true);
+    expect(navIsActive("/", "/t/42", "?v=mine")).toBe(false);
+    expect(navIsActive("/", "/t/42", "")).toBe(true);
+    expect(navIsActive("/all?overdue=1", "/t/42", "?v=all&overdue=1")).toBe(true);
+    expect(navIsActive("/all", "/t/42", "?v=all&overdue=1")).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { shouldRetry } from "./lib/api";
 import { Shell } from "./components/Shell";
 import { LoginFailed } from "./routes/LoginFailed";
+import { Inbox } from "./routes/Inbox";
 
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -32,9 +33,11 @@ export const routes = [
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: <ViewPlaceholder title="Очередь" /> },
-      { path: "mine", element: <ViewPlaceholder title="Мои" /> },
-      { path: "all", element: <ViewPlaceholder title="Все" /> },
+      {
+        // One Inbox instance for every view and the open ticket, so the list keeps its scroll.
+        element: <Inbox />,
+        children: [{ index: true }, { path: "mine" }, { path: "all" }, { path: "t/:id" }],
+      },
       { path: "stats", element: <ViewPlaceholder title="Статистика" /> },
       { path: "canned", element: <ViewPlaceholder title="Шаблоны" /> },
       { path: "settings", element: <ViewPlaceholder title="Настройки" /> },
