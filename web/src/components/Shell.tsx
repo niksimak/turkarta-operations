@@ -258,16 +258,18 @@ function OperatorControls({ me }: { me: Operator }) {
   );
 }
 
-function Switch({
+export function Switch({
   checked,
   onChange,
   labelledBy,
   title,
+  disabled,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   labelledBy: string;
-  title: string;
+  title?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -276,9 +278,10 @@ function Switch({
       aria-checked={checked}
       aria-labelledby={labelledBy}
       title={title}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "press relative h-5 w-9 shrink-0 rounded-full transition-colors duration-fast",
+        "press relative h-5 w-9 shrink-0 rounded-full transition-colors duration-fast disabled:cursor-not-allowed",
         checked ? "bg-accent" : "bg-border-strong",
       )}
     >
