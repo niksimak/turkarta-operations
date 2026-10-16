@@ -36,9 +36,13 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
 
   let userSeq = 9000;
   async function ticket(fields: Record<string, unknown> = {}) {
+    // A customer's first message both queues the ticket and starts the wait. Such a ticket is already
+    // past the first-response SLA, so it counts as pinged unless a test sets the wait itself.
+    const queued = "queued_at" in fields ? fields.queued_at : sql`now() - interval '10 minutes'`;
     const row = {
       user_tg: ++userSeq, user_name: "Иван", source: "bot", first_message: "help",
-      queued_at: sql`now() - interval '10 minutes'`, waiting_since: sql`now()`, ...fields,
+      queued_at: queued, waiting_since: queued ?? sql`now()`,
+      ...("waiting_since" in fields ? {} : { overdue_pinged_at: sql`now()` }), ...fields,
     };
     const [r] = await sql`insert into support_requests ${sql(row)} returning id`;
     return r!.id as string;
@@ -194,6 +198,19 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       const r3 = await worker.tick(undefined, deps);
       assert.equal(r3.noOneAlerted, true);
       assert.deepEqual(sent.noOne, [1]);
+    });
+
+    await t.test("welcome ticket: the claim window starts when the customer writes, not at signup", async () => {
+      await reset();
+      await operator(1, "Anna");
+      const welcome = await ticket({
+        source: "web-onboarding", queued_at: sql`now() - interval '3 days'`, waiting_since: sql`now() - interval '1 minute'`,
+      });
+      assert.equal((await worker.tick(undefined, deps)).assigned, 0);
+      assert.equal((await row(welcome)).status, "new");
+      await sql`update support_requests set waiting_since = now() - interval '6 minutes' where id = ${welcome}`;
+      assert.equal((await worker.tick(undefined, deps)).assigned, 1);
+      assert.equal(Number((await row(welcome)).assigned_operator_id), 1);
     });
 
     await t.test("two concurrent ticks assign each ticket exactly once", async () => {

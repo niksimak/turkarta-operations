@@ -55,7 +55,7 @@ export async function tick(
       const due = await tx<{ id: string; user_name: string | null; user_username: string | null }[]>`
         select id, user_name, user_username from support_requests
          where status = 'new' and waiting_since is not null
-           and queued_at < ${at} - make_interval(mins => ${s.auto_assign_minutes})
+           and greatest(queued_at, waiting_since) < ${at} - make_interval(mins => ${s.auto_assign_minutes})
          order by queued_at
          for update skip locked
          limit ${BATCH}`;
