@@ -185,6 +185,46 @@ describe("Shell", () => {
     }
   });
 
+  it("logs out: POST /logout, then the «Вы вышли.» page", async () => {
+    const location = stubLocationAssign();
+    try {
+      const fetch = mockFetch({
+        "GET /crm/api/me": ok(operator),
+        "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 0, mine: 0, overdue: 0 } }),
+        "POST /crm/api/me/heartbeat": ok({ ok: true }),
+        "POST /crm/api/logout": ok({ ok: true }),
+      });
+      renderShell();
+      fireEvent.click(await screen.findByRole("button", { name: "Выйти" }));
+      await waitFor(() => expect(location.assign).toHaveBeenCalledWith("/crm/login-failed?reason=logout"));
+      const call = fetch.mock.calls.find(([url]) => url === "/crm/api/logout")!;
+      expect(call[1]!.method).toBe("POST");
+      expect(new Headers(call[1]!.headers).get("X-CRM")).toBe("1");
+      expect(location.assign).toHaveBeenCalledTimes(1);
+    } finally {
+      location.restore();
+    }
+  });
+
+  it("stays put and says so when logout fails", async () => {
+    const location = stubLocationAssign();
+    try {
+      mockFetch({
+        "GET /crm/api/me": ok(operator),
+        "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 0, mine: 0, overdue: 0 } }),
+        "POST /crm/api/me/heartbeat": ok({ ok: true }),
+        "POST /crm/api/logout": () => jsonResponse(500, { error: "internal" }),
+      });
+      renderShell();
+      fireEvent.click(await screen.findByRole("button", { name: "Выйти" }));
+      expect(await screen.findByText("Не удалось выйти. Повторите.")).toBeTruthy();
+      expect(location.assign).not.toHaveBeenCalled();
+      expect((screen.getByRole("button", { name: "Выйти" }) as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      location.restore();
+    }
+  });
+
   it("shows a notify event as one toast per ticket with title, body and «Открыть»", async () => {
     mockFetch({
       "GET /crm/api/me": ok(operator),

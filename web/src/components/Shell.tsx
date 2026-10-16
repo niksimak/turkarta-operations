@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
@@ -6,7 +6,7 @@ import { toast, Toaster } from "./Toast";
 import { handleNotify, isNotifyEvent } from "../lib/notify";
 import { ticketKeys } from "../lib/tickets";
 import { useCrmStream, type CrmEvent } from "../lib/sse";
-import { ApiError } from "../lib/api";
+import { api, ApiError, json, leaveTo, loginFailedUrl } from "../lib/api";
 import { useTheme, storedThemePref, type ThemePref } from "../lib/theme";
 import {
   keys,
@@ -215,6 +215,17 @@ function OperatorControls({ me }: { me: Operator }) {
   const shift = useSetShift();
   const prefs = useUpdatePrefs();
   const failed = shift.isError || prefs.isError;
+  const [leaving, setLeaving] = useState(false);
+  const logout = () => {
+    setLeaving(true);
+    api("/logout", json("POST")).then(
+      () => leaveTo(loginFailedUrl("logout")),
+      () => {
+        setLeaving(false);
+        toast("Не удалось выйти. Повторите.", { tone: "danger" });
+      },
+    );
+  };
 
   return (
     <div className="flex flex-col gap-2 border-t border-border px-2 py-3 lg:px-3">
@@ -247,12 +258,24 @@ function OperatorControls({ me }: { me: Operator }) {
           <span className="sr-only lg:not-sr-only">Не сохранилось. Повторите.</span>
         </p>
       )}
-      <div className="hidden min-w-0 lg:block">
-        <p className="truncate text-sm font-semibold">{me.name}</p>
-        <p className="truncate text-xs text-text-muted">
-          {me.role === "admin" ? "Администратор" : "Поддержка"}
-          {me.is_lead ? ", лид" : ""}
-        </p>
+      <div className="flex items-center justify-center gap-2 lg:justify-between">
+        <div className="hidden min-w-0 lg:block">
+          <p className="truncate text-sm font-semibold">{me.name}</p>
+          <p className="truncate text-xs text-text-muted">
+            {me.role === "admin" ? "Администратор" : "Поддержка"}
+            {me.is_lead ? ", лид" : ""}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={logout}
+          disabled={leaving}
+          aria-label="Выйти"
+          title="Выйти"
+          className="press hover-surface grid size-8 shrink-0 place-items-center rounded-sm text-text-muted disabled:opacity-60"
+        >
+          <Icon name="logout" />
+        </button>
       </div>
     </div>
   );
