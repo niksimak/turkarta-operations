@@ -30,7 +30,8 @@ const ALBUM_WINDOW = "10 seconds";
 const MAX_ATTACHMENTS = 10;
 const TG_PHOTO = { mediaType: "image/jpeg", filename: "photo.jpg" } as const;
 
-// Same strings the bot has always relayed, so Bitrix and AI triggers see no change.
+// Same strings as contentLabel in bots/support.ts, so Bitrix and AI triggers see no change. One exception:
+// a GIF arrives as a document too, so contentLabel said «📎 [файл]»; here it is «🎞 [GIF]».
 const UNSUPPORTED_LABEL: Record<Exclude<UnsupportedType, "sticker">, string> = {
   video: "🎬 [видео]",
   video_note: "🎬 [видео]",
@@ -96,7 +97,10 @@ interface LockedTicket {
 type TxOutcome =
   | { kind: "duplicate"; messageId: string }
   | { kind: "appended"; messageId: string }
-  | { kind: "inserted"; messageId: string; reopened: boolean; assignee: number | null; who: string; firstOfTicket: boolean };
+  | {
+    kind: "inserted"; messageId: string; reopened: boolean; requeued: boolean;
+    assignee: number | null; who: string; firstOfTicket: boolean;
+  };
 
 /** Store a user message with CRM fields, update ticket timers, reopen if needed, publish events. */
 export async function recordUserMessage(
@@ -214,6 +218,7 @@ export async function recordUserMessage(
       kind: "inserted",
       messageId: inserted.id,
       reopened: reopenTo !== null,
+      requeued: reopenTo === "new",
       assignee: updated!.assigned_operator_id == null ? null : Number(updated!.assigned_operator_id),
       who: ticketWho(updated!),
       firstOfTicket: !prior!.any,
@@ -236,7 +241,8 @@ export async function recordUserMessage(
   await publish({ type: "message.created", ticketId: ticket.id, messageId: outcome.messageId });
   if (outcome.kind === "appended") return result;
   await publish({ type: "ticket.updated", ticketId: ticket.id });
-  if (outcome.firstOfTicket) {
+  // A reopen that lands back in the queue needs a taker, exactly like a new ticket.
+  if (outcome.firstOfTicket || outcome.requeued) {
     const line = firstLine(body);
     await publish({
       type: "notify", operatorId: null, kind: "new_ticket", ticketId: ticket.id,

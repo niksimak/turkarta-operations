@@ -203,6 +203,30 @@ test("inbound capture: albums, timers, reopen, idempotent retries, events", { sk
         { type: "notify", operatorId: null, kind: "new_ticket", ticketId: unassigned.id, title: "Новое обращение", body: "Иван: hi" },
       ]);
     });
+    await t.test("a reopen back to the queue announces itself like a new ticket; a kept assignee gets user_replied", async () => {
+      const { setActiveAlerts } = await import("../dist/crm/alerts.js");
+      const alerted: string[] = [];
+      setActiveAlerts({ newTicket: async (i) => { alerted.push(i.id); }, overdue: async () => {}, noOneOnShift: async () => {} });
+      try {
+        const queued = await ticket({ status: "resolved", resolved_at: sql`now() - interval '1 day'`, assigned_operator_id: 8, user_name: "Ольга" });
+        const kept = await ticket({ status: "resolved", resolved_at: sql`now() - interval '1 day'`, assigned_operator_id: 7, user_name: "Ира" });
+        // Both had a conversation already, so neither message is the ticket's first.
+        await sql`insert into support_messages (ticket_id, sender, body) values (${queued.id}, 'user', 'old'), (${kept.id}, 'user', 'old')`;
+        await settle();
+        events.length = 0;
+        await inbound.recordUserMessage(queued, { kind: "text", body: "опять" }, meta(queued, "rq1"));
+        await inbound.recordUserMessage(kept, { kind: "text", body: "опять" }, meta(kept, "rq2"));
+        await settle();
+        const notifies = events.filter((e) => e.type === "notify");
+        assert.deepEqual(notifies, [
+          { type: "notify", operatorId: null, kind: "new_ticket", ticketId: queued.id, title: "Новое обращение", body: "Ольга: опять" },
+          { type: "notify", operatorId: 7, kind: "user_replied", ticketId: kept.id, title: "Ира", body: "опять" },
+        ]);
+        assert.deepEqual(alerted, [queued.id]);
+      } finally {
+        setActiveAlerts(null);
+      }
+    });
   } finally {
     await listener.unlisten();
     await db.sql.end();
