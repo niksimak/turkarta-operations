@@ -214,10 +214,15 @@ Render is deleted after one clean week.
 CRM cutover (later, its own step, Fly already live):
 Run the scripts from a local checkout of this branch with the prod env vars passed inline;
 they are not in the image. Both print ids or counts only.
-1. `fly secrets set SUPPORT_SURFACE=crm` (restarts the machine).
-2. `node --import tsx scripts/crm_cutover.ts`, check the counts, then run it with `--apply`.
-3. `node --import tsx scripts/forum_farewell.ts`, check the list, then run it with `--send`.
-4. Smoke: a CRM reply to a test user only, after step 1. Never reply to a real customer
+1. `node --import tsx scripts/crm_cutover.ts` (dry run), check the counts.
+2. CRM «Настройки» → «Команда»: switch off «Автоназначение» and «Просрочка». Otherwise the
+   first worker tick after the flip sees every open Bitrix-era ticket as overdue, pings the
+   TG group for each one and auto-assigns them before step 4 cleans them up.
+3. `fly secrets set SUPPORT_SURFACE=crm` (restarts the machine).
+4. `node --import tsx scripts/crm_cutover.ts --apply`.
+5. Switch «Автоназначение» and «Просрочка» back on.
+6. `node --import tsx scripts/forum_farewell.ts`, check the list, then run it with `--send`.
+7. Smoke: a CRM reply to a test user only, after step 3. Never reply to a real customer
    as a test.
 
 Rollback of the cutover: `fly secrets set SUPPORT_SURFACE=bitrix` on the same Fly app.
