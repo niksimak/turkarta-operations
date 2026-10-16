@@ -39,6 +39,8 @@ const DAY_MS = 86_400_000;
 const MSK_OFFSET_MS = 3 * 3_600_000;
 const MAX_STATS_DAYS = 400;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// <img src> and EventSource cannot send X-CRM; these GETs authenticate by cookie alone.
+const COOKIE_ONLY_GET = new RegExp(`^${BASE}/api/(stream|attachments/[^/]+)$`);
 
 const StatusBody = z.object({ status: z.enum(["new", "allocated", "awaiting", "resolved"]) }).strict();
 const AssignBody = z.object({ operator_id: z.number().int().positive().nullable() }).strict();
@@ -103,7 +105,7 @@ function onError(err: Error, c: Context): Response | Promise<Response> {
   return c.json({ error: "internal" }, 500);
 }
 
-/** EventSource cannot send headers, so the stream authenticates by cookie alone. */
+/** For read-only GETs the browser makes without our headers (EventSource, <img>). */
 const cookieOperator = (): MiddlewareHandler<Env> => async (c, next) => {
   const operator = await operatorForSession(getCookie(c, SESSION_COOKIE) ?? "");
   if (!operator) return c.json({ error: "unauthorized" }, 401);
@@ -198,8 +200,8 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
   });
 
   const auth = requireOperator();
-  const streamAuth = cookieOperator();
-  r.use("/api/*", (c, next) => (c.req.method === "GET" && c.req.path === `${BASE}/api/stream` ? streamAuth : auth)(c, next));
+  const cookieAuth = cookieOperator();
+  r.use("/api/*", (c, next) => (c.req.method === "GET" && COOKIE_ONLY_GET.test(c.req.path) ? cookieAuth : auth)(c, next));
   // The reply route carries photos and sets its own, larger limit.
   const jsonLimit = bodyLimit({ maxSize: JSON_MAX_BYTES, onError: (c) => c.json({ error: "too_large" }, 413) });
   r.use("/api/*", (c, next) => (c.req.method === "POST" && MESSAGES_PATH.test(c.req.path) ? next() : jsonLimit(c, next)));

@@ -172,6 +172,19 @@ test("CRM API end to end: SSO, operators, canned replies, stats, logout", { skip
       assert.equal(st.body.team.new_per_day.length, 7);
     });
 
+    await t.test("a stored photo loads by session cookie alone, like an <img src>", async () => {
+      const [tk] = await sql`insert into support_requests (user_tg, first_message) values (555, 'photo') returning id`;
+      const [m] = await sql`insert into support_messages (ticket_id, sender, body, kind) values (${tk!.id}, 'user', '', 'photo') returning id`;
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const [a] = await sql`insert into support_attachments (message_id, media_type, filename, size_bytes, content)
+        values (${m!.id}, 'image/png', 'p.png', ${bytes.length}, ${bytes}) returning id`;
+      const res = await app.request(`/crm/api/attachments/${a!.id}`, { headers: { cookie: `crm_session=${anna}` } });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("content-type"), "image/png");
+      assert.deepEqual(Buffer.from(await res.arrayBuffer()), bytes);
+      assert.equal((await app.request(`/crm/api/attachments/${a!.id}`)).status, 401);
+    });
+
     await t.test("logout ends the session", async () => {
       assert.deepEqual(await call(boris, "POST", "/logout"), { status: 200, body: { ok: true } });
       assert.equal((await call(boris, "GET", "/me")).status, 401);

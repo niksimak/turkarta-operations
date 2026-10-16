@@ -260,6 +260,19 @@ test("stats: default range is 7 Moscow days; bad dates are 422", async () => {
   assert.equal((callsOf("stats").at(-1)!.args[0] as { from: Date }).from.toISOString(), "2026-10-01T00:00:00.000Z");
 });
 
+test("attachments: GET authenticates by cookie alone; other methods and paths still need X-CRM", async () => {
+  const photo = await req("/crm/api/attachments/a1", { headers: H("tok-support", false) });
+  assert.equal(photo.status, 200);
+  assert.equal(photo.headers.get("content-type"), "image/jpeg");
+  assert.equal((await req("/crm/api/attachments/a1")).status, 401);
+  assert.equal((await req("/crm/api/attachments/a1", { headers: H("tok-unknown", false) })).status, 401);
+  assert.equal((await req("/crm/api/attachments/a1", { method: "POST", headers: H("tok-support", false) })).status, 401);
+  assert.equal((await req("/crm/api/attachments/a1/x", { headers: H("tok-support", false) })).status, 401);
+  assert.equal((await req("/crm/api/attachments", { headers: H("tok-support", false) })).status, 401);
+  assert.equal((await req("/crm/api/me", { headers: H("tok-support", false) })).status, 401);
+  assert.equal((await req(`/crm/api/tickets/${TICKET}`, { headers: H("tok-support", false) })).status, 401);
+});
+
 test("SSE: cookie only, own and broadcast notifies, unsubscribes on close", async () => {
   assert.equal((await req("/crm/api/stream")).status, 401);
   const res = await req("/crm/api/stream", { headers: H("tok-support", false) });
