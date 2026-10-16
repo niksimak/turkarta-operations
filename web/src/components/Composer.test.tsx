@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { createQueryClient, routes } from "../app";
-import { installFakeEventSource, jsonResponse } from "../test/fakes";
+import { FakeEventSource, installFakeEventSource, jsonResponse } from "../test/fakes";
 import { resetApiStateForTests } from "../lib/api";
 import { resetToastsForTests } from "./Toast";
 import { resetPresenceForTests } from "../lib/presence";
@@ -251,6 +251,12 @@ describe("Composer", () => {
     expect(textbox().value).toBe("");
     expect(screen.queryByRole("list", { name: "Фото к отправке" })).toBeNull();
 
+    // A new draft cannot go out while the first send is in flight.
+    fireEvent.change(textbox(), { target: { value: "Ещё" } });
+    expect((screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(textbox(), { key: "Enter", ctrlKey: true });
+    expect(textbox().value).toBe("Ещё");
+    await act(async () => new Promise((r) => setTimeout(r, 20)));
     const posts = calls.filter((c) => c.method === "POST" && c.path.endsWith("/messages"));
     expect(posts).toHaveLength(1);
     const form = posts[0]!.body as FormData;
@@ -269,6 +275,8 @@ describe("Composer", () => {
     });
     await waitFor(() => expect(within(row).getByText("Отправлено")).toBeTruthy());
     expect(row.isConnected).toBe(true);
+    // The draft typed meanwhile can go once the first send settled.
+    expect((screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement).disabled).toBe(false);
     expect(row.getAttribute("data-message-id")).toBe("srv1");
     expect(row.querySelector("[data-pending]")).toBeNull();
     expect(within(thread).getAllByText("Проверьте спам")).toHaveLength(1);
@@ -366,5 +374,37 @@ describe("Composer", () => {
     await screen.findByRole("list", { name: "Переписка" });
     fireEvent.change(textbox(), { target: { value: "@Ол", selectionStart: 3 } });
     expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("keeps the pending message through a refetch, and lets an early server copy take its place", async () => {
+    const reply = deferred<Response>();
+    const d = detail();
+    mockApi({ detail: d, send: () => reply.promise });
+    renderThread();
+    const thread = await screen.findByRole("list", { name: "Переписка" });
+    fireEvent.change(textbox(), { target: { value: "Сейчас проверю" } });
+    fireEvent.keyDown(textbox(), { key: "Enter", ctrlKey: true });
+    const row = (await within(thread).findByText("Сейчас проверю")).closest("[data-message-id]") as HTMLElement;
+
+    // SSE refetch before the server has the message: the optimistic row stays.
+    await act(async () => FakeEventSource.latest().emit("message.created", { ticketId: TID }));
+    await act(async () => new Promise((r) => setTimeout(r, 20)));
+    expect(row.isConnected).toBe(true);
+    expect(within(row).getByText("Отправляется…")).toBeTruthy();
+
+    // SSE refetch that already carries the server copy: it takes the same row, no duplicate.
+    const server: CrmMessage = {
+      id: "srv2", sender: "agent", kind: "text", body: "Сейчас проверю", unsupported_type: null, author_name: "Аня Смирнова",
+      created_at: new Date().toISOString(), delivery_status: "sent", delivery_error: null, attachments: [],
+    };
+    d.messages = [...d.messages, server];
+    await act(async () => FakeEventSource.latest().emit("message.created", { ticketId: TID }));
+    await waitFor(() => expect(row.getAttribute("data-message-id")).toBe("srv2"));
+    expect(row.isConnected).toBe(true);
+    expect(within(thread).getAllByText("Сейчас проверю")).toHaveLength(1);
+
+    await act(async () => reply.resolve(jsonResponse(200, server)));
+    await waitFor(() => expect(within(row).getByText("Отправлено")).toBeTruthy());
+    expect(within(thread).getAllByText("Сейчас проверю")).toHaveLength(1);
   });
 });
