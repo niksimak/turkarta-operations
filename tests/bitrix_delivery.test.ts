@@ -55,6 +55,8 @@ mock.module("../dist/bitrix_app.js", { namedExports: {
 } });
 mock.module("../dist/turkarta_api.js", { namedExports: {
   notifySupportReply: async () => { if (pushFails) throw new Error("push unavailable"); },
+  // server.ts mounts the CRM router, whose user-context client imports this.
+  turkartaApiAuth: () => null,
 } });
 
 const { supportBot } = await import("../dist/bots/support.js");

@@ -65,13 +65,13 @@ export function verifySsoToken(token: string, secret: string, nowSec: number = M
   return { ok: true, claims };
 }
 
-interface OperatorRow {
+export interface OperatorRow {
   id: string | number; name: string; email: string | null; role: CrmRole; is_lead: boolean;
   auto_assign_enabled: boolean; on_shift: boolean; last_active_at: Date | null; last_assigned_at: Date | null;
   prefs: Partial<Operator["prefs"]> | null;
 }
 
-function toOperator(r: OperatorRow): Operator {
+export function toOperator(r: OperatorRow): Operator {
   return {
     id: Number(r.id), name: r.name, email: r.email, role: r.role, is_lead: r.is_lead,
     auto_assign_enabled: r.auto_assign_enabled, on_shift: r.on_shift,

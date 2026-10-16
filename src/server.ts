@@ -17,6 +17,7 @@ import { deliverOperatorReply } from "./bitrix_reply.js";
 import { flushDeliveryConfirmations } from "./bitrix_delivery.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
 import { createAgentRoutes } from "./agents/routes.js";
+import { crmRoutes } from "./crm/routes.js";
 import { readiness } from "./agents/readiness.js";
 import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
@@ -28,6 +29,7 @@ import {
 
 export const app = new Hono();
 app.route("/api/internal/support-ai", createAgentRoutes(agentStore, config.SUPPORT_AI_ADMIN_SECRET, operationsStore, config.SUPPORT_AI_MODE, () => readiness(config)));
+app.route("/crm", crmRoutes());
 
 const TG_LEADS_PATH = `/tg/leads/${config.TELEGRAM_WEBHOOK_SECRET}`;
 const TG_SUPPORT_PATH = `/tg/support/${config.TELEGRAM_WEBHOOK_SECRET}`;
