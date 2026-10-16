@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, json } from "./api";
+import { addOutgoing, bindServerId, confirmOutgoing, dropOutgoing, removeOutgoing, withOutbox } from "./outbox";
 import { keys, useMe, type Operator, type TicketCounts } from "./queries";
 import { DEFAULT_SLA, type SlaSettings } from "./sla";
 
@@ -38,6 +39,8 @@ export interface Attachment {
   id: string;
   media_type: string | null;
   position: number;
+  /** Client only: object URL of a photo that is still uploading. */
+  preview?: string;
 }
 
 export interface CrmMessage {
@@ -51,6 +54,8 @@ export interface CrmMessage {
   delivery_status: "pending" | "sent" | "failed" | null;
   delivery_error: string | null;
   attachments: Attachment[];
+  /** Client only: optimistic, the server has not confirmed it yet. */
+  local?: boolean;
 }
 
 export type TicketEventType =
@@ -189,7 +194,8 @@ export function useTicketList(f: ListFilters) {
 export function useTicket(id: string | undefined) {
   return useQuery({
     queryKey: ticketKeys.detail(id ?? ""),
-    queryFn: () => api<TicketDetail>(`/tickets/${encodeURIComponent(id!)}`),
+    // Unconfirmed sends survive a refetch that lands before their POST returns.
+    queryFn: async () => withOutbox(id!, await api<TicketDetail>(`/tickets/${encodeURIComponent(id!)}`)),
     enabled: Boolean(id),
   });
 }
@@ -340,6 +346,102 @@ export function useRetryMessage(ticketId: string) {
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ticketKeys.detail(ticketId) }),
   });
+}
+
+export type ComposeMode = "reply" | "note";
+
+export interface SendVars {
+  clientKey: string;
+  kind: ComposeMode;
+  body: string;
+  photos: File[];
+}
+
+function sendForm({ kind, body, photos }: SendVars): FormData {
+  const form = new FormData();
+  form.append("kind", kind);
+  form.append("body", body);
+  for (const p of photos) form.append("photos", p, p.name);
+  return form;
+}
+
+function optimisticMessage(vars: SendVars, me: Operator | undefined, after: string | undefined, previews: string[]): CrmMessage {
+  // Never sort above the last message on a client clock that runs behind the server.
+  const at = Math.max(Date.now(), after ? Date.parse(after) + 1 : 0);
+  return {
+    id: vars.clientKey,
+    sender: "agent",
+    kind: vars.kind === "note" ? "note" : vars.photos.length ? "photo" : "text",
+    body: vars.body,
+    unsupported_type: null,
+    author_name: me?.name ?? null,
+    created_at: new Date(at).toISOString(),
+    delivery_status: vars.kind === "reply" ? "pending" : null,
+    delivery_error: null,
+    attachments: vars.photos.map((p, i) => ({ id: `${vars.clientKey}-${i}`, media_type: p.type, position: i, preview: previews[i] })),
+    local: true,
+  };
+}
+
+/** Reply or note with photos: shows at once as pending, replaced in place by the server's message. */
+export function useSendMessage(ticketId: string) {
+  const qc = useQueryClient();
+  const me = useMe().data;
+  const key = ticketKeys.detail(ticketId);
+  return useMutation({
+    mutationFn: (vars: SendVars) =>
+      api<CrmMessage>(`/tickets/${encodeURIComponent(ticketId)}/messages`, { method: "POST", body: sendForm(vars) }),
+    onMutate: async (vars) => {
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<TicketDetail>(key);
+      const previews = vars.photos.map((p) => URL.createObjectURL(p));
+      const last = prev?.messages.at(-1)?.created_at;
+      addOutgoing(ticketId, optimisticMessage(vars, me, last, previews), prev?.messages.map((m) => m.id) ?? []);
+      if (prev) qc.setQueryData<TicketDetail>(key, withOutbox(ticketId, prev));
+      return { previews };
+    },
+    onSuccess: (server, vars) => {
+      bindServerId(vars.clientKey, server.id);
+      qc.setQueryData<TicketDetail>(key, (d) => (d ? confirmOutgoing(d, vars.clientKey, server) : d));
+    },
+    onError: (_e, vars) => {
+      qc.setQueryData<TicketDetail>(key, (d) => (d ? dropOutgoing(d, vars.clientKey) : d));
+    },
+    onSettled: (_d, _e, vars, ctx) => {
+      removeOutgoing(vars.clientKey);
+      for (const url of ctx?.previews ?? []) URL.revokeObjectURL(url);
+      // A reply on a queued ticket assigns it; the list, counts and header follow.
+      void qc.invalidateQueries({ queryKey: keys.tickets });
+    },
+  });
+}
+
+/** What happened to a send and what to do; `detail` names the photo the server refused. */
+export function sendErrorText(err: unknown, photoNames: string[]): { text: string; detail?: string } {
+  if (err instanceof ApiError) {
+    const body = (err.body ?? {}) as { error?: string; index?: number };
+    if (err.status === 422) {
+      switch (body.error) {
+        case "empty":
+          return { text: "Нечего отправить. Напишите текст или прикрепите фото." };
+        case "note_needs_body":
+          return { text: "Заметке нужен текст." };
+        case "too_many_photos":
+          return { text: "Не больше 10 фото в сообщении." };
+        case "too_long":
+          return { text: "Текст длиннее 4000 символов. Сократите его." };
+        case "photo_invalid":
+          return {
+            text: "Фото не принято. Уберите его и отправьте снова.",
+            detail: typeof body.index === "number" ? photoNames[body.index] : undefined,
+          };
+      }
+      return { text: "Сообщение не прошло проверку. Обновите страницу." };
+    }
+    if (err.status === 413) return { text: "Фото слишком тяжёлые. Уберите часть и отправьте снова." };
+    if (err.status === 409 || err.status === 403 || err.status === 404) return { text: actionErrorText(err) };
+  }
+  return { text: "Не отправилось. Повторите." };
 }
 
 export interface ConflictBody {

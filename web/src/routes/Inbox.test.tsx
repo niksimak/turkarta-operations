@@ -327,9 +327,10 @@ describe("Inbox", () => {
       ...baseRoutes(),
     ]);
     renderAt(`/t/${T1.id}?v=queue`);
-    await screen.findByRole("button", { name: "Перехватить" });
+    // The header and the locked composer both offer it.
+    await screen.findAllByRole("button", { name: "Перехватить" });
     fireEvent.keyDown(document.body, { key: "a", code: "KeyA" });
-    expect(await screen.findByText("Обращение у оператора Олег.")).toBeTruthy();
+    expect(await within(screen.getByLabelText("Уведомления")).findByText("Обращение у оператора Олег.")).toBeTruthy();
     expect(calls.some((c) => c.path.endsWith("/take"))).toBe(false);
     fireEvent.click(within(screen.getByLabelText("Уведомления")).getByRole("button", { name: "Перехватить" }));
     await waitFor(() => expect(calls.some((c) => c.path === `/crm/api/tickets/${T1.id}/take-over`)).toBe(true));

@@ -134,3 +134,74 @@
     }
   }
 }
+
+/* Composer (Task 17). Drop overlay: stays mounted, fades in on a files drag and
+   out faster than it came; the plate settles from 0.98. An unconfirmed message
+   sits dimmed and brightens when the server confirms it (same element, so it is
+   a transition, not a second entrance). */
+@layer components {
+  .drop-overlay {
+    opacity: 0;
+    transition: opacity 100ms ease;
+  }
+  .drop-overlay[data-active] {
+    opacity: 1;
+    transition-duration: var(--dur-fast);
+  }
+  .drop-plate {
+    color: var(--text);
+    background: color-mix(in srgb, var(--accent-soft) 94%, transparent);
+    box-shadow: inset 0 0 0 2px var(--accent);
+    transform: scale(0.98);
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+  .drop-overlay[data-blocked] .drop-plate {
+    background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+    box-shadow: inset 0 0 0 2px var(--border-strong);
+  }
+  .drop-overlay[data-active] .drop-plate {
+    transform: scale(1);
+  }
+
+  .thumb-in {
+    transition:
+      opacity var(--dur-base) var(--ease-out),
+      transform var(--dur-base) var(--ease-out);
+  }
+
+  .fade-in {
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  .bubble {
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .bubble[data-pending] {
+    opacity: 0.7;
+  }
+}
+
+@starting-style {
+  .thumb-in {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  .fade-in {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drop-plate,
+  .drop-overlay[data-active] .drop-plate {
+    transform: none;
+  }
+  .thumb-in {
+    transition-property: opacity;
+  }
+  @starting-style {
+    .thumb-in {
+      transform: none;
+    }
+  }
+}

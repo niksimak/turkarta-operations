@@ -1,4 +1,6 @@
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Composer, usePhotoDraft } from "./Composer";
+import { DropOverlay, useFileDrop, type DropBlock } from "./DropOverlay";
 import { Link } from "react-router-dom";
 import { Icon } from "./Icon";
 import { Lightbox } from "./Lightbox";
@@ -7,6 +9,7 @@ import { MessageBubble } from "./MessageBubble";
 import { Avatar, ChannelDot } from "./TicketRow";
 import { toast } from "./Toast";
 import { formatDay, formatTime, sameDay } from "../lib/format";
+import { messageKey } from "../lib/outbox";
 import { usePresence } from "../lib/presence";
 import type { Operator } from "../lib/queries";
 import {
@@ -18,6 +21,7 @@ import {
   useRetryMessage,
   useTicketAction,
   type Attachment,
+  type ComposeMode,
   type CrmMessage,
   type TicketAction,
   type TicketDetail,
@@ -33,6 +37,8 @@ const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(
 
 export interface ThreadActions {
   run: (a: TicketAction) => void;
+  /** Acts on the given ticket even if the open one changed since (toast actions). */
+  runOn: (ticketId: string, a: TicketAction) => void;
   pending: boolean;
   /** `a`: take a free ticket; on a colleague's ticket, point at «Перехватить». */
   take: () => void;
@@ -77,7 +83,7 @@ export function useThreadActions(ticket: TicketDetailItem | undefined, me: Opera
   const resolve = useCallback(() => {
     if (ticket && ticket.status !== "resolved") run({ kind: "status", status: "resolved" });
   }, [run, ticket]);
-  return { run, pending: isPending, take, resolve };
+  return { run, runOn, pending: isPending, take, resolve };
 }
 
 // ---------- timeline ----------
@@ -123,7 +129,8 @@ type TimelineItem =
 
 export function buildTimeline(messages: CrmMessage[], events: TicketEventRow[]): TimelineItem[] {
   const items: TimelineItem[] = [
-    ...messages.map((m) => ({ kind: "message" as const, key: `m:${m.id}`, at: m.created_at, message: m })),
+    // An optimistic message and its server copy share one key, so the enter motion plays once.
+    ...messages.map((m) => ({ kind: "message" as const, key: `m:${messageKey(m)}`, at: m.created_at, message: m })),
     ...events.flatMap((e) => {
       const text = eventText(e);
       return text ? [{ kind: "event" as const, key: `e:${e.id}`, at: e.created_at, event: e, text }] : [];
@@ -150,18 +157,6 @@ function Divider({ children, meta }: { children: ReactNode; meta?: string }) {
 }
 
 // ---------- the thread ----------
-
-export interface ComposerSlotProps {
-  ticket: TicketDetailItem;
-  me: Operator;
-  /** Assigned to a colleague: the composer shows «Перехватить» instead of sending. */
-  locked: boolean;
-}
-
-/** Task 17 mounts the composer here (reply/note, photos, canned replies). */
-export function ComposerSlot(_props: ComposerSlotProps) {
-  return <div data-composer-slot="" className="shrink-0" />;
-}
 
 interface Props {
   detail: TicketDetail | undefined;
@@ -246,6 +241,19 @@ function ThreadView({
   const seen = useRef<Set<string> | null>(null);
   const [lightbox, setLightbox] = useState<{ photos: Attachment[]; index: number; thumbs: Array<HTMLElement | null> } | null>(null);
   const retry = useRetryMessage(ticket.id);
+  const [mode, setMode] = useState<ComposeMode>("reply");
+  const photos = usePhotoDraft();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const locked = ticket.assigned_operator_id !== null && ticket.assigned_operator_id !== me.id && ticket.status !== "new";
+  const dropBlock: DropBlock = ticket.status === "resolved" ? "resolved" : locked && mode === "reply" ? "locked" : null;
+  // The whole pane takes dropped photos, not just the composer.
+  const drop = useFileDrop({
+    block: dropBlock,
+    onFiles: (files) => {
+      photos.add(files);
+      input.current?.focus();
+    },
+  });
 
   // Everything present on first paint is history; only later arrivals play the enter motion.
   if (seen.current === null) seen.current = new Set(timeline.map((t) => t.key));
@@ -265,7 +273,7 @@ function ThreadView({
     retry.mutate(id, { onError: () => toast("Не удалось повторить. Попробуйте ещё раз.", { tone: "danger" }) });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col" {...drop.handlers}>
       <ThreadHeader
         ticket={ticket}
         me={me}
@@ -314,11 +322,18 @@ function ThreadView({
           })}
         </ol>
       </div>
-      <ComposerSlot
+      <Composer
         ticket={ticket}
         me={me}
-        locked={ticket.assigned_operator_id !== null && ticket.assigned_operator_id !== me.id && ticket.status !== "new"}
+        locked={locked}
+        mode={mode}
+        onMode={setMode}
+        photos={photos}
+        inputRef={input}
+        runOn={actions.runOn}
+        actionPending={actions.pending}
       />
+      <DropOverlay active={drop.active} block={dropBlock} />
       {lightbox && (
         <Lightbox
           photos={lightbox.photos}

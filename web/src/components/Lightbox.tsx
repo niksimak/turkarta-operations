@@ -128,7 +128,7 @@ export function Lightbox({ photos, index, onIndex, thumbFor, onClose }: Props) {
       <img
         ref={img}
         key={photo.id}
-        src={attachmentUrl(photo.id)}
+        src={photo.preview ?? attachmentUrl(photo.id)}
         alt=""
         onLoad={zoomIn}
         onClick={close}

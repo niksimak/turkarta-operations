@@ -70,8 +70,9 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
         </time>
       </p>
       <div
+        data-pending={m.local ? "" : undefined}
         className={cx(
-          "flex max-w-[min(70ch,100%)] flex-col gap-2 rounded-md px-3 py-2 text-md",
+          "bubble flex max-w-[min(70ch,100%)] flex-col gap-2 rounded-md px-3 py-2 text-md",
           note
             ? "bg-note-bg text-text shadow-[inset_0_0_0_1px_var(--note-border)]"
             : mine
@@ -98,7 +99,7 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
                 )}
               >
                 <img
-                  src={attachmentUrl(p.id)}
+                  src={p.preview ?? attachmentUrl(p.id)}
                   alt=""
                   loading="lazy"
                   decoding="async"
@@ -115,25 +116,40 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
         )}
         {m.body && <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</p>}
       </div>
-      {mine && !note && m.delivery_status && <Delivery message={m} onRetry={onRetry} retrying={retrying} />}
+      {mine && !note && m.delivery_status && <Delivery message={m} onRetry={onRetry} retrying={retrying} fresh={entering} />}
     </div>
   );
 }
 
-function Delivery({ message: m, onRetry, retrying }: { message: CrmMessage; onRetry: (id: string) => void; retrying: boolean }) {
+function Delivery({
+  message: m,
+  onRetry,
+  retrying,
+  fresh,
+}: {
+  message: CrmMessage;
+  onRetry: (id: string) => void;
+  retrying: boolean;
+  /** Sent while the thread was open: the outcome fades in over «Отправляется…». History does not animate. */
+  fresh: boolean;
+}) {
   if (m.delivery_status === "pending") {
     return <p className="px-1 text-xs text-text-muted">Отправляется…</p>;
   }
   if (m.delivery_status === "sent") {
     return (
-      <p className="flex items-center gap-1 px-1 text-xs text-text-muted">
+      <p className={cx("flex items-center gap-1 px-1 text-xs text-text-muted", fresh && "fade-in")}>
         <Icon name="check" size={12} />
         Отправлено
       </p>
     );
   }
   return (
-    <div role="alert" className="flex items-center gap-2 px-1 text-xs text-danger" title={m.delivery_error ?? undefined}>
+    <div
+      role="alert"
+      className={cx("flex items-center gap-2 px-1 text-xs text-danger", fresh && "fade-in")}
+      title={m.delivery_error ?? undefined}
+    >
       <span>{["Не доставлено.", deliveryErrorText(m.delivery_error)].filter(Boolean).join(" ")}</span>
       <button
         type="button"
