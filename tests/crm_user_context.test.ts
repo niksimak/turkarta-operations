@@ -41,20 +41,48 @@ test("caches within 60 s and refetches after", async () => {
   assert.equal(calls.length, 2);
 });
 
-test("500 and invalid JSON and bad shape return null and are not cached", async () => {
-  clearUserContextCache();
+test("500, invalid JSON and bad shape return null, cached for 30 s only", async () => {
   for (const [status, body] of [[500, {}], [200, "not json"], [200, { found: "yes" }]] as const) {
+    clearUserContextCache();
     const { f, calls } = fakeFetch(status, body);
-    assert.equal(await userContext(tg, { fetch: f, api }), null);
-    assert.equal(await userContext(tg, { fetch: f, api }), null);
+    let t = 1000;
+    const deps = { fetch: f, now: () => t, api };
+    assert.equal(await userContext(tg, deps), null);
+    t += 29_000;
+    assert.equal(await userContext(tg, deps), null);
+    assert.equal(calls.length, 1);
+    t += 2_000;
+    assert.equal(await userContext(tg, deps), null);
     assert.equal(calls.length, 2);
   }
 });
 
-test("fetch rejection returns null", async () => {
+test("a timeout returns null and is not retried on every refetch", async () => {
   clearUserContextCache();
-  const f = (async () => { throw new DOMException("t", "TimeoutError"); }) as unknown as typeof fetch;
-  assert.equal(await userContext(tg, { fetch: f, api }), null);
+  let calls = 0;
+  const f = (async () => { calls++; throw new DOMException("t", "TimeoutError"); }) as unknown as typeof fetch;
+  let t = 1000;
+  const deps = { fetch: f, now: () => t, api };
+  assert.equal(await userContext(tg, deps), null);
+  t += 5_000;
+  assert.equal(await userContext(tg, deps), null);
+  assert.equal(calls, 1);
+  t += 26_000;
+  await userContext(tg, deps);
+  assert.equal(calls, 2);
+});
+
+test("after a failure clears, a good answer is cached for the full 60 s", async () => {
+  clearUserContextCache();
+  let t = 1000;
+  const bad = fakeFetch(500, {});
+  assert.equal(await userContext(tg, { fetch: bad.f, now: () => t, api }), null);
+  t += 31_000;
+  const good = fakeFetch(200, { found: true });
+  assert.equal((await userContext(tg, { fetch: good.f, now: () => t, api }))?.found, true);
+  t += 59_000;
+  await userContext(tg, { fetch: good.f, now: () => t, api });
+  assert.equal(good.calls.length, 1);
 });
 
 test("unconfigured or no identity returns null without fetching", async () => {

@@ -3,6 +3,8 @@ import { turkartaApiAuth } from "../turkarta_api.js";
 
 const TIMEOUT_MS = 3_000;
 const TTL_MS = 60_000;
+// A slow or failing turkarta must not add the full timeout to every thread refetch.
+const FAILURE_TTL_MS = 30_000;
 const MAX_ENTRIES = 500;
 
 const Nullable = <T extends z.ZodTypeAny>(t: T) => t.nullable().optional();
@@ -29,7 +31,14 @@ const UserContextSchema = z.object({
 
 export type UserContext = z.infer<typeof UserContextSchema>;
 
-const cache = new Map<string, { at: number; value: UserContext }>();
+const cache = new Map<string, { at: number; ttl: number; value: UserContext | null }>();
+
+function remember(key: string, at: number, value: UserContext | null): UserContext | null {
+  cache.delete(key);
+  cache.set(key, { at, ttl: value ? TTL_MS : FAILURE_TTL_MS, value });
+  while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
+  return value;
+}
 
 export async function userContext(
   t: { user_tg: number | null; web_user_id: string | null },
@@ -42,7 +51,7 @@ export async function userContext(
   if (!key) return null;
   const now = (deps.now ?? Date.now)();
   const hit = cache.get(key);
-  if (hit && now - hit.at < TTL_MS) return hit.value;
+  if (hit && now - hit.at < hit.ttl) return hit.value;
   const api = deps.api === undefined ? turkartaApiAuth() : deps.api;
   if (!api) return null;
   const doFetch = deps.fetch ?? fetch;
@@ -55,21 +64,18 @@ export async function userContext(
     });
     if (!res.ok) {
       console.warn(`[crm-user-context] failed code=${res.status}`);
-      return null;
+      return remember(key, now, null);
     }
     const parsed = UserContextSchema.safeParse(await res.json());
     if (!parsed.success) {
       console.warn("[crm-user-context] failed code=invalid");
-      return null;
+      return remember(key, now, null);
     }
-    cache.delete(key);
-    cache.set(key, { at: now, value: parsed.data });
-    while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
-    return parsed.data;
+    return remember(key, now, parsed.data);
   } catch (err) {
     const timeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
     console.warn(`[crm-user-context] failed code=${timeout ? "timeout" : "invalid"}`);
-    return null;
+    return remember(key, now, null);
   }
 }
 
