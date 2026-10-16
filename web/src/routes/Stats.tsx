@@ -159,8 +159,9 @@ function TeamTiles({ data }: { data: StatsResponse }) {
           key={tile.label}
           className={cx(
             "flex flex-col gap-1 px-4 py-3",
-            i % 2 === 1 && "border-l border-border",
-            i >= 2 && "max-md:border-t max-md:border-border md:border-l",
+            "border-border",
+            i % 2 === 1 && "border-l",
+            i >= 2 && "max-md:border-t md:border-l",
           )}
         >
           <dt className="text-sm text-text-muted">
@@ -176,16 +177,25 @@ function TeamTiles({ data }: { data: StatsResponse }) {
 type SortKey = keyof Omit<OperatorStats, "operator_id">;
 type ColKind = "text" | "count" | "duration" | "percent";
 
-const COLUMNS: Array<{ key: SortKey; label: string; title?: string; kind: ColKind }> = [
+interface Column {
+  key: SortKey;
+  label: string;
+  /** Two columns under one heading: «Ответ» over «медиана» and «p90». */
+  group?: string;
+  title?: string;
+  kind: ColKind;
+}
+
+const COLUMNS: Column[] = [
   { key: "name", label: "Оператор", kind: "text" },
   { key: "taken", label: "Взял", title: "Взял сам из очереди или перехватил", kind: "count" },
   { key: "auto_assigned", label: "Авто", title: "Назначено автоматически", kind: "count" },
   { key: "resolved", label: "Решил", kind: "count" },
   { key: "replies", label: "Ответов", kind: "count" },
-  { key: "response_median_s", label: "Ответ, медиана", title: "Половина ответов быстрее", kind: "duration" },
-  { key: "response_p90_s", label: "Ответ, p90", title: "9 из 10 ответов быстрее", kind: "duration" },
-  { key: "first_response_median_s", label: "Первый ответ, медиана", kind: "duration" },
-  { key: "first_response_p90_s", label: "Первый ответ, p90", kind: "duration" },
+  { key: "response_median_s", group: "Ответ", label: "медиана", title: "Половина ответов быстрее", kind: "duration" },
+  { key: "response_p90_s", group: "Ответ", label: "p90", title: "9 из 10 ответов быстрее", kind: "duration" },
+  { key: "first_response_median_s", group: "Первый ответ", label: "медиана", title: "Половина первых ответов быстрее", kind: "duration" },
+  { key: "first_response_p90_s", group: "Первый ответ", label: "p90", title: "9 из 10 первых ответов быстрее", kind: "duration" },
   { key: "within_sla_pct", label: "В срок", title: "Доля ответов в пределах SLA", kind: "percent" },
   { key: "reopen_rate_pct", label: "Переоткрыто", title: "Доля решённых, которые клиент открыл снова", kind: "percent" },
 ];
@@ -231,38 +241,23 @@ function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) 
 
   return (
     <div className="overflow-x-auto rounded-md bg-surface shadow-[0_0_0_1px_var(--border)]">
-      <table className="w-full min-w-[64rem] border-collapse text-left">
+      <table className="w-full min-w-[56rem] border-collapse text-left">
         <thead>
-          <tr className="border-b border-border">
-            {COLUMNS.map((c) => {
-              const active = sort.key === c.key;
+          <tr>
+            {COLUMNS.map((c, i) => {
+              if (!c.group) return <SortHeader key={c.key} col={c} sort={sort} onSort={onSort} rowSpan={2} />;
+              if (COLUMNS[i - 1]?.group === c.group) return null;
               return (
-                <th
-                  key={c.key}
-                  scope="col"
-                  aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
-                  className={cx("h-10 px-1 align-bottom font-normal", c.kind !== "text" && "text-right", c.key === "name" && "pl-3")}
-                >
-                  <button
-                    type="button"
-                    title={c.title}
-                    onClick={() => onSort(c.key, c.kind)}
-                    className={cx(
-                      "press hover-surface inline-flex min-h-7 items-center gap-1 rounded-xs px-1.5 py-1 text-xs",
-                      c.kind !== "text" && "flex-row-reverse text-right",
-                      active ? "font-semibold text-text" : "text-text-muted",
-                    )}
-                  >
-                    {c.label}
-                    <Icon
-                      name="chevronDown"
-                      size={12}
-                      className={cx("shrink-0", !active && "invisible", active && sort.dir === "asc" && "rotate-180")}
-                    />
-                  </button>
+                <th key={c.group} scope="colgroup" colSpan={2} className="h-6 px-3 pt-2 text-center align-bottom text-xs font-normal text-text-muted">
+                  {c.group}
                 </th>
               );
             })}
+          </tr>
+          <tr className="border-b border-border">
+            {COLUMNS.filter((c) => c.group).map((c) => (
+              <SortHeader key={c.key} col={c} sort={sort} onSort={onSort} />
+            ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -285,6 +280,52 @@ function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) 
         </tbody>
       </table>
     </div>
+  );
+}
+
+function SortHeader({
+  col,
+  sort,
+  onSort,
+  rowSpan,
+}: {
+  col: Column;
+  sort: Sort;
+  onSort: (key: SortKey, kind: ColKind) => void;
+  rowSpan?: number;
+}) {
+  const active = sort.key === col.key;
+  return (
+    <th
+      scope="col"
+      rowSpan={rowSpan}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+      className={cx(
+        "h-8 px-1 pb-1 align-bottom font-normal",
+        rowSpan !== undefined && "border-b border-border",
+        col.kind !== "text" && "text-right",
+        col.key === "name" && "pl-3",
+      )}
+    >
+      <button
+        type="button"
+        title={col.title}
+        aria-label={col.group ? `${col.group}, ${col.label}` : undefined}
+        onClick={() => onSort(col.key, col.kind)}
+        className={cx(
+          "press hover-surface inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-xs px-1.5 text-xs",
+          col.kind !== "text" && "flex-row-reverse",
+          active ? "font-semibold text-text" : "text-text-muted",
+        )}
+      >
+        {col.label}
+        <Icon
+          name="chevronDown"
+          size={12}
+          className={cx("shrink-0", !active && "invisible", active && sort.dir === "asc" && "rotate-180")}
+        />
+      </button>
+    </th>
   );
 }
 

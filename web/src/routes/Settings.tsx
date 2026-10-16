@@ -237,7 +237,7 @@ function TeamTab({ me }: { me: Operator }) {
           </fieldset>
 
           {canEdit && (dirty || formError) && (
-            <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-3 border-t border-border bg-surface-2 px-4 py-3 lg:-mx-8 lg:px-8">
+            <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-md bg-surface px-4 py-3 shadow-[0_0_0_1px_var(--border),var(--shadow-pop)]">
               {formError ? (
                 <p role="alert" className="flex-1 text-danger">
                   {formError}
@@ -332,7 +332,7 @@ function SettingRow({
           onChange={(e) => onChange(e.target.value)}
           className={cx(
             "w-full resize-y rounded-sm bg-bg px-3 py-2 text-base shadow-[inset_0_0_0_1px_var(--border)] focus-visible:shadow-[inset_0_0_0_1px_var(--border-strong)]",
-            "disabled:cursor-not-allowed disabled:bg-surface-2",
+            "disabled:cursor-not-allowed disabled:resize-none disabled:bg-transparent disabled:shadow-none",
             error && "shadow-[inset_0_0_0_1px_var(--danger)]",
           )}
         />
@@ -365,7 +365,7 @@ function SettingRow({
               onChange={(e) => onChange(e.target.value)}
               className={cx(
                 "num h-8 w-16 rounded-sm bg-bg px-2 text-right text-base shadow-[inset_0_0_0_1px_var(--border)] focus-visible:shadow-[inset_0_0_0_1px_var(--border-strong)]",
-                "disabled:cursor-not-allowed disabled:bg-surface-2",
+                "disabled:cursor-not-allowed disabled:resize-none disabled:bg-transparent disabled:shadow-none",
                 error && "shadow-[inset_0_0_0_1px_var(--danger)]",
               )}
             />
