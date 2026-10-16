@@ -11,17 +11,23 @@ import { config } from "./config.js";
 
 const TIMEOUT_MS = 20_000; // the API runs on a warm starter instance
 
+export function turkartaApiAuth(): { base: string; secret: string } | null {
+  const base = config.TURKARTA_API_URL;
+  const secret = config.TURKARTA_API_SECRET ?? config.APP_WEBHOOK_SECRET ?? config.LEADS_WEBHOOK_SECRET;
+  return base && secret ? { base: base.replace(/\/$/, ""), secret } : null;
+}
+
 export async function notifySupportReply(input: {
   web_user_id: string;
   ticket_id: string;
   message_id: string;
   preview: string;
 }): Promise<void> {
-  const base = config.TURKARTA_API_URL;
-  const secret = config.TURKARTA_API_SECRET ?? config.APP_WEBHOOK_SECRET ?? config.LEADS_WEBHOOK_SECRET;
-  if (!base || !secret) return; // callback not configured — feature dark
+  const auth = turkartaApiAuth();
+  if (!auth) return; // callback not configured — feature dark
+  const { base, secret } = auth;
   try {
-    const res = await fetch(`${base.replace(/\/$/, "")}/webhooks/ops/support-reply`, {
+    const res = await fetch(`${base}/webhooks/ops/support-reply`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-webhook-secret": secret },
       body: JSON.stringify({ ...input, preview: input.preview.slice(0, 500) }),
