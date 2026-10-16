@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { webhookCallback } from "grammy";
 import { z } from "zod";
-import { config } from "./config.js";
+import { config, legacySurface } from "./config.js";
 import { leadsBot, postLead } from "./bots/leads.js";
 import {
   supportBot,
@@ -9,6 +9,7 @@ import {
   createWebTicket,
   createWelcomeTicket,
   pushWebUserMessage,
+  reopenableTicket,
 } from "./bots/support.js";
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
@@ -246,7 +247,8 @@ app.post("/api/support/web/message", async (c) => {
   const parsed = WebMessagePayload.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "bad payload" }, 422);
 
-  const ticket = await db.ticketByWebUser(parsed.data.web_user_id);
+  const ticket = (await db.ticketByWebUser(parsed.data.web_user_id))
+    ?? (await reopenableTicket({ webUserId: parsed.data.web_user_id }));
   if (!ticket) return c.json({ error: "no open ticket" }, 404);
   await pushWebUserMessage(ticket, parsed.data.body);
   return c.json({ ok: true });
@@ -271,7 +273,7 @@ app.post("/api/support/web/photo", async (c) => {
   const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
   if (!photo) return c.json({ error: "unsupported_photo" }, 415);
 
-  let ticket = await db.ticketByWebUser(webUserId);
+  let ticket = (await db.ticketByWebUser(webUserId)) ?? (await reopenableTicket({ webUserId }));
   if (!ticket) {
     const email = typeof form.email === "string" ? form.email.trim() || null : null;
     if (!email) return c.json({ error: "email_required" }, 422);
@@ -285,6 +287,7 @@ app.post("/api/support/web/photo", async (c) => {
     });
   } else {
     await pushWebUserMessage(ticket, body, photo);
+    if (ticket.status === "resolved") ticket = (await db.getTicket(ticket.id)) ?? ticket;
   }
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
 });
@@ -536,7 +539,7 @@ app.post("/bitrix/app/handler", async (c) => {
     console.log("[bitrix-app] ONAPPINSTALL stored");
     // Re-arm the event bindings a reinstall would otherwise drop, leaving
     // outbound working and operator replies silently going nowhere.
-    await openlines.ensureBootstrapped(`${config.PUBLIC_BASE_URL}/bitrix/app/handler`);
+    if (legacySurface()) await openlines.ensureBootstrapped(`${config.PUBLIC_BASE_URL}/bitrix/app/handler`);
     return c.json({ ok: true });
   }
 
@@ -545,6 +548,10 @@ app.post("/bitrix/app/handler", async (c) => {
   // (data[MESSAGES][0][message][text]), so the RAW body is reparsed rather than
   // read through Hono's flat parseBody.
   if (event === "ONIMCONNECTORMESSAGEADD") {
+    if (!legacySurface()) {
+      console.log("[bitrix-ol] ignored surface=crm");
+      return c.json({ ok: true, ignored: "surface=crm" });
+    }
     const data = payload.nested.data as Record<string, unknown> | undefined;
     if (String(data?.CONNECTOR) !== config.BITRIX_CONNECTOR_ID || Number(data?.LINE) !== config.BITRIX_LINE_ID) {
       return c.json({ ok: false, error: "Unexpected connector or line" }, 400);

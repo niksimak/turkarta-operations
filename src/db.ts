@@ -285,6 +285,20 @@ export async function ticketByWebUser(webUserId: string): Promise<Ticket | null>
   return rows[0] ?? null;
 }
 
+/** The user's most recently resolved ticket, if it was resolved within `days`. */
+export async function resolvedTicketWithin(
+  who: { userTg: number } | { webUserId: string },
+  days: number,
+): Promise<Ticket | null> {
+  const owner = "userTg" in who ? sql`user_tg = ${who.userTg}` : sql`web_user_id = ${who.webUserId}`;
+  const rows = await sql<Ticket[]>`
+    select * from support_requests
+     where ${owner} and status = 'resolved'
+       and resolved_at > now() - make_interval(days => ${days})
+     order by resolved_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
 /** Most recent web ticket (any status) — for polling so the user sees closure too. */
 export async function latestTicketByWebUser(webUserId: string): Promise<Ticket | null> {
   const rows = await sql<Ticket[]>`

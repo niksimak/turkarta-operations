@@ -7,6 +7,8 @@ const url = process.env.CRM_TEST_DATABASE_URL;
 test("inbound capture: albums, timers, reopen, idempotent retries, events", { skip: !url }, async (t) => {
   assertScratchDb(url!);
   Object.assign(process.env, {
+    // Reopen is CRM-mode behaviour; bitrix mode is covered in crm_reopen_postgres.test.ts.
+    SUPPORT_SURFACE: "crm",
     LEADS_BOT_TOKEN: "123:test", SUPPORT_BOT_TOKEN: "456:test",
     LEADS_CHAT_ID: "-1001", SUPPORT_CHAT_ID: "-1002",
     DATABASE_URL: url!, PUBLIC_BASE_URL: "https://ops.example",
@@ -135,7 +137,10 @@ test("inbound capture: albums, timers, reopen, idempotent retries, events", { sk
       const [b] = await sql`select status, assigned_operator_id, auto_assigned, queued_at > now() - interval '1 minute' as fresh
         from support_requests where id = ${off.id}`;
       assert.deepEqual({ ...b }, { status: "new", assigned_operator_id: null, auto_assigned: false, fresh: true });
-      assert.equal(await count("select count(*)::int n from crm_ticket_events where ticket_id = $1 and type = 'reopened'", off.id), 1);
+      const offEv = await sql`select type, payload from crm_ticket_events where ticket_id = ${off.id} order by id`;
+      assert.deepEqual(offEv.map((e) => [e.type, e.payload]), [
+        ["reopened", { status: "new" }], ["unassigned", { operator_id: null, operator_name: null }],
+      ]);
     });
 
     await t.test("resolved ticket stays closed when older than reopen_days or the user already has an open ticket", async () => {

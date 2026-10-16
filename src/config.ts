@@ -133,6 +133,9 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 
+/** True while Bitrix Open Lines and the TG forum are the operator surface. Read per call so a test can flip it. */
+export const legacySurface = (): boolean => config.SUPPORT_SURFACE === "bitrix";
+
 // Version-controlled support-only operators are merged with Render's ROSTER.
 const approvedSupportOperators: RosterMember[] = [
   { name: "Turkarta", username: "turkartame", tg_id: 1298059682 },

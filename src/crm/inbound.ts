@@ -1,4 +1,5 @@
 import type { Message as TgMessage } from "grammy/types";
+import { legacySurface } from "../config.js";
 import { sql, type Ticket } from "../db.js";
 import type { ValidPhoto } from "../support_media.js";
 import { activeAlerts, firstLine } from "./alerts.js";
@@ -183,7 +184,9 @@ export async function recordUserMessage(
     }
 
     // A second open ticket for the same user would violate the one-open index.
-    const reopen = row.status === "resolved" && reopen_days > 0 && row.within_reopen === true && !row.other_open;
+    // Bitrix mode keeps the pre-CRM rule: a message on a resolved ticket is only appended.
+    const reopen = !legacySurface() && row.status === "resolved" && reopen_days > 0
+      && row.within_reopen === true && !row.other_open;
     const reopenTo: TicketStatus | null = reopen ? (row.operator_on_shift ? "allocated" : "new") : null;
     const statusSet =
       reopenTo === "new"
@@ -200,6 +203,11 @@ export async function recordUserMessage(
       await tx`
         insert into crm_ticket_events (ticket_id, type, payload)
         values (${row.id}, 'reopened', ${JSON.stringify({ status: reopenTo })}::text::jsonb)`;
+      if (reopenTo === "new" && row.assigned_operator_id !== null) {
+        await tx`
+          insert into crm_ticket_events (ticket_id, type, payload)
+          values (${row.id}, 'unassigned', ${JSON.stringify({ operator_id: null, operator_name: null })}::text::jsonb)`;
+      }
     }
     return {
       kind: "inserted",
