@@ -13,6 +13,7 @@ import { startDeliveryConfirmations } from "./bitrix_delivery.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
+  await db.ensureCrmSchema();
   await db.assertSupportAgentSchema();
   await ensureDeliverySchema();
   if (config.SUPPORT_TOPIC_GREETINGS_ENABLED) await db.sql`select ticket_id from support_topic_greetings limit 0`;

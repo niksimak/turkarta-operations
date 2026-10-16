@@ -293,6 +293,12 @@ function attachmentResponse(
   head = false,
   cacheControl = "private, max-age=300",
 ): Response {
+  if (attachment.content === null || attachment.size_bytes === null) {
+    return new Response(JSON.stringify({ error: "not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
   return new Response(head ? null : attachment.content, {
     headers: {
       "content-type": attachment.media_type,

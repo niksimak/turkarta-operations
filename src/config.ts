@@ -9,6 +9,10 @@ const RosterMember = z.object({
 export type RosterMember = z.infer<typeof RosterMember>;
 
 const Env = z.object({
+  // Operator surface: 'bitrix' = Bitrix Open Lines + TG forum (legacy), 'crm' = /crm only.
+  SUPPORT_SURFACE: z.enum(["bitrix", "crm"]).default("bitrix"),
+  // Shared with turkarta's admin SSO issuer (HMAC-SHA256). Unset = CRM login disabled.
+  CRM_SSO_SECRET: z.string().min(32).optional(),
   SUPPORT_RUNTIME: z.enum(["relay", "sandbox"]).default("relay"),
   LEADS_BOT_TOKEN: z.string().default(""),
   SUPPORT_BOT_TOKEN: z.string().default(""),

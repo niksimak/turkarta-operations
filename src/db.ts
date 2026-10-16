@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { config } from "./config.js";
 
@@ -9,15 +11,22 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
     add column if not exists first_photo_file_id text`;
   await sql`create table if not exists public.support_attachments (
     id uuid primary key default gen_random_uuid(),
-    message_id uuid not null unique references public.support_messages(id) on delete cascade,
+    message_id uuid not null references public.support_messages(id) on delete cascade,
     media_type text not null check (media_type in ('image/jpeg', 'image/png', 'image/webp')),
     filename text not null,
-    size_bytes integer not null check (size_bytes > 0 and size_bytes <= 8388608),
-    content bytea not null,
+    size_bytes integer check (size_bytes > 0 and size_bytes <= 8388608),
+    content bytea,
     created_at timestamptz not null default now()
   )`;
   await sql`create index if not exists support_attachments_message_idx
     on public.support_attachments (message_id)`;
+}
+
+const CRM_MIGRATION = fileURLToPath(new URL("../migrations/0016_support_crm.sql", import.meta.url));
+
+/** Apply the idempotent CRM migration on boot (same file `pnpm migrate` runs). */
+export async function ensureCrmSchema(): Promise<void> {
+  await sql.unsafe(readFileSync(CRM_MIGRATION, "utf8"));
 }
 
 /** Fail before registering webhooks if the required additive migration is missing. */
@@ -332,13 +341,18 @@ export async function addMessage(
             (message_id, media_type, filename, size_bytes, content)
           select id, ${photo.mediaType}, ${photo.filename}, ${photo.content.length}, ${photo.content}
             from new_message
-          on conflict (message_id) do update set message_id = support_attachments.message_id
+          where not exists (select 1 from support_attachments where message_id = new_message.id)
           returning id, media_type, filename
         )
-        select m.*, a.id as attachment_id,
-               a.media_type as attachment_media_type,
-               a.filename as attachment_filename
-          from new_message m cross join new_attachment a`
+        select m.*, coalesce(na.id, ea.id) as attachment_id,
+               coalesce(na.media_type, ea.media_type) as attachment_media_type,
+               coalesce(na.filename, ea.filename) as attachment_filename
+          from new_message m
+          left join new_attachment na on true
+          left join lateral (
+            select id, media_type, filename from support_attachments
+             where message_id = m.id order by position, created_at limit 1
+          ) ea on true`
     : await sql<Message[]>`
         with new_message as (
           insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
@@ -380,8 +394,8 @@ export interface SupportAttachment {
   id: string;
   media_type: string;
   filename: string;
-  size_bytes: number;
-  content: Uint8Array;
+  size_bytes: number | null;
+  content: Uint8Array | null;
 }
 
 export async function supportAttachment(id: string): Promise<SupportAttachment | null> {
