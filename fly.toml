@@ -1,6 +1,9 @@
 # Fly.io config for turkarta-operations (support/leads bots + support CRM).
 # Single machine on purpose: bot webhooks are re-registered on boot, workers run
 # in-process and CRM presence lives in memory. Never scale above 1.
+# First deploy: `fly deploy --ha=false`, then `fly scale count 1`, check `fly machines list`.
+# Rollback: SUPPORT_SURFACE=bitrix here, or this branch on Render. Never the old Render
+# image: migration 0016 breaks its addMessage. Runbook: docs/DEPLOY-STATE.md (Fly.io).
 app = "turkarta-operations"
 primary_region = "ams"
 
@@ -29,4 +32,4 @@ primary_region = "ams"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  memory_mb = 1024

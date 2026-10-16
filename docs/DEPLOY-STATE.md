@@ -190,14 +190,38 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
 - Rule: never scale above 1 machine. Presence is in memory, workers run in-process,
   and bot webhooks must not run twice.
 
-Move sequence (run in `SUPPORT_SURFACE=bitrix` mode so behaviour is unchanged):
-1. `fly deploy` with `PUBLIC_BASE_URL` set to the Fly URL. On boot ops calls `setWebhook`,
-   so both bots switch to Fly.
-2. Suspend the Render service right away. A Render cold start would call `setWebhook`
-   again and take the bots back.
-3. Re-point Turkarta's ops URL to Fly and redeploy it.
-4. Bitrix: update the app handler and event URLs to the Fly host (`event.bind` again).
-5. Smoke test: TG DM to the support bot, web ticket, Bitrix reply round trip.
+Before the first deploy:
+- `DATABASE_URL` must be a direct Neon endpoint. If the host has `-pooler` in it, set the
+  direct URL instead. CRM live updates use LISTEN/NOTIFY, which the pooler drops.
 
-Rollback: resume and restart Render (its boot re-points the bot webhooks), then point
-Turkarta and Bitrix back. Render is deleted after one clean week.
+Move sequence (run in `SUPPORT_SURFACE=bitrix` mode so behaviour is unchanged):
+1. `fly deploy --ha=false` with `PUBLIC_BASE_URL` set to the Fly URL. On boot ops calls
+   `setWebhook`, so both bots switch to Fly. Boot also applies migration 0016.
+2. `fly scale count 1`, then `fly machines list`: exactly one machine, state `started`.
+3. Suspend the Render service right away. A Render cold start would call `setWebhook`
+   again and take the bots back.
+4. Re-point Turkarta's ops URL to Fly and redeploy it.
+5. Bitrix: update the app handler and event URLs to the Fly host (`event.bind` again).
+6. Smoke test: TG DM to the support bot, web ticket, Bitrix reply round trip.
+   The CRM opens read-only in this mode.
+
+Rollback of the move: keep the Fly app in `SUPPORT_SURFACE=bitrix` and fix forward. If Fly
+itself is the problem, deploy THIS branch to Render (`SUPPORT_SURFACE=bitrix`), resume it,
+then point Turkarta and Bitrix back. Never resume the old Render image: migration 0016 drops
+`support_attachments_message_id_key`, and origin/main's `addMessage` needs it.
+Render is deleted after one clean week.
+
+CRM cutover (later, its own step, Fly already live):
+Run the scripts from a local checkout of this branch with the prod env vars passed inline;
+they are not in the image. Both print ids or counts only.
+1. `fly secrets set SUPPORT_SURFACE=crm` (restarts the machine).
+2. `node --import tsx scripts/crm_cutover.ts`, check the counts, then run it with `--apply`.
+3. `node --import tsx scripts/forum_farewell.ts`, check the list, then run it with `--send`.
+4. Smoke: a CRM reply to a test user only, after step 1. Never reply to a real customer
+   as a test.
+
+Rollback of the cutover: `fly secrets set SUPPORT_SURFACE=bitrix` on the same Fly app.
+CRM-era messages are not in Bitrix; they stay readable in the CRM.
+
+Interim state entry, add when each step lands (copy, fill in, keep until the flip):
+`TEMP: YYYY-MM-DD <what is temporary, e.g. Render suspended not deleted / SUPPORT_SURFACE=bitrix on Fly>. Flip when: <condition, e.g. one clean week on Fly / cutover done>. Owner: <name>.`
