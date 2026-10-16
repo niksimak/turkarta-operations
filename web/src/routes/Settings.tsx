@@ -326,6 +326,7 @@ function SettingRow({
           value={text}
           rows={3}
           maxLength={1000}
+          disabled={readOnly}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           onChange={(e) => onChange(e.target.value)}
@@ -356,6 +357,7 @@ function SettingRow({
               type="text"
               inputMode="numeric"
               autoComplete="off"
+              disabled={readOnly}
               value={String(value)}
               placeholder={meta.key === "auto_assign_max_open" ? "нет" : undefined}
               aria-invalid={error ? true : undefined}
