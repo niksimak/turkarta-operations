@@ -6,7 +6,8 @@ import { assignTo, notifyAssigned, overdueCond, ticketItem, ticketWho } from "./
 
 const BATCH = 20;
 const NO_ONE_THROTTLE_MS = 15 * 60_000;
-const STUCK_DELIVERY = "2 minutes";
+// Longer than two 60 s Telegram calls (media group + trailing text).
+const STUCK_DELIVERY = "3 minutes";
 const STUCK_DELIVERY_ERROR = "tg_interrupted: повторите отправку";
 const ASSIGN_LOCK_KEY = 160010;
 // Queue work means a customer is waiting: onboarding welcome tickets stay untouched until the user writes.
@@ -85,9 +86,11 @@ export async function tick(
   if (unassigned && s.tg_ping_no_one_on_shift && alert
       && (lastNoOneAlertAt === null || nowMs - lastNoOneAlertAt >= NO_ONE_THROTTLE_MS)) {
     const [q] = await sql<{ n: number }[]>`select count(*)::int as n from support_requests where status = 'new' and waiting_since is not null`;
-    lastNoOneAlertAt = nowMs;
-    await safeAlert("no_one_on_shift", () => alert.noOneOnShift(q!.n));
-    noOneAlerted = true;
+    // Throttle only a delivered ping, so a Telegram failure retries on the next tick.
+    if (await safeAlert("no_one_on_shift", () => alert.noOneOnShift(q!.n))) {
+      lastNoOneAlertAt = nowMs;
+      noOneAlerted = true;
+    }
   }
 
   // Marked even when the ping is off, so turning it on later does not flush a backlog.
@@ -105,10 +108,12 @@ export async function tick(
     }
   }
 
-  // A reply interrupted mid-send (deploy, crash) would stay "sending" forever.
+  // A reply interrupted mid-send (deploy, crash) would stay "sending" forever. Keyed on the attempt, not
+  // created_at, so a retry of an old message is not failed mid-send; system texts fall back to created_at.
   const stuck = await sql<{ id: string; ticket_id: string }[]>`
     update support_messages set delivery_status = 'failed', delivery_error = ${STUCK_DELIVERY_ERROR}
-     where sender = 'agent' and delivery_status = 'pending' and created_at < ${at} - ${STUCK_DELIVERY}::interval
+     where sender = 'agent' and delivery_status = 'pending'
+       and coalesce(delivery_attempt_at, created_at) < ${at} - ${STUCK_DELIVERY}::interval
     returning id, ticket_id`;
   for (const m of stuck) await publish({ type: "message.created", ticketId: m.ticket_id, messageId: m.id });
 

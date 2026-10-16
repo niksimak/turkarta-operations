@@ -33,7 +33,8 @@ alter table public.support_messages
   add column if not exists response_seconds integer,
   add column if not exists delivery_status text,
   add column if not exists delivery_error text,
-  add column if not exists tg_media_group_id text;
+  add column if not exists tg_media_group_id text,
+  add column if not exists delivery_attempt_at timestamptz;
 do $$ begin
   alter table public.support_messages add constraint support_messages_kind_check
     check (kind in ('text','photo','note','unsupported'));

@@ -4,7 +4,7 @@ import type { ValidPhoto } from "../support_media.js";
 import { activeAlerts, firstLine } from "./alerts.js";
 import { publish } from "./events.js";
 import { getSettings } from "./settings.js";
-import { ticketItem } from "./tickets.js";
+import { ticketItem, ticketWho } from "./tickets.js";
 import type { TicketStatus, UnsupportedType } from "./types.js";
 
 export interface InboundPart {
@@ -96,10 +96,6 @@ type TxOutcome =
   | { kind: "duplicate"; messageId: string }
   | { kind: "appended"; messageId: string }
   | { kind: "inserted"; messageId: string; reopened: boolean; assignee: number | null; who: string; firstOfTicket: boolean };
-
-function displayName(t: { user_name: string | null; user_username: string | null }): string {
-  return t.user_name || (t.user_username ? `@${t.user_username}` : "Клиент");
-}
 
 /** Store a user message with CRM fields, update ticket timers, reopen if needed, publish events. */
 export async function recordUserMessage(
@@ -210,7 +206,7 @@ export async function recordUserMessage(
       messageId: inserted.id,
       reopened: reopenTo !== null,
       assignee: updated!.assigned_operator_id == null ? null : Number(updated!.assigned_operator_id),
-      who: displayName(updated!),
+      who: ticketWho(updated!),
       firstOfTicket: !prior!.any,
     };
   });

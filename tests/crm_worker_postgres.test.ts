@@ -16,6 +16,8 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
   const worker = await import("../dist/crm/worker.js");
   const alertsMod = await import("../dist/crm/alerts.js");
   const inbound = await import("../dist/crm/inbound.js");
+  const reply = await import("../dist/crm/reply.js");
+  const { DEFAULT_PREFS } = await import("../dist/crm/types.js");
   type Item = import("../dist/crm/tickets.js").TicketListItem;
   const sql = await freshCrmDb(url!);
 
@@ -281,15 +283,20 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       await ticket();
       const r = await worker.tick(undefined, { alert: { newTicket: boom, overdue: boom, noOneOnShift: boom } });
       assert.equal(r.overdue, 1);
+      assert.equal(r.noOneAlerted, false, "a failed ping is not counted as sent");
+      const r2 = await worker.tick(undefined, deps);
+      assert.equal(r2.noOneAlerted, true, "and is not throttled: the next tick retries");
+      assert.deepEqual(sent.noOne, [1]);
     });
 
-    await t.test("stuck pending agent deliveries older than 2 minutes become failed", async () => {
+    await t.test("stuck pending agent deliveries: attempt older than 3 minutes becomes failed", async () => {
       await reset();
       const id = await ticket({ status: "allocated", queued_at: null });
-      const [old] = await sql`insert into support_messages (ticket_id, sender, body, delivery_status, created_at)
-        values (${id}, 'agent', 'hi', 'pending', now() - interval '3 minutes') returning id`;
-      const [young] = await sql`insert into support_messages (ticket_id, sender, body, delivery_status, created_at)
-        values (${id}, 'agent', 'hi', 'pending', now() - interval '30 seconds') returning id`;
+      const [old] = await sql`insert into support_messages (ticket_id, sender, body, delivery_status, created_at, delivery_attempt_at)
+        values (${id}, 'agent', 'hi', 'pending', now() - interval '10 minutes', now() - interval '4 minutes') returning id`;
+      // Old message, fresh attempt (a retry in flight): left alone.
+      const [young] = await sql`insert into support_messages (ticket_id, sender, body, delivery_status, created_at, delivery_attempt_at)
+        values (${id}, 'agent', 'hi', 'pending', now() - interval '10 minutes', now() - interval '30 seconds') returning id`;
       const [sentOk] = await sql`insert into support_messages (ticket_id, sender, body, delivery_status, created_at)
         values (${id}, 'agent', 'hi', 'sent', now() - interval '3 minutes') returning id`;
       await worker.tick(undefined, deps);
@@ -299,6 +306,42 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       assert.equal((await m(sentOk!.id)).delivery_status, "sent");
       await settle();
       assert.ok(events.some((e) => e.type === "message.created" && e.ticketId === id && e.messageId === old!.id));
+    });
+
+    await t.test("a retry of an old failed reply is not failed by a tick during the send", async () => {
+      await reset();
+      await operator(7, "Anna");
+      const anna = {
+        id: 7, name: "Anna", email: null, role: "support" as const, is_lead: false, auto_assign_enabled: true, on_shift: true,
+        last_active_at: null, last_assigned_at: null, prefs: DEFAULT_PREFS,
+      };
+      const id = await ticket({ status: "awaiting", assigned_operator_id: 7, queued_at: null, waiting_since: null });
+      const [m] = await sql`insert into support_messages (ticket_id, sender, body, actor_type, kind, delivery_status, delivery_error, created_at)
+        values (${id}, 'agent', 'Ответ', 'human', 'text', 'failed', 'tg_403: x', now() - interval '10 minutes') returning id`;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let entered!: () => void;
+      const inSend = new Promise<void>((r) => { entered = r; });
+      const tg = {
+        async sendMessage() { entered(); await gate; return { message_id: 1 }; },
+        async sendPhoto() { throw new Error("unused"); },
+        async sendMediaGroup() { throw new Error("unused"); },
+      };
+      const retry = reply.retryDelivery(m!.id, anna, { tg: tg as never });
+      await inSend;
+      const [mid] = await sql`select delivery_status, delivery_attempt_at > now() - interval '1 minute' as fresh
+        from support_messages where id = ${m!.id}`;
+      assert.deepEqual({ ...mid }, { delivery_status: "pending", fresh: true }, "retry claim stamps the attempt");
+      await worker.tick(undefined, deps);
+      assert.equal((await sql`select delivery_status from support_messages where id = ${m!.id}`)[0]!.delivery_status, "pending");
+      release();
+      assert.equal((await retry).delivery_status, "sent");
+
+      // A fresh reply is stamped on insert too.
+      const fast = { ...tg, async sendMessage() { return { message_id: 2 }; } };
+      const sentReply = await reply.sendReply(id, anna, { kind: "reply", body: "ещё", photos: [] }, { tg: fast as never });
+      const [s] = await sql`select delivery_attempt_at is not null as stamped from support_messages where id = ${sentReply.id}`;
+      assert.equal(s!.stamped, true);
     });
 
     await t.test("first user message of a ticket: notify new_ticket broadcast + TG alert, once", async () => {

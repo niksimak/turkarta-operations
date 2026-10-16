@@ -195,9 +195,9 @@ export async function sendReply(ticketId: string, me: Operator, input: ReplyInpu
     // Notes are 'system' so the AI review trigger (0012) never queues them.
     const [m] = await tx<{ id: string }[]>`
       insert into support_messages
-        (ticket_id, sender, body, actor_type, author_id, author_name, kind, delivery_status, response_seconds)
+        (ticket_id, sender, body, actor_type, author_id, author_name, kind, delivery_status, delivery_attempt_at, response_seconds)
       select r.id, 'agent', ${body}, ${isReply ? "human" : "system"}, ${`crm:${me.id}`}, ${me.name}, ${kind},
-             ${isReply ? tx`'pending'` : tx`null`},
+             ${isReply ? tx`'pending'` : tx`null`}, ${isReply ? tx`now()` : tx`null`},
              ${isReply ? tx`extract(epoch from now() - r.waiting_since)::int` : tx`null`}
         from support_requests r where r.id = ${t.id}
       returning id`;
@@ -242,7 +242,7 @@ export async function retryDelivery(messageId: string, me: Operator, deps: Reply
 
   // Flip failed -> pending atomically so two clicks cannot send twice.
   const [claimed] = await sql<{ ticket_id: string }[]>`
-    update support_messages set delivery_status = 'pending', delivery_error = null
+    update support_messages set delivery_status = 'pending', delivery_error = null, delivery_attempt_at = now()
      where id = ${messageId} and delivery_status = 'failed'
     returning ticket_id`;
   if (!claimed) return (await crmMessage(messageId))!;

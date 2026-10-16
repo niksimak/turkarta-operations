@@ -55,6 +55,18 @@ test("newTicket falls back to @username and caps the first line at 120 chars", a
   assert.equal(calls[0]!.text, `🆕 Новое обращение · Web · @a&lt;b\n${"x".repeat(120)}\nhttps://ops.example/crm/t/${ID}`);
 });
 
+test("first line is cut by code points, never inside an emoji", async () => {
+  const { api, calls } = fakeApi();
+  await telegramAlerts(api, -1002, "https://ops.example").newTicket(item({ last_message_preview: "😀".repeat(130) }));
+  assert.equal(calls[0]!.text.split("\n")[1], "😀".repeat(120));
+});
+
+test("missing name falls back to the shared «Без имени»", async () => {
+  const { api, calls } = fakeApi();
+  await telegramAlerts(api, -1002, "https://ops.example").overdue(item({ user_name: null, user_username: null }), 6);
+  assert.equal(calls[0]!.text, `⏰ Ждёт ответа 6 мин · Без имени\nhttps://ops.example/crm/t/${ID}`);
+});
+
 test("overdue and nobody-on-shift messages", async () => {
   const { api, calls } = fakeApi();
   const a = telegramAlerts(api, -1002, "https://ops.example");

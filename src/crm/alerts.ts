@@ -1,6 +1,6 @@
 import type { Bot } from "grammy";
 import { escapeHtml } from "../cards.js";
-import type { TicketListItem } from "./tickets.js";
+import { ticketWho, type TicketListItem } from "./tickets.js";
 
 export interface Alerts {
   newTicket(t: TicketListItem): Promise<void>;
@@ -17,12 +17,9 @@ function channelLabel(t: Pick<TicketListItem, "source" | "channel">): string {
   return (t.source ? CHANNEL_LABEL[t.source] : undefined) ?? (t.channel === "web" ? "Web" : "Telegram");
 }
 
-export function displayName(t: Pick<TicketListItem, "user_name" | "user_username">): string {
-  return t.user_name || (t.user_username ? `@${t.user_username}` : "Клиент");
-}
-
 export function firstLine(text: string): string {
-  return (text.split("\n", 1)[0] ?? "").trim().slice(0, FIRST_LINE_MAX);
+  // Code points, so an emoji at the cut is not split into a broken surrogate.
+  return Array.from((text.split("\n", 1)[0] ?? "").trim()).slice(0, FIRST_LINE_MAX).join("");
 }
 
 /** Group pings for CRM mode: plain messages to the support chat, no topic. */
@@ -37,11 +34,11 @@ export function telegramAlerts(api: Bot["api"], chatId: number, baseUrl: string)
   return {
     async newTicket(t) {
       const line = firstLine(t.last_message_preview);
-      const head = `🆕 Новое обращение · ${channelLabel(t)} · ${escapeHtml(displayName(t))}`;
+      const head = `🆕 Новое обращение · ${channelLabel(t)} · ${escapeHtml(ticketWho(t))}`;
       await send([head, ...(line ? [escapeHtml(line)] : []), link(t.id)].join("\n"));
     },
     async overdue(t, minutes) {
-      await send(`⏰ Ждёт ответа ${minutes} мин · ${escapeHtml(displayName(t))}\n${link(t.id)}`);
+      await send(`⏰ Ждёт ответа ${minutes} мин · ${escapeHtml(ticketWho(t))}\n${link(t.id)}`);
     },
     async noOneOnShift(queued) {
       await send(`🚨 Никого нет на смене, в очереди ${queued}\n${base}/crm`);
