@@ -16,6 +16,12 @@ _Last updated: 2026-10-17_
 - Cutover: `crm_cutover --apply` stamped 713 open tickets as overdue-pinged and requeued 8.
   «Автоназначение» and «Просрочка» were off during the flip (crm_settings_log rows with no
   operator), back on after. `forum_farewell --send` posted in 8 open topics.
+- Backlog archive (2026-10-17, after operators saw only old tickets in «Очередь»): the 713
+  pre-cutover open tickets with no customer message since 10:29:42Z were resolved by
+  `archiveBacklog` (scripts/crm_archive_backlog.ts, run from the compiled function on the
+  machine). No resolve message sent. Queue 729 → 16. Each has a `status_changed` event with
+  `payload.reason = 'cutover_backlog'`. Rollback:
+  `update support_requests r set status = e.payload->>'from', resolved_at = null from crm_ticket_events e where e.ticket_id = r.id and e.payload->>'reason' = 'cutover_backlog'`.
 - Turkarta prod: backend v84 `prod-04a55334` with `OPS_SUPPORT_BASE_URL=https://support.turkarta.me`
   and `CRM_SSO_SECRET`. Webapp `prodweb-04a55334` (every photo of a message in the web chat).
 - Rollback: `fly secrets set SUPPORT_SURFACE=bitrix -a turkarta-operations` restores ops'
