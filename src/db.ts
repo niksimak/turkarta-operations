@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { config } from "./config.js";
 
@@ -9,15 +11,26 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
     add column if not exists first_photo_file_id text`;
   await sql`create table if not exists public.support_attachments (
     id uuid primary key default gen_random_uuid(),
-    message_id uuid not null unique references public.support_messages(id) on delete cascade,
+    message_id uuid not null references public.support_messages(id) on delete cascade,
     media_type text not null check (media_type in ('image/jpeg', 'image/png', 'image/webp')),
     filename text not null,
-    size_bytes integer not null check (size_bytes > 0 and size_bytes <= 8388608),
-    content bytea not null,
+    size_bytes integer check (size_bytes > 0 and size_bytes <= 8388608),
+    content bytea,
     created_at timestamptz not null default now()
   )`;
   await sql`create index if not exists support_attachments_message_idx
     on public.support_attachments (message_id)`;
+}
+
+const CRM_MIGRATION = fileURLToPath(new URL("../migrations/0016_support_crm.sql", import.meta.url));
+
+/** Apply the idempotent CRM migration on boot (same file `pnpm migrate` runs). */
+export async function ensureCrmSchema(): Promise<void> {
+  // ALTER TABLE queues behind any open lock; fail boot fast instead of hanging the deploy.
+  await sql.begin(async (tx) => {
+    await tx`set local lock_timeout = '5s'`;
+    await tx.unsafe(readFileSync(CRM_MIGRATION, "utf8"));
+  });
 }
 
 /** Fail before registering webhooks if the required additive migration is missing. */
@@ -154,10 +167,10 @@ export async function openTicket(t: OpenTicketInput): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
       (user_tg, user_username, user_name, source, first_message, email, device, intake_step,
-       first_photo_file_id)
+       first_photo_file_id, queued_at, last_message_at)
     values (${t.user_tg}, ${t.user_username}, ${t.user_name}, ${t.source},
             ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.intake_step ?? null},
-            ${t.first_photo_file_id ?? null})
+            ${t.first_photo_file_id ?? null}, now(), now())
     on conflict (user_tg) where status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
     returning *`;
@@ -257,9 +270,9 @@ export async function openWebTicket(t: {
 }): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
-      (channel, web_user_id, user_name, source, first_message, email, device)
+      (channel, web_user_id, user_name, source, first_message, email, device, queued_at, last_message_at)
     values ('web', ${t.web_user_id}, ${t.user_name}, ${t.source},
-            ${t.request}, ${t.email ?? null}, ${t.device ?? null})
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, now(), now())
     on conflict (web_user_id)
       where web_user_id is not null and status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message
@@ -273,6 +286,20 @@ export async function ticketByWebUser(webUserId: string): Promise<Ticket | null>
     select * from support_requests
      where web_user_id = ${webUserId} and ${OPEN}
      order by created_at desc limit 1`;
+  return rows[0] ?? null;
+}
+
+/** The user's most recently resolved ticket, if it was resolved within `days`. */
+export async function resolvedTicketWithin(
+  who: { userTg: number } | { webUserId: string },
+  days: number,
+): Promise<Ticket | null> {
+  const owner = "userTg" in who ? sql`user_tg = ${who.userTg}` : sql`web_user_id = ${who.webUserId}`;
+  const rows = await sql<Ticket[]>`
+    select * from support_requests
+     where ${owner} and status = 'resolved'
+       and resolved_at > now() - make_interval(days => ${days})
+     order by resolved_at desc limit 1`;
   return rows[0] ?? null;
 }
 
@@ -332,13 +359,18 @@ export async function addMessage(
             (message_id, media_type, filename, size_bytes, content)
           select id, ${photo.mediaType}, ${photo.filename}, ${photo.content.length}, ${photo.content}
             from new_message
-          on conflict (message_id) do update set message_id = support_attachments.message_id
+          where not exists (select 1 from support_attachments where message_id = new_message.id)
           returning id, media_type, filename
         )
-        select m.*, a.id as attachment_id,
-               a.media_type as attachment_media_type,
-               a.filename as attachment_filename
-          from new_message m cross join new_attachment a`
+        select m.*, coalesce(na.id, ea.id) as attachment_id,
+               coalesce(na.media_type, ea.media_type) as attachment_media_type,
+               coalesce(na.filename, ea.filename) as attachment_filename
+          from new_message m
+          left join new_attachment na on true
+          left join lateral (
+            select id, media_type, filename from support_attachments
+             where message_id = m.id order by position, created_at limit 1
+          ) ea on true`
     : await sql<Message[]>`
         with new_message as (
           insert into support_messages (ticket_id, sender, body, actor_type, author_id, source_message_id)
@@ -354,23 +386,33 @@ export async function addMessage(
   return row!;
 }
 
+export interface ThreadMessage {
+  id: string;
+  ticket_id: string;
+  sender: "user" | "agent" | "system";
+  body: string;
+  created_at: string;
+  seq: number;
+  attachments: Array<{ id: string; media_type: string; filename: string }>;
+}
+
 /**
- * Messages for a ticket after the `since` sequence cursor; all if omitted.
- * `seq` is a monotonic integer — an exact, URL-safe cursor (unlike a timestamp,
- * whose '+00' offset gets mangled to a space in query strings). `created_at` is
- * returned as text for display only.
+ * Customer-visible messages for a ticket after the `since` sequence cursor; all if
+ * omitted. Operator notes are excluded. `seq` is a monotonic integer — an exact,
+ * URL-safe cursor (unlike a timestamp, whose '+00' offset gets mangled to a space in
+ * query strings). `created_at` is returned as text for display only.
  */
 export async function messagesSince(
   ticketId: string,
   since?: number | null,
-): Promise<Message[]> {
-  return sql<Message[]>`
+): Promise<ThreadMessage[]> {
+  return sql<ThreadMessage[]>`
     select m.id, m.ticket_id, m.sender, m.body, m.created_at::text as created_at, m.seq,
-           a.id as attachment_id, a.media_type as attachment_media_type,
-           a.filename as attachment_filename
+           coalesce((select json_agg(json_build_object('id', a.id, 'media_type', a.media_type, 'filename', a.filename)
+                              order by a.position, a.created_at)
+                       from support_attachments a where a.message_id = m.id), '[]'::json) as attachments
       from support_messages m
-      left join support_attachments a on a.message_id = m.id
-     where m.ticket_id = ${ticketId}
+     where m.ticket_id = ${ticketId} and m.kind <> 'note'
        ${since != null ? sql`and m.seq > ${since}` : sql``}
      order by m.seq asc
      limit 200`;
@@ -380,8 +422,8 @@ export interface SupportAttachment {
   id: string;
   media_type: string;
   filename: string;
-  size_bytes: number;
-  content: Uint8Array;
+  size_bytes: number | null;
+  content: Uint8Array | null;
 }
 
 export async function supportAttachment(id: string): Promise<SupportAttachment | null> {
@@ -400,7 +442,7 @@ export async function supportAttachmentForWebUser(
       from support_attachments a
       join support_messages m on m.id = a.message_id
       join support_requests r on r.id = m.ticket_id
-     where a.id = ${id} and r.web_user_id = ${webUserId}`;
+     where a.id = ${id} and r.web_user_id = ${webUserId} and m.kind <> 'note'`;
   return rows[0] ?? null;
 }
 
@@ -472,12 +514,30 @@ export async function addAgentMessageFromBitrix(
   bitrixMessageId: string,
 ): Promise<Message | null> {
   const rows = await sql<Message[]>`
-    insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
-    values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
-    on conflict (bitrix_message_id) where bitrix_message_id is not null
-      do nothing
-    returning *`;
+    with m as (
+      insert into support_messages (ticket_id, sender, body, bitrix_message_id, actor_type)
+      values (${ticketId}, 'agent', ${body}, ${bitrixMessageId}, 'unknown')
+      on conflict (bitrix_message_id) where bitrix_message_id is not null
+        do nothing
+      returning *
+    ), stamp as (
+      update support_requests
+         set waiting_since = null, first_response_at = coalesce(first_response_at, now())
+       where id = ${ticketId} and exists (select 1 from m)
+    )
+    select * from m`;
   return rows[0] ?? null;
+}
+
+/**
+ * An operator answered outside the CRM (Bitrix or the forum topic): stop the CRM
+ * SLA clock so cutover does not inherit tickets that look overdue.
+ */
+export async function markAgentReplied(ticketId: string): Promise<void> {
+  await sql`
+    update support_requests
+       set waiting_since = null, first_response_at = coalesce(first_response_at, now())
+     where id = ${ticketId}`;
 }
 
 export async function markBitrixConnectorRegistered(memberId: string): Promise<void> {

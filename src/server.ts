@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { webhookCallback } from "grammy";
 import { z } from "zod";
-import { config } from "./config.js";
+import { config, legacySurface } from "./config.js";
 import { leadsBot, postLead } from "./bots/leads.js";
 import {
   supportBot,
@@ -9,6 +9,7 @@ import {
   createWebTicket,
   createWelcomeTicket,
   pushWebUserMessage,
+  reopenableTicket,
 } from "./bots/support.js";
 import * as db from "./db.js";
 import * as bitrixApp from "./bitrix_app.js";
@@ -17,6 +18,7 @@ import { deliverOperatorReply } from "./bitrix_reply.js";
 import { flushDeliveryConfirmations } from "./bitrix_delivery.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
 import { createAgentRoutes } from "./agents/routes.js";
+import { crmRoutes } from "./crm/routes.js";
 import { readiness } from "./agents/readiness.js";
 import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
@@ -28,11 +30,13 @@ import {
 
 export const app = new Hono();
 app.route("/api/internal/support-ai", createAgentRoutes(agentStore, config.SUPPORT_AI_ADMIN_SECRET, operationsStore, config.SUPPORT_AI_MODE, () => readiness(config)));
+app.route("/crm", crmRoutes());
 
 const TG_LEADS_PATH = `/tg/leads/${config.TELEGRAM_WEBHOOK_SECRET}`;
 const TG_SUPPORT_PATH = `/tg/support/${config.TELEGRAM_WEBHOOK_SECRET}`;
 
 app.get("/health", (c) => c.json({ status: "ok" }));
+app.get("/", (c) => c.redirect("/crm"));
 
 // Bitrix requires an externally reachable file URL. This proxy keeps the
 // Telegram bot token out of that URL and rejects expired or modified links.
@@ -166,21 +170,20 @@ function appAuthed(c: Context): boolean {
   return c.req.header("x-webhook-secret") === expected;
 }
 
-const serializeMessages = (msgs: db.Message[]) =>
-  msgs.map((m) => ({
-    id: m.id,
-    seq: m.seq,
-    sender: m.sender,
-    body: m.body,
-    at: m.created_at,
-    attachment: m.attachment_id
-      ? {
-          id: m.attachment_id,
-          mediaType: m.attachment_media_type,
-          filename: m.attachment_filename,
-        }
-      : null,
-  }));
+// `attachment` (first item) stays until the web chat reads `attachments`.
+const serializeMessages = (msgs: db.ThreadMessage[]) =>
+  msgs.map((m) => {
+    const attachments = m.attachments.map((a) => ({ id: a.id, mediaType: a.media_type, filename: a.filename }));
+    return {
+      id: m.id,
+      seq: m.seq,
+      sender: m.sender,
+      body: m.body,
+      at: m.created_at,
+      attachments,
+      attachment: attachments[0] ?? null,
+    };
+  });
 
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
@@ -245,7 +248,8 @@ app.post("/api/support/web/message", async (c) => {
   const parsed = WebMessagePayload.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "bad payload" }, 422);
 
-  const ticket = await db.ticketByWebUser(parsed.data.web_user_id);
+  const ticket = (await db.ticketByWebUser(parsed.data.web_user_id))
+    ?? (await reopenableTicket({ webUserId: parsed.data.web_user_id }));
   if (!ticket) return c.json({ error: "no open ticket" }, 404);
   await pushWebUserMessage(ticket, parsed.data.body);
   return c.json({ ok: true });
@@ -270,7 +274,7 @@ app.post("/api/support/web/photo", async (c) => {
   const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
   if (!photo) return c.json({ error: "unsupported_photo" }, 415);
 
-  let ticket = await db.ticketByWebUser(webUserId);
+  let ticket = (await db.ticketByWebUser(webUserId)) ?? (await reopenableTicket({ webUserId }));
   if (!ticket) {
     const email = typeof form.email === "string" ? form.email.trim() || null : null;
     if (!email) return c.json({ error: "email_required" }, 422);
@@ -283,7 +287,8 @@ app.post("/api/support/web/photo", async (c) => {
       photo,
     });
   } else {
-    await pushWebUserMessage(ticket, body, photo);
+    const took = await pushWebUserMessage(ticket, body, photo);
+    if (ticket.status === "resolved") ticket = (await db.getTicket(took.id)) ?? took;
   }
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
 });
@@ -293,6 +298,12 @@ function attachmentResponse(
   head = false,
   cacheControl = "private, max-age=300",
 ): Response {
+  if (attachment.content === null || attachment.size_bytes === null) {
+    return new Response(JSON.stringify({ error: "not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
   return new Response(head ? null : attachment.content, {
     headers: {
       "content-type": attachment.media_type,
@@ -529,7 +540,7 @@ app.post("/bitrix/app/handler", async (c) => {
     console.log("[bitrix-app] ONAPPINSTALL stored");
     // Re-arm the event bindings a reinstall would otherwise drop, leaving
     // outbound working and operator replies silently going nowhere.
-    await openlines.ensureBootstrapped(`${config.PUBLIC_BASE_URL}/bitrix/app/handler`);
+    if (legacySurface()) await openlines.ensureBootstrapped(`${config.PUBLIC_BASE_URL}/bitrix/app/handler`);
     return c.json({ ok: true });
   }
 
@@ -538,6 +549,10 @@ app.post("/bitrix/app/handler", async (c) => {
   // (data[MESSAGES][0][message][text]), so the RAW body is reparsed rather than
   // read through Hono's flat parseBody.
   if (event === "ONIMCONNECTORMESSAGEADD") {
+    if (!legacySurface()) {
+      console.log("[bitrix-ol] ignored surface=crm");
+      return c.json({ ok: true, ignored: "surface=crm" });
+    }
     const data = payload.nested.data as Record<string, unknown> | undefined;
     if (String(data?.CONNECTOR) !== config.BITRIX_CONNECTOR_ID || Number(data?.LINE) !== config.BITRIX_LINE_ID) {
       return c.json({ ok: false, error: "Unexpected connector or line" }, 400);

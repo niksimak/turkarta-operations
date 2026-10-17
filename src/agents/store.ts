@@ -29,7 +29,7 @@ export class AgentStore {
     const rows = await this.sql<Array<TranscriptMessage & { full_length: number }>>`
       select id::text, actor_type as actor, author_id, left(body,12000) as body,
         created_at::text as at, length(body) as full_length
-      from support_messages where ticket_id=${job.ticket_id} and seq<=${job.through_seq}
+      from support_messages where ticket_id=${job.ticket_id} and seq<=${job.through_seq} and kind <> 'note'
       order by seq desc limit 81`;
     const selected: TranscriptMessage[] = [];
     let chars = 0;
@@ -47,7 +47,7 @@ export class AgentStore {
     // Lease fencing prevents a worker returning after timeout from overwriting a new result.
     await this.sql`update support_agent_jobs set
       status=case when exists(select 1 from support_messages
-        where ticket_id=${job.ticket_id} and seq>${job.through_seq} and actor_type <> 'automation') then 'superseded' else 'completed' end,
+        where ticket_id=${job.ticket_id} and seq>${job.through_seq} and actor_type <> 'automation' and kind <> 'note') then 'superseded' else 'completed' end,
       result=${this.sql.json(result as postgres.JSONValue)}, finished_at=now(), lease_until=null
       where id=${job.id} and status='running' and lease_token=${job.lease_token}`;
   }
@@ -85,7 +85,7 @@ export class AgentStore {
 
   async results(ticketId: string) {
     return this.sql`select id,kind,through_seq,status,result,error_code,feedback,created_at,finished_at,
-      exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation') as stale
+      exists(select 1 from support_messages m where m.ticket_id=j.ticket_id and m.seq>j.through_seq and m.actor_type <> 'automation' and m.kind <> 'note') as stale
       from support_agent_jobs j where ticket_id=${ticketId} order by created_at desc limit 30`;
   }
 

@@ -1,0 +1,364 @@
+import assert from "node:assert/strict";
+import { mock, test } from "node:test";
+import type { OpenTicketInput, Ticket } from "../src/db.js";
+
+// SUPPORT_SURFACE=crm: Bitrix and the TG forum go quiet. Real compiled bot and
+// router; database, Bitrix and Telegram are replaced. Never load .env.
+Object.assign(process.env, {
+  SUPPORT_SURFACE: "crm",
+  LEADS_BOT_TOKEN: "123:test", SUPPORT_BOT_TOKEN: "456:test",
+  LEADS_CHAT_ID: "-1001", SUPPORT_CHAT_ID: "-1002",
+  DATABASE_URL: "postgres://test:test@127.0.0.1:1/not-used",
+  PUBLIC_BASE_URL: "https://ops.example",
+  LEADS_WEBHOOK_SECRET: "test-secret", TELEGRAM_WEBHOOK_SECRET: "test-secret",
+  BITRIX_CONNECTOR_ID: "turkarta_support", BITRIX_LINE_ID: "5",
+  ROSTER: "[]",
+});
+const SUPPORT_CHAT = -1002;
+
+const tickets = new Map<string, Ticket>();
+const dbCalls: string[] = [];
+const bitrix: string[] = [];
+const sent: Array<{ method: string; payload: Record<string, unknown> }> = [];
+const recorded: Array<{ ticket: string; body: string }> = [];
+const published: Array<{ type: string; ticketId?: string }> = [];
+let reopenable: Ticket | null = null;
+// Simulates losing the one-open-ticket race: recording on this ticket fails with 23505
+// after `raceWinner` has become the user's open ticket.
+let raceOn: string | null = null;
+let raceWinner: Ticket | null = null;
+let reopenLookups: Array<{ who: unknown; days: number }> = [];
+
+function fixture(fields: Partial<Ticket>): Ticket {
+  return {
+    id: "ticket-x", channel: "telegram", user_tg: null,
+    web_user_id: null, user_username: null, user_name: "Test",
+    source: "bot", first_message: "help", first_photo_file_id: null,
+    email: null, device: null, category: null, intake_step: null,
+    status: "new", claimed_by: null, claimed_by_tg: null,
+    tg_chat_id: null, tg_message_id: null, thread_id: null, ...fields,
+  };
+}
+const openOf = (pred: (t: Ticket) => boolean) =>
+  [...tickets.values()].find(t => t.status !== "resolved" && pred(t)) ?? null;
+const track = <A extends unknown[], R>(name: string, fn: (...a: A) => R) => (...a: A): R => {
+  dbCalls.push(name);
+  return fn(...a);
+};
+
+const sql = (strings: TemplateStringsArray) => {
+  // getSettings reads crm_settings; empty rows = defaults (reopen_days 7).
+  if (strings.join("?").includes("crm_settings")) return Promise.resolve([]);
+  throw new Error("Unexpected database call in surface test");
+};
+
+mock.module("../dist/db.js", { namedExports: {
+  sql,
+  ticketByUser: track("ticketByUser", async (id: number) => openOf(t => t.user_tg === id)),
+  ticketByWebUser: track("ticketByWebUser", async (id: string) => openOf(t => t.web_user_id === id)),
+  resolvedTicketWithin: track("resolvedTicketWithin", async (who: unknown, days: number) => {
+    reopenLookups.push({ who, days });
+    return reopenable;
+  }),
+  openTicket: track("openTicket", async (input: OpenTicketInput) => {
+    const existing = openOf(t => t.user_tg === input.user_tg);
+    if (existing) return existing;
+    const row = fixture({ id: `tg-${input.user_tg}`, user_tg: input.user_tg, first_message: input.request,
+      intake_step: input.intake_step ?? null, first_photo_file_id: input.first_photo_file_id ?? null,
+      source: input.source });
+    tickets.set(row.id, row);
+    return row;
+  }),
+  openWebTicket: track("openWebTicket", async (input: { web_user_id: string; request: string; source: string }) => {
+    const existing = openOf(t => t.web_user_id === input.web_user_id);
+    if (existing) return existing;
+    const row = fixture({ id: `web-${input.web_user_id}`, channel: "web", web_user_id: input.web_user_id,
+      first_message: input.request, source: input.source });
+    tickets.set(row.id, row);
+    return row;
+  }),
+  finishIntake: track("finishIntake", async (id: string, email: string | null) => {
+    const row = tickets.get(id);
+    if (!row || row.intake_step !== "email") return null;
+    row.email = email;
+    row.intake_step = null;
+    return row;
+  }),
+  getTicket: track("getTicket", async (id: string) => tickets.get(id) ?? null),
+  setCard: track("setCard", async () => {}),
+  ticketByThread: track("ticketByThread", async (thread: number) =>
+    openOf(t => t.thread_id === thread)),
+  markAgentReplied: track("markAgentReplied", async () => {}),
+  ticketByCardMessage: track("ticketByCardMessage", async () => null),
+  claim: track("claim", async () => null),
+  addMessage: track("addMessage", async () => ({ id: "stored-message" })),
+  getBitrixTokens: async () => null,
+} });
+mock.module("../dist/crm/inbound.js", { namedExports: {
+  classifyTelegram: (m: { text?: string; caption?: string }) => ({ kind: "text", body: m.text ?? m.caption ?? "" }),
+  recordUserMessage: async (ticket: Ticket, part: { body: string }) => {
+    if (raceOn === ticket.id) {
+      raceOn = null;
+      tickets.set(raceWinner!.id, raceWinner!);
+      throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+    }
+    recorded.push({ ticket: ticket.id, body: part.body });
+    return { messageId: "stored-message", appendedToAlbum: false, reopened: false, attachment: null };
+  },
+} });
+mock.module("../dist/crm/events.js", { namedExports: {
+  publish: async (event: { type: string; ticketId?: string }) => { published.push(event); },
+  // The CRM router imports these; unused here.
+  subscribe: () => () => {},
+  presence: { set: () => {}, clear: () => {}, list: () => [] },
+} });
+mock.module("../dist/bitrix_openlines.js", { namedExports: {
+  sendUserMessage: async () => { bitrix.push("sendUserMessage"); },
+  ensureBootstrapped: async () => { bitrix.push("ensureBootstrapped"); },
+  ticketIdFromChatId: () => { bitrix.push("ticketIdFromChatId"); return "ticket-x"; },
+  chatIdForTicket: (id: string) => `tk-${id}`,
+} });
+mock.module("../dist/bitrix_app.js", { namedExports: {
+  BitrixAppError: class extends Error {},
+  enabled: () => true,
+  saveInstall: async () => { bitrix.push("saveInstall"); },
+  call: async (method: string) => { bitrix.push(`call:${method}`); return {}; },
+} });
+
+const { supportBot } = await import("../dist/bots/support.js");
+supportBot.api.config.use(async (_prev, method, payload) => {
+  sent.push({ method, payload: payload as Record<string, unknown> });
+  if (method === "getMe") return { ok: true, result: {
+    id: 456, is_bot: true, first_name: "Test", username: "test_support_bot",
+    can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false,
+  } };
+  return { ok: true, result: { message_id: sent.length, date: 1,
+    chat: { id: SUPPORT_CHAT, type: "supergroup" }, text: "test" } };
+});
+await supportBot.init();
+const { app } = await import("../dist/server.js");
+const { config } = await import("../dist/config.js");
+
+let sequence = 0;
+function dm(user: number, content: object) {
+  const id = ++sequence;
+  return supportBot.handleUpdate({ update_id: id, message: {
+    message_id: id, date: 1,
+    chat: { id: user, type: "private", first_name: "Test" },
+    from: { id: user, is_bot: false, first_name: "Test" }, ...content,
+  } });
+}
+const photo = (id: string) => ({ photo: [{ file_id: id, file_unique_id: id, width: 9, height: 9 }] });
+function reset() {
+  tickets.clear(); dbCalls.length = 0; bitrix.length = 0; sent.length = 0; recorded.length = 0;
+  published.length = 0; reopenable = null; reopenLookups = []; raceOn = null; raceWinner = null;
+  config.SUPPORT_SURFACE = "crm";
+}
+const toGroup = () => sent.filter(m => m.payload.chat_id === SUPPORT_CHAT);
+const toUser = (user: number) => sent.filter(m => m.payload.chat_id === user).map(m => String(m.payload.text));
+const authed = { "x-webhook-secret": "test-secret", "content-type": "application/json" };
+const post = (path: string, body: unknown) =>
+  app.request(path, { method: "POST", headers: authed, body: JSON.stringify(body) });
+
+test("crm: DM intake keeps its replies, records every message, never touches Bitrix or the support group", async () => {
+  reset();
+  await dm(1, photo("p1"));
+  await dm(1, { text: "me@example.com" });
+  const ticket = tickets.get("tg-1")!;
+  assert.equal(ticket.email, "me@example.com");
+  // Taken in the CRM: a thread id left over from the forum era must not relay.
+  Object.assign(ticket, { status: "allocated", thread_id: 77 });
+  await dm(1, { text: "ещё вопрос" });
+  await dm(1, photo("p2"));
+
+  assert.deepEqual(toUser(1), ["📧 Оставьте email для связи (или отправьте /skip).", "Принято! Подключаем оператора…"]);
+  assert.deepEqual(recorded.map(r => r.ticket), ["tg-1", "tg-1", "tg-1"]);
+  assert.deepEqual(toGroup(), []);
+  assert.equal(sent.filter(m => m.method === "copyMessage" || m.method === "sendPhoto").length, 0);
+  assert.deepEqual(bitrix, []);
+  assert.equal(dbCalls.includes("setCard"), false);
+  // Only first contact looks for a reopenable ticket; later messages have an open one.
+  assert.deepEqual(reopenLookups, [{ who: { userTg: 1 }, days: 7 }]);
+});
+
+test("crm: operator message in the support group passes through without relay", async () => {
+  reset();
+  await supportBot.handleUpdate({ update_id: ++sequence, message: {
+    message_id: 900, date: 1, message_thread_id: 77,
+    chat: { id: SUPPORT_CHAT, type: "supergroup", title: "Support", is_forum: true },
+    from: { id: 5, is_bot: false, first_name: "Op" }, text: "ответ",
+  } });
+  assert.deepEqual(dbCalls, []);
+  assert.deepEqual(sent, []);
+});
+
+test("crm: forum card buttons answer without claiming, closing or messaging", async () => {
+  reset();
+  tickets.set("ticket-x", fixture({ status: "allocated", user_tg: 9, thread_id: 77 }));
+  for (const data of ["claim:support_requests:ticket-x", "resolve_do:ticket-x", "await:ticket-x", "cat:ticket-x:bug_report"]) {
+    await supportBot.handleUpdate({ update_id: ++sequence, callback_query: {
+      id: `cb-${sequence}`, chat_instance: "ci", data,
+      // The version-controlled support operator, so the roster guard passes.
+      from: { id: 1298059682, is_bot: false, first_name: "Op" },
+      message: { message_id: 3, date: 1, chat: { id: SUPPORT_CHAT, type: "supergroup", title: "Support" }, text: "card" },
+    } });
+  }
+  assert.deepEqual(sent.map(m => m.method), Array(4).fill("answerCallbackQuery"));
+  assert.deepEqual(dbCalls, []);
+  for (const m of sent) assert.equal(m.payload.text, "Поддержка переехала в CRM. Откройте обращение там.");
+});
+
+test("crm: no open ticket but a recently resolved one: the message goes there, no intake", async () => {
+  reset();
+  const prior = fixture({ id: "resolved-1", user_tg: 2, status: "resolved" });
+  tickets.set(prior.id, prior);
+  reopenable = prior;
+  await dm(2, { text: "снова я" });
+  assert.deepEqual(reopenLookups, [{ who: { userTg: 2 }, days: 7 }]);
+  assert.deepEqual(recorded, [{ ticket: "resolved-1", body: "снова я" }]);
+  assert.equal(dbCalls.includes("openTicket"), false);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(published, []);
+  assert.deepEqual(bitrix, []);
+});
+
+test("crm: no reopenable ticket opens a new one with the usual intake", async () => {
+  reset();
+  await dm(3, { text: "помогите" });
+  assert.deepEqual(reopenLookups, [{ who: { userTg: 3 }, days: 7 }]);
+  assert.ok(tickets.has("tg-3"));
+  assert.deepEqual(toUser(3), ["📧 Оставьте email для связи (или отправьте /skip).",]);
+  assert.deepEqual(published, [{ type: "ticket.created", ticketId: "tg-3" }]);
+});
+
+test("crm: Bitrix connector events are ignored and logged; install skips the bootstrap", async () => {
+  reset();
+  const logs: string[] = [];
+  const log = mock.method(console, "log", (...a: unknown[]) => { logs.push(a.join(" ")); });
+  try {
+    const event = new URLSearchParams({
+      event: "ONIMCONNECTORMESSAGEADD",
+      "data[CONNECTOR]": "turkarta_support", "data[LINE]": "5",
+      "data[MESSAGES][0][im][chat_id]": "99", "data[MESSAGES][0][im][message_id]": "101",
+      "data[MESSAGES][0][chat][id]": "tk-ticket-x", "data[MESSAGES][0][message][text]": "Test reply",
+    });
+    const res = await app.request("/bitrix/app/handler", { method: "POST", body: event });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, ignored: "surface=crm" });
+    assert.ok(logs.includes("[bitrix-ol] ignored surface=crm"));
+
+    const install = new URLSearchParams({
+      event: "ONAPPINSTALL", "auth[access_token]": "a", "auth[refresh_token]": "r",
+      "auth[member_id]": "m", "auth[domain]": "b24.example",
+    });
+    assert.equal((await app.request("/bitrix/app/handler", { method: "POST", body: install })).status, 200);
+  } finally {
+    log.mock.restore();
+  }
+  assert.deepEqual(bitrix, ["saveInstall"]);
+  assert.deepEqual(sent, []);
+});
+
+test("crm: web and Mini App tickets get no card and no Bitrix mirror", async () => {
+  reset();
+  assert.equal((await post("/api/support/web/open", { web_user_id: "u1", request: "не работает" })).status, 200);
+  // Re-submit of the same open ticket is not a second new ticket.
+  assert.equal((await post("/api/support/web/open", { web_user_id: "u1", request: "не работает" })).status, 200);
+  tickets.get("web-u1")!.thread_id = 77;
+  assert.equal((await post("/api/support/web/message", { web_user_id: "u1", body: "ау" })).status, 200);
+  assert.equal((await post("/webhooks/support", { tg: 4, request: "из мини-аппа" })).status, 200);
+  assert.equal((await post("/webhooks/support", { tg: 4, request: "из мини-аппа" })).status, 200);
+
+  assert.deepEqual(recorded.map(r => r.ticket), ["web-u1", "web-u1", "tg-4", "tg-4"]);
+  assert.deepEqual(published, [
+    { type: "ticket.created", ticketId: "web-u1" },
+    { type: "ticket.created", ticketId: "tg-4" },
+  ]);
+  assert.deepEqual(toGroup(), []);
+  assert.deepEqual(bitrix, []);
+  assert.equal(dbCalls.includes("setCard"), false);
+});
+
+test("crm: web user with no open ticket writes into a recently resolved one", async () => {
+  reset();
+  const prior = fixture({ id: "resolved-web", channel: "web", web_user_id: "u2", status: "resolved" });
+  tickets.set(prior.id, prior);
+  reopenable = prior;
+  const res = await post("/api/support/web/message", { web_user_id: "u2", body: "опять" });
+  assert.equal(res.status, 200);
+  const open = await post("/api/support/web/open", { web_user_id: "u2", request: "и ещё" });
+  assert.equal((await open.json()).ticketId, "resolved-web");
+  assert.deepEqual(recorded, [{ ticket: "resolved-web", body: "опять" }, { ticket: "resolved-web", body: "и ещё" }]);
+  assert.equal(dbCalls.includes("openWebTicket"), false);
+  assert.deepEqual(reopenLookups.map(l => l.who), [{ webUserId: "u2" }, { webUserId: "u2" }]);
+  assert.deepEqual(published, []);
+  assert.deepEqual(toGroup(), []);
+  assert.deepEqual(bitrix, []);
+});
+
+test("bitrix (same process, switched back): cards, photo copy and Bitrix mirror resume", async () => {
+  reset();
+  config.SUPPORT_SURFACE = "bitrix";
+  try {
+    await dm(6, photo("p6"));
+    await dm(6, { text: "/skip" });
+    await new Promise(r => setImmediate(r));
+    assert.equal(toGroup().filter(m => m.method === "sendMessage").length, 1); // ticket card
+    assert.equal(toGroup().filter(m => m.method === "sendPhoto").length, 1);
+    assert.ok(bitrix.includes("sendUserMessage"));
+    assert.deepEqual(reopenLookups, []);
+    assert.equal(dbCalls.includes("resolvedTicketWithin"), false);
+  } finally {
+    config.SUPPORT_SURFACE = "crm";
+  }
+});
+
+test("bitrix: an operator reply in the forum topic is relayed and stops the CRM clock", async () => {
+  reset();
+  config.SUPPORT_SURFACE = "bitrix";
+  try {
+    tickets.set("topic-8", fixture({ id: "topic-8", user_tg: 8, status: "allocated", thread_id: 77 }));
+    await supportBot.handleUpdate({ update_id: ++sequence, message: {
+      message_id: sequence, date: 1, message_thread_id: 77, is_topic_message: true,
+      chat: { id: SUPPORT_CHAT, type: "supergroup", title: "Support", is_forum: true },
+      from: { id: 900, is_bot: false, first_name: "Oleg" }, text: "Проверяю",
+    } });
+    const relay = dbCalls.filter(c => c === "addMessage" || c === "markAgentReplied");
+    assert.deepEqual(relay, ["addMessage", "markAgentReplied"]);
+    assert.equal(toUser(8).length, 1);
+  } finally {
+    config.SUPPORT_SURFACE = "crm";
+  }
+});
+
+test("crm: welcome is not injected into an open ticket; a fresh welcome ticket is published", async () => {
+  reset();
+  tickets.set("web-u5", fixture({ id: "web-u5", channel: "web", web_user_id: "u5", status: "allocated" }));
+  assert.equal((await post("/api/support/web/welcome", { web_user_id: "u5" })).status, 200);
+  assert.equal(dbCalls.includes("addMessage"), false);
+  assert.deepEqual(published, []);
+
+  assert.equal((await post("/api/support/web/welcome", { web_user_id: "u6" })).status, 200);
+  assert.equal(dbCalls.filter(c => c === "addMessage").length, 1);
+  assert.deepEqual(published, [{ type: "ticket.created", ticketId: "web-u6" }]);
+  assert.deepEqual(toGroup(), []);
+});
+
+test("crm: losing the one-open race on reopen keeps the message on the winning ticket", async () => {
+  reset();
+  const prior = fixture({ id: "resolved-7", user_tg: 7, status: "resolved" });
+  tickets.set(prior.id, prior);
+  reopenable = prior;
+  raceOn = prior.id;
+  raceWinner = fixture({ id: "open-7", user_tg: 7, status: "new" });
+  await dm(7, { text: "я тут" });
+  assert.deepEqual(recorded, [{ ticket: "open-7", body: "я тут" }]);
+
+  const webPrior = fixture({ id: "resolved-w7", channel: "web", web_user_id: "w7", status: "resolved" });
+  tickets.set(webPrior.id, webPrior);
+  reopenable = webPrior;
+  raceOn = webPrior.id;
+  raceWinner = fixture({ id: "open-w7", channel: "web", web_user_id: "w7", status: "new" });
+  assert.equal((await post("/api/support/web/message", { web_user_id: "w7", body: "и я" })).status, 200);
+  assert.deepEqual(recorded.at(-1), { ticket: "open-w7", body: "и я" });
+});

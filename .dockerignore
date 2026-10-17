@@ -1,0 +1,6 @@
+# Keep host installs and build output out of the image context: web/node_modules
+# holds symlinks into the host pnpm store that break inside the container.
+**/node_modules
+dist
+.git
+.superpowers

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { Bot, type Context } from "grammy";
-import { config, supportMemberFor, supportRosterIds } from "../config.js";
+import { config, legacySurface, supportMemberFor, supportRosterIds } from "../config.js";
 import * as cards from "../cards.js";
 import { escapeHtml } from "../cards.js";
 import * as db from "../db.js";
@@ -11,6 +12,9 @@ import { operationsOptions, operationsStore } from "../agents/operations-runtime
 import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 
 import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
+import { classifyTelegram, recordUserMessage, type InboundPart, type RecordedMessage } from "../crm/inbound.js";
+import { publish } from "../crm/events.js";
+import { getSettings } from "../crm/settings.js";
 import { sequencePrivateMessages } from "../telegram_sequence.js";
 import { greetCustomer } from "../topic-greeting-runtime.js";
 
@@ -24,6 +28,8 @@ const GREETING =
 const ASK_EMAIL = "📧 Оставьте email для связи (или отправьте /skip).";
 
 const QUEUED = "Принято! Подключаем оператора…";
+
+const MOVED_TO_CRM = "Поддержка переехала в CRM. Откройте обращение там.";
 
 async function acknowledgeTopic(ticketId: string, messageId: string) {
   await greetCustomer(ticketId, messageId, async (userId, text) => {
@@ -79,6 +85,10 @@ function isRelayable(ctx: Context): boolean {
   );
 }
 
+function looksLikeEmail(text: string): boolean {
+  return text.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
+}
+
 /** Telegram orders photo sizes from smallest to largest. */
 function photoFileId(ctx: Context): string | null {
   return ctx.message?.photo?.at(-1)?.file_id ?? null;
@@ -130,6 +140,47 @@ async function postTicketCard(ticket: Ticket): Promise<void> {
 }
 
 /**
+ * CRM mode only: a user with no open ticket who writes again within reopen_days
+ * continues their last resolved ticket instead of starting a new intake.
+ */
+export async function reopenableTicket(
+  who: { userTg: number } | { webUserId: string },
+): Promise<Ticket | null> {
+  if (legacySurface()) return null;
+  const { reopen_days } = await getSettings();
+  return reopen_days > 0 ? db.resolvedTicketWithin(who, reopen_days) : null;
+}
+
+/**
+ * Record a message on a ticket that may reopen. If another open ticket won the
+ * one-open-per-user index meanwhile (23505), the message goes to that ticket.
+ */
+async function recordReopening(
+  ticket: Ticket,
+  part: InboundPart,
+  meta: { authorId: string; sourceId?: string },
+): Promise<{ ticket: Ticket; message: RecordedMessage }> {
+  try {
+    return { ticket, message: await recordUserMessage(ticket, part, meta) };
+  } catch (err) {
+    if (ticket.status !== "resolved" || (err as { code?: string }).code !== "23505") throw err;
+    const open = ticket.web_user_id != null
+      ? await db.ticketByWebUser(ticket.web_user_id)
+      : ticket.user_tg != null ? await db.ticketByUser(ticket.user_tg) : null;
+    if (!open) throw err;
+    return { ticket: open, message: await recordUserMessage(open, part, meta) };
+  }
+}
+
+/** CRM mode: the open ticket that already has this message's owner, else a reopenable one. */
+async function crmExistingTicket(
+  who: { userTg: number } | { webUserId: string },
+): Promise<{ open: Ticket | null; reopen: Ticket | null }> {
+  const open = "userTg" in who ? await db.ticketByUser(who.userTg) : await db.ticketByWebUser(who.webUserId);
+  return { open, reopen: open ? null : await reopenableTicket(who) };
+}
+
+/**
  * Create (or dedupe) a ticket from the in-app webhook and post its card.
  * The app supplies structured fields, so there's no intake Q&A.
  */
@@ -141,6 +192,22 @@ export async function createAppTicket(input: {
   device: string | null;
   request: string;
 }): Promise<Ticket> {
+  // Bitrix mode dedupes on the posted card; CRM mode has no card, so it looks first.
+  let fresh: boolean | null = null;
+  // The webhook carries no id of its own; on an existing ticket the text hash makes
+  // a retry a duplicate, also when the first attempt reopened it.
+  const digest = createHash("sha256").update(input.request).digest("hex").slice(0, 16);
+  const existingSource = (id: string) => `miniapp:${id}:${digest}`;
+  if (!legacySurface()) {
+    const { open, reopen } = await crmExistingTicket({ userTg: input.user_tg });
+    if (reopen) {
+      const { ticket } = await recordReopening(reopen, { kind: "text", body: input.request }, {
+        authorId: `tg:${input.user_tg}`, sourceId: existingSource(reopen.id),
+      });
+      return (await db.getTicket(ticket.id)) ?? ticket;
+    }
+    fresh = open === null;
+  }
   const ticket = await db.openTicket({
     user_tg: input.user_tg,
     user_username: input.user_username,
@@ -152,11 +219,15 @@ export async function createAppTicket(input: {
     intake_step: null,
   });
   // Only post a card if this is genuinely new (no card yet) — dedupes re-submits.
-  const first = await db.addMessage(ticket.id, "user", input.request, undefined, {
-    actor: "customer", authorId: `tg:${input.user_tg}`, sourceId: `miniapp-first:${ticket.id}`,
+  const first = await recordUserMessage(ticket, { kind: "text", body: input.request }, {
+    authorId: `tg:${input.user_tg}`,
+    sourceId: fresh === false ? existingSource(ticket.id) : `miniapp-first:${ticket.id}`,
   });
-  await acknowledgeTopic(ticket.id, first.id);
-  if (!ticket.tg_message_id) {
+  await acknowledgeTopic(ticket.id, first.messageId);
+  if (fresh === true) {
+    await publish({ type: "ticket.created", ticketId: ticket.id });
+  } else if (fresh === null && !ticket.tg_message_id) {
+    await publish({ type: "ticket.created", ticketId: ticket.id });
     await postTicketCard(ticket);
     // Mirror into Bitrix Открытые линии (channel-agnostic connector chat).
     await openlines.sendUserMessage(ticket, input.request, `tg-first-${ticket.id}`);
@@ -209,6 +280,14 @@ export async function createWebTicket(input: {
   request: string;
   photo?: ValidPhoto | null;
 }): Promise<Ticket> {
+  if (!legacySurface()) {
+    const { open, reopen } = await crmExistingTicket({ webUserId: input.web_user_id });
+    if (open) return open;
+    if (reopen) {
+      const ticket = await pushWebUserMessage(reopen, input.request, input.photo);
+      return (await db.getTicket(ticket.id)) ?? ticket;
+    }
+  }
   const ticket = await db.openWebTicket({
     web_user_id: input.web_user_id,
     user_name: input.user_name,
@@ -218,15 +297,19 @@ export async function createWebTicket(input: {
     device: input.device,
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
-  if (!ticket.tg_message_id) {
-    const first = await db.addMessage(ticket.id, "user", input.request, input.photo, {
+  // CRM mode reached here only without an open ticket, so this one is new.
+  if (!legacySurface() || !ticket.tg_message_id) {
+    const first = await recordUserMessage(ticket, webPart(input.request, input.photo), {
       authorId: `web:${input.web_user_id}`, sourceId: `web-first:${ticket.id}`,
     });
-    await acknowledgeTopic(ticket.id, first.id);
-    await postTicketCard(ticket);
-    // Mirror into Bitrix Открытые линии. Best-effort by contract — never
-    // throws, so a Bitrix outage cannot fail the user's support request.
-    await openlines.sendUserMessage(ticket, input.request, first.id, bitrixStoredPhoto(first));
+    await acknowledgeTopic(ticket.id, first.messageId);
+    await publish({ type: "ticket.created", ticketId: ticket.id });
+    if (legacySurface()) {
+      await postTicketCard(ticket);
+      // Mirror into Bitrix Открытые линии. Best-effort by contract — never
+      // throws, so a Bitrix outage cannot fail the user's support request.
+      await openlines.sendUserMessage(ticket, input.request, first.messageId, bitrixStoredPhoto(first.attachment));
+    }
   }
   return ticket;
 }
@@ -247,6 +330,11 @@ export async function createWelcomeTicket(input: {
   email: string | null;
   device: string | null;
 }): Promise<Ticket> {
+  // Bitrix mode dedupes on the posted card; CRM mode has none, so it looks first.
+  if (!legacySurface()) {
+    const open = await db.ticketByWebUser(input.web_user_id);
+    if (open) return open;
+  }
   const ticket = await db.openWebTicket({
     web_user_id: input.web_user_id,
     user_name: input.user_name,
@@ -255,40 +343,49 @@ export async function createWelcomeTicket(input: {
     email: input.email,
     device: input.device,
   });
-  if (!ticket.tg_message_id) {
+  if (!legacySurface() || !ticket.tg_message_id) {
     await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE, undefined, {
       actor: "automation", sourceId: `welcome:${ticket.id}`,
     });
-    await postTicketCard(ticket);
+    if (legacySurface()) await postTicketCard(ticket);
+    else await publish({ type: "ticket.created", ticketId: ticket.id });
   }
   return ticket;
 }
 
-/** A web user sent a message: log it and relay into the ops thread if claimed. */
-function bitrixStoredPhoto(message: db.Message): Array<{ url: string; name: string }> {
-  if (!message.attachment_id || !message.attachment_filename) return [];
+function webPart(body: string, photo?: ValidPhoto | null): InboundPart {
+  return photo ? { kind: "photo", body, webPhoto: photo } : { kind: "text", body };
+}
+
+function bitrixStoredPhoto(attachment: RecordedMessage["attachment"]): Array<{ url: string; name: string }> {
+  if (!attachment) return [];
   return [
     {
       url: supportPhotoUrl(
-        message.attachment_id,
-        message.attachment_filename,
+        attachment.id,
+        attachment.filename,
         config.PUBLIC_BASE_URL,
         config.TELEGRAM_WEBHOOK_SECRET,
       ),
-      name: message.attachment_filename,
+      name: attachment.filename,
     },
   ];
 }
 
+/**
+ * A web user sent a message: log it and relay into the ops thread if claimed.
+ * Returns the ticket that took it (another open one if a reopen lost a race).
+ */
 export async function pushWebUserMessage(
-  ticket: Ticket,
+  target: Ticket,
   body: string,
   photo?: ValidPhoto | null,
-): Promise<void> {
-  const message = await db.addMessage(ticket.id, "user", body, photo, { authorId: `web:${ticket.web_user_id}` });
-  await acknowledgeTopic(ticket.id, message.id);
-  const files = bitrixStoredPhoto(message);
-  await openlines.sendUserMessage(ticket, body, message.id, files);
+): Promise<Ticket> {
+  const { ticket, message } = await recordReopening(target, webPart(body, photo), { authorId: `web:${target.web_user_id}` });
+  await acknowledgeTopic(ticket.id, message.messageId);
+  if (!legacySurface()) return ticket;
+  const files = bitrixStoredPhoto(message.attachment);
+  await openlines.sendUserMessage(ticket, body, message.messageId, files);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
     if (files[0]) {
@@ -308,6 +405,7 @@ export async function pushWebUserMessage(
         .catch(() => {});
     }
   }
+  return ticket;
 }
 
 /** Edit a card, swallowing Telegram's "message is not modified" noise. */
@@ -326,6 +424,12 @@ function rosterGuardFailed(ctx: Context): boolean {
   const id = ctx.from?.id;
   return supportRosterIds.size > 0 && (id == null || !supportRosterIds.has(id));
 }
+
+// Forum cards posted before the CRM cutover stay clickable; in CRM mode they
+// must not claim, close or relay, or the CRM would miss those changes.
+supportBot.callbackQuery(/^(claim:support_requests|cat|await|resolve|resolve_cancel|resolve_do):/, (ctx, next) =>
+  legacySurface() ? next() : ctx.answerCallbackQuery({ text: MOVED_TO_CRM, show_alert: true }),
+);
 
 // ---- operator: take ------------------------------------------------------
 
@@ -480,6 +584,17 @@ supportBot.on("message", async (ctx, next) => {
   const user = ctx.from;
   const text = ctx.message.text?.trim();
   const ticket = await db.ticketByUser(user.id);
+  const part: InboundPart = classifyTelegram(ctx.message) ?? { kind: "text", body: contentLabel(ctx) };
+  const tgMeta = { authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}` };
+
+  // CRM mode: writing again soon after a resolve continues that ticket silently.
+  if (!ticket && !legacySurface()) {
+    const prior = await reopenableTicket({ userTg: user.id });
+    if (prior) {
+      await recordReopening(prior, part, tgMeta);
+      return;
+    }
+  }
 
   // First contact → capture the request, then ask for an email.
   if (!ticket) {
@@ -492,11 +607,18 @@ supportBot.on("message", async (ctx, next) => {
       intake_step: "email",
       first_photo_file_id: photoFileId(ctx),
     });
-    const first = await db.addMessage(opened.id, "user", contentLabel(ctx), undefined, {
-      authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
-    });
-    await acknowledgeTopic(opened.id, first.id);
+    const first = await recordUserMessage(opened, part, tgMeta);
+    await publish({ type: "ticket.created", ticketId: opened.id });
+    await acknowledgeTopic(opened.id, first.messageId);
     await ctx.reply(ASK_EMAIL);
+    return;
+  }
+
+  // CRM mode: an operator may already be talking to the user, so a reply that is
+  // not an email ends intake and stays a message instead of being taken as one.
+  if (ticket.intake_step === "email" && text && !legacySurface() && text !== "/skip" && !looksLikeEmail(text)) {
+    await db.finishIntake(ticket.id, null);
+    await recordUserMessage(ticket, part, tgMeta);
     return;
   }
 
@@ -506,7 +628,7 @@ supportBot.on("message", async (ctx, next) => {
   if (ticket.intake_step === "email" && text) {
     const email = text === "/skip" ? null : text;
     const finalized = await db.finishIntake(ticket.id, email);
-    if (finalized) {
+    if (finalized && legacySurface()) {
       await postTicketCard(finalized);
       const refreshed = (await db.getTicket(finalized.id)) ?? finalized;
       if (finalized.first_photo_file_id) {
@@ -531,9 +653,9 @@ supportBot.on("message", async (ctx, next) => {
   // at all. Photos received while awaiting email use this same path, with a
   // distinct Telegram message id and signed file URL for every album item.
   const fileId = photoFileId(ctx);
-  await db.addMessage(ticket.id, "user", contentLabel(ctx), undefined, {
-    authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}`,
-  });
+  await recordUserMessage(ticket, part, tgMeta);
+  // CRM mode: the message is in the CRM; no Bitrix mirror, no forum relay.
+  if (!legacySurface()) return;
   if (fileId) await sendPhotoToSupport(ticket, fileId);
   void openlines.sendUserMessage(
     ticket,
@@ -572,7 +694,7 @@ supportBot.on("message", async (ctx, next) => {
 
 supportBot.on("message", async (ctx, next) => {
   const msg = ctx.message;
-  if (ctx.chat.id !== config.SUPPORT_CHAT_ID) return next();
+  if (ctx.chat.id !== config.SUPPORT_CHAT_ID || !legacySurface()) return next();
   if (ctx.from?.is_bot) return;
   if (!isRelayable(ctx)) return;
   // Locate the ticket two ways, so an operator reply lands either way:
@@ -591,6 +713,10 @@ supportBot.on("message", async (ctx, next) => {
   const stored = await db.addMessage(ticket.id, "agent", body, undefined, {
     actor: "human", authorId: `tg:${ctx.from.id}`,
     sourceId: `tg:${ctx.chat.id}:${msg.message_id}`,
+  });
+  // Best-effort: a stale CRM timer must never block the relay to the customer.
+  await db.markAgentReplied(ticket.id).catch((err: { code?: string }) => {
+    console.error(`[support] mark replied failed ticket=${ticket.id} code=${err?.code ?? "error"}`);
   });
 
   // Web channel: store the reply for the app to poll (media isn't relayable to web).

@@ -16,6 +16,8 @@ Object.assign(process.env, {
 const tickets = new Map<number, Ticket>();
 const relayed: Array<{ id: string; body: string; files: Array<{ url: string; name: string }> }> = [];
 const sent: Array<{ method: string; payload: Record<string, unknown> }> = [];
+const recorded: Array<{ ticket: string; sourceId: string | undefined }> = [];
+const published: Array<{ type: string; ticketId?: string }> = [];
 let opens = 0;
 let failLookup = false;
 
@@ -62,6 +64,16 @@ mock.module("../dist/db.js", { namedExports: {
     row.tg_message_id = message;
   },
 } });
+mock.module("../dist/crm/inbound.js", { namedExports: {
+  classifyTelegram: () => ({ kind: "text", body: "" }),
+  recordUserMessage: async (ticket: Ticket, _part: unknown, meta: { sourceId?: string }) => {
+    recorded.push({ ticket: ticket.id, sourceId: meta.sourceId });
+    return { messageId: "stored-message", appendedToAlbum: false, reopened: false, attachment: null };
+  },
+} });
+mock.module("../dist/crm/events.js", { namedExports: {
+  publish: async (event: { type: string; ticketId?: string }) => { published.push(event); },
+} });
 mock.module("../dist/bitrix_openlines.js", { namedExports: {
   sendUserMessage: async (_ticket: Ticket, body: string, id: string, files = []) => {
     relayed.push({ body, id, files });
@@ -95,7 +107,9 @@ function photo(id: string, caption?: string) {
     { file_id: id, file_unique_id: id, width: 1024, height: 1024 },
   ] };
 }
-function reset() { tickets.clear(); relayed.length = 0; sent.length = 0; opens = 0; }
+function reset() {
+  tickets.clear(); relayed.length = 0; sent.length = 0; recorded.length = 0; published.length = 0; opens = 0;
+}
 function fileIds() {
   return relayed.flatMap(m => m.files.map(f => new URL(f.url).searchParams.get("file_id"))).sort();
 }
@@ -125,6 +139,10 @@ test("ten concurrent first-contact album items create one intake and lose none",
   assert.equal(new Set(relayed.map(m => m.id)).size, 10);
   assert.equal(sent.filter(m => m.method === "sendPhoto").length, 10);
   assert.equal(sent.filter(m => String(m.payload.text).includes("Подключаем оператора")).length, 1);
+  assert.equal(recorded.length, 10);
+  assert.equal(new Set(recorded.map(r => r.sourceId)).size, 10);
+  assert.ok(recorded.every(r => r.ticket === "ticket-2"));
+  assert.deepEqual(published, [{ type: "ticket.created", ticketId: "ticket-2" }]);
 });
 
 test("photos after text-first intake and after completion all reach the same ticket", async () => {
