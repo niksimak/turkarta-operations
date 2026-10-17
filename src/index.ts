@@ -13,6 +13,7 @@ import { startDeliveryConfirmations } from "./bitrix_delivery.js";
 import { startEventHub } from "./crm/events.js";
 import { setActiveAlerts, telegramAlerts } from "./crm/alerts.js";
 import { startCrmWorker } from "./crm/worker.js";
+import { startPushFanout } from "./crm/push.js";
 
 async function main() {
   await db.ensureSupportPhotoSchema();
@@ -27,9 +28,11 @@ async function main() {
   const stopDeliveryConfirmations = startDeliveryConfirmations();
   const stopEventHub = await startEventHub();
   let stopCrmWorker = async () => {};
+  let stopPushFanout = () => {};
   if (config.SUPPORT_SURFACE === "crm") {
     setActiveAlerts(telegramAlerts(supportBot.api, config.SUPPORT_CHAT_ID, config.PUBLIC_BASE_URL));
     stopCrmWorker = startCrmWorker();
+    stopPushFanout = startPushFanout();
   }
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
@@ -44,6 +47,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     stopDeliveryConfirmations();
+    stopPushFanout();
     console.log(`${signal} received — shutting down`);
     server.close();
     await Promise.all([stopAgentWorker(), stopOperationsWorker(), stopCrmWorker(), stopEventHub().catch(() => {})]);

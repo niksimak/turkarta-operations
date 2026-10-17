@@ -112,6 +112,13 @@ mock.module("../dist/crm/events.js", { namedExports: {
   },
 } });
 
+let pushKey: string | null = "BPubKey";
+mock.module("../dist/crm/push.js", { namedExports: {
+  pushPublicKey: () => pushKey,
+  saveSubscription: async (...a: unknown[]) => { record("saveSubscription", ...a); },
+  deleteSubscription: async (...a: unknown[]) => { record("deleteSubscription", ...a); return true; },
+} });
+
 const { crmRoutes } = await import("../dist/crm/routes.js");
 const { config } = await import("../dist/config.js");
 const { Hono } = await import("hono");
@@ -120,6 +127,8 @@ const webRoot = mkdtempSync(join(tmpdir(), "crm-web-"));
 mkdirSync(join(webRoot, "assets"));
 writeFileSync(join(webRoot, "index.html"), "<!doctype html><title>CRM</title>");
 writeFileSync(join(webRoot, "assets", "app.js"), "console.log(1)");
+writeFileSync(join(webRoot, "sw.js"), "self.addEventListener('push', () => {})");
+writeFileSync(join(webRoot, "manifest.webmanifest"), '{"name":"CRM"}');
 
 const app = new Hono().route("/crm", crmRoutes({ webRoot }));
 const H = (token?: string, crm = true): Record<string, string> => ({
@@ -388,6 +397,7 @@ test("static SPA: assets, deep links and login-failed; API paths stay JSON", asy
   assert.match(await (await req("/crm")).text(), /<title>CRM/);
   const asset = await req("/crm/assets/app.js");
   assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get("cache-control"), "public, max-age=31536000, immutable");
   assert.equal(await asset.text(), "console.log(1)");
   const api404 = await req("/crm/api/nope", { headers: H("tok-support") });
   assert.equal(api404.status, 404);
@@ -493,4 +503,49 @@ test("SSE ends when the session is gone at the next ping", async () => {
     byHash.delete(hash);
     if (!closed) await reader.cancel();
   }
+});
+
+test("push: key, subscribe and unsubscribe for the signed-in operator", async () => {
+  const key = await req("/crm/api/push/key", { headers: H("tok-support") });
+  assert.equal(key.status, 200);
+  assert.deepEqual(await key.json(), { publicKey: "BPubKey" });
+  assert.equal((await req("/crm/api/push/key")).status, 401, "needs a session");
+
+  const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: "BKey", auth: "auth1" } };
+  const ok = await req("/crm/api/push/subscribe", {
+    ...json("POST", "tok-support", sub), headers: { ...H("tok-support"), "content-type": "application/json", "user-agent": "Phone" },
+  });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(callsOf("saveSubscription").at(-1)!.args, [1, sub, "Phone"]);
+
+  for (const bad of [
+    { ...sub, endpoint: "http://insecure.example/x" },
+    { ...sub, keys: { p256dh: "", auth: "a" } },
+    { endpoint: sub.endpoint },
+  ]) {
+    assert.equal((await req("/crm/api/push/subscribe", json("POST", "tok-support", bad))).status, 422, JSON.stringify(bad));
+  }
+  const before = callsOf("saveSubscription").length;
+  assert.equal((await req("/crm/api/push/subscribe", { method: "POST", headers: { ...H("tok-support", false), "content-type": "application/json" }, body: JSON.stringify(sub) })).status, 401, "needs X-CRM");
+  assert.equal(callsOf("saveSubscription").length, before);
+
+  const off = await req("/crm/api/push/unsubscribe", json("POST", "tok-lead", { endpoint: sub.endpoint }));
+  assert.equal(off.status, 200);
+  assert.deepEqual(callsOf("deleteSubscription").at(-1)!.args, [2, sub.endpoint]);
+
+  pushKey = null;
+  assert.equal((await req("/crm/api/push/key", { headers: H("tok-support") })).status, 404, "push not configured");
+  assert.equal((await req("/crm/api/push/subscribe", json("POST", "tok-support", sub))).status, 404);
+  pushKey = "BPubKey";
+});
+
+test("PWA files: the service worker is never cached and the manifest has its media type", async () => {
+  const sw = await req("/crm/sw.js");
+  assert.equal(sw.status, 200);
+  assert.match(sw.headers.get("content-type") ?? "", /javascript/);
+  assert.equal(sw.headers.get("cache-control"), "no-cache");
+  assert.match(await sw.text(), /addEventListener\('push'/);
+  const manifest = await req("/crm/manifest.webmanifest");
+  assert.equal(manifest.status, 200);
+  assert.match(manifest.headers.get("content-type") ?? "", /application\/manifest\+json/);
 });
