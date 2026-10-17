@@ -97,6 +97,48 @@ test("cutover timers: Bitrix and forum replies stop the clock; crm_cutover reset
 
       assert.deepEqual(await crmCutover(sql, true), { waitingCleared: 0, pingsStamped: 4, requeued: 0 }, "a rerun is safe");
     });
+
+    await t.test("archiveBacklog: resolves open tickets silent since the cutover, keeps ones the customer wrote to", async () => {
+      await sql`delete from support_requests`;
+      await sql`insert into crm_operators (id, name, role) values (1, 'Anna', 'support') on conflict do nothing`;
+      const { archiveBacklog } = await import("../dist/crm/cutover.js");
+      const cutoverAt = new Date(Date.now() - 60 * 60_000);
+      const old = { created_at: sql`now() - interval '3 days'` };
+      const silentQueued = await ticket(old);
+      await sql`insert into support_messages (ticket_id, sender, body, kind, created_at)
+                values (${silentQueued}, 'user', 'x', 'text', now() - interval '3 days')`;
+      const silentAssigned = await ticket({ ...old, status: "allocated", assigned_operator_id: 1 });
+      const wroteAgain = await ticket(old);
+      await msg(wroteAgain, "user"); // now(): after the cutover
+      const fresh = await ticket();
+      const done = await ticket({ ...old, status: "resolved" });
+
+      const before = await sql`select * from support_requests order by id`;
+      assert.equal(await archiveBacklog(sql, cutoverAt, false), 2);
+      assert.deepEqual(await sql`select * from support_requests order by id`, before, "dry run writes nothing");
+
+      assert.equal(await archiveBacklog(sql, cutoverAt, true), 2);
+      for (const id of [silentQueued, silentAssigned]) {
+        const r = (await sql`select status, waiting_since, resolved_at from support_requests where id = ${id}`)[0]!;
+        assert.equal(r.status, "resolved");
+        assert.equal(r.waiting_since, null);
+        assert.ok(r.resolved_at instanceof Date);
+      }
+      assert.equal((await row(wroteAgain)).status, "new");
+      assert.equal((await row(fresh)).status, "new");
+      assert.equal((await row(done)).status, "resolved");
+      const ev = await sql`select ticket_id, type, actor_operator_id, payload from crm_ticket_events order by ticket_id`;
+      assert.equal(ev.length, 2);
+      assert.deepEqual(new Set(ev.map((e) => e.payload.from)), new Set(["new", "allocated"]));
+      for (const e of ev) {
+        assert.equal(e.type, "status_changed");
+        assert.equal(e.actor_operator_id, null);
+        assert.equal(e.payload.to, "resolved");
+        assert.equal(e.payload.reason, "cutover_backlog");
+      }
+      assert.equal((await sql`select count(*)::int as n from support_messages where sender = 'system'`)[0]!.n, 0, "no resolve message");
+      assert.equal(await archiveBacklog(sql, cutoverAt, true), 0, "a rerun is safe");
+    });
   } finally {
     await db.sql.end();
     await sql.end();
