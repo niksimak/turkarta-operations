@@ -88,8 +88,18 @@ export interface UserContext {
   csb_email?: string | null;
   registered_at?: string | null;
   kyc_level?: number | null;
+  /** The id Antarctic knows the user by, when they ever used that rail. */
+  antarctic_user_id?: string | null;
   cards?: Array<{ last4: string; status: string; plan: string | null; product_id?: string | null; balance_usd: string | null }>;
-  recent_topups?: Array<{ amount_rub: string | null; amount_usd: string | null; status: string; created_at: string }>;
+  recent_topups?: Array<{
+    amount_rub: string | null;
+    amount_usd: string | null;
+    status: string;
+    created_at: string;
+    rail?: string | null;
+    /** Antarctic's order id and payment uuid, for an Antarctic top-up. */
+    antarctic?: { order_id: string; payment_uuid: string | null } | null;
+  }>;
   admin_url?: string | null;
 }
 

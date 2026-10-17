@@ -20,13 +20,15 @@ const UserContextSchema = z.object({
   csb_email: Nullable(z.string()),
   registered_at: Nullable(z.string()),
   kyc_level: Nullable(z.number()),
+  antarctic_user_id: Nullable(z.string()),
   cards: z.array(z.object({
     last4: z.string(), status: z.string(), plan: z.string().nullable(), product_id: Nullable(z.string()),
     balance_usd: z.string().nullable(),
   })).optional(),
   recent_topups: z.array(z.object({
     amount_rub: z.string().nullable(), amount_usd: z.string().nullable(),
-    status: z.string(), created_at: z.string(),
+    status: z.string(), created_at: z.string(), rail: Nullable(z.string()),
+    antarctic: Nullable(z.object({ order_id: z.string(), payment_uuid: z.string().nullable() })),
   })).optional(),
   admin_url: Nullable(z.string()),
 });

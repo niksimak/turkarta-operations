@@ -69,6 +69,8 @@ const CARD_STATUS: Record<string, string> = {
   pending: "выпускается",
 };
 
+const RAIL_LABEL: Record<string, string> = { xhub: "x-hub", bitbanker: "Bitbanker", antarctic: "Antarctic" };
+
 const TOPUP_STATUS: Record<string, string> = {
   paid: "оплачено",
   completed: "зачислено",
@@ -221,6 +223,11 @@ function Account({ user }: { user: TicketDetail["user"] }) {
               <CopyValue label="CSB email" value={user.csb_email} />
             </Field>
           )}
+          {user.antarctic_user_id && (
+            <Field label="Antarctic ID">
+              <CopyValue label="Antarctic ID" value={user.antarctic_user_id} />
+            </Field>
+          )}
         </dl>
       </Section>
       <Section title="Карты">
@@ -250,14 +257,34 @@ function Account({ user }: { user: TicketDetail["user"] }) {
         {topups.length ? (
           <ul className="flex flex-col">
             {topups.map((t, i) => (
-              <li key={`${t.created_at}-${i}`} className="flex items-baseline gap-2 py-1">
-                <span className="num w-14 shrink-0 text-sm text-text-muted">{formatStamp(t.created_at)}</span>
-                <span className="num min-w-0 flex-1 truncate text-sm">
-                  {[formatMoney(t.amount_rub, "RUB"), formatMoney(t.amount_usd, "USD")].filter(Boolean).join(" → ")}
-                </span>
-                <span className={cx("shrink-0 text-xs", t.status === "failed" ? "text-danger" : "text-text-muted")}>
-                  {TOPUP_STATUS[t.status] ?? t.status}
-                </span>
+              <li key={`${t.created_at}-${i}`} className="py-1">
+                {t.rail && <p className="text-xs font-semibold text-text-muted">{RAIL_LABEL[t.rail] ?? t.rail}</p>}
+                <div className="flex items-baseline gap-2">
+                  <span className="num w-14 shrink-0 text-sm text-text-muted">{formatStamp(t.created_at)}</span>
+                  <span className="num min-w-0 flex-1 truncate text-sm">
+                    {[formatMoney(t.amount_rub, "RUB"), formatMoney(t.amount_usd, "USD")].filter(Boolean).join(" → ")}
+                  </span>
+                  <span className={cx("shrink-0 text-xs", t.status === "failed" ? "text-danger" : "text-text-muted")}>
+                    {TOPUP_STATUS[t.status] ?? t.status}
+                  </span>
+                </div>
+                {/* What to quote to Antarctic when this top-up went wrong. */}
+                {t.antarctic && (
+                  <dl className="mt-0.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-xs text-text-muted">
+                    <dt>order</dt>
+                    <dd>
+                      <CopyValue label="Antarctic order" value={t.antarctic.order_id} />
+                    </dd>
+                    {t.antarctic.payment_uuid && (
+                      <>
+                        <dt>uuid</dt>
+                        <dd>
+                          <CopyValue label="Antarctic uuid" value={t.antarctic.payment_uuid} />
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                )}
               </li>
             ))}
           </ul>
