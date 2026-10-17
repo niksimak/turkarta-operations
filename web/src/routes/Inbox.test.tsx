@@ -417,7 +417,8 @@ describe("Inbox", () => {
             email: "ivan@example.com",
             email_verified: true,
             kyc_level: 2.5,
-            cards: [{ last4: "4242", status: "active", plan: "Travel", balance_usd: "120.5" }],
+            csb_email: "u1@cards.turkarta.me",
+            cards: [{ last4: "4242", status: "active", plan: "Travel", product_id: "20170310100493724", balance_usd: "120.5" }],
             recent_topups: [{ amount_rub: "10000", amount_usd: "110", status: "paid", created_at: ago(60) }],
             admin_url: "https://admin.example/users/u-1",
           },
@@ -428,6 +429,9 @@ describe("Inbox", () => {
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
     expect(within(panel).getByText("уровень 2,5")).toBeTruthy();
     expect(within(panel).getByText("•• 4242")).toBeTruthy();
+    expect(within(panel).getByText("CSB email")).toBeTruthy();
+    expect(within(panel).getByText("u1@cards.turkarta.me")).toBeTruthy();
+    expect(within(panel).getByText("product 20170310100493724")).toBeTruthy();
     expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://admin.example/users/u-1");
   });
 

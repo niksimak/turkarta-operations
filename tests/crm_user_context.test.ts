@@ -41,6 +41,20 @@ test("caches within 60 s and refetches after", async () => {
   assert.equal(calls.length, 2);
 });
 
+test("keeps the CSB email and card product_id, and parses a payload without them", async () => {
+  clearUserContextCache();
+  const card = { last4: "1234", status: "active", plan: "travel", balance_usd: "1.00" };
+  const { f } = fakeFetch(200, { found: true, csb_email: "a@cards.turkarta.me", cards: [{ ...card, product_id: "p-ecom" }] });
+  const a = await userContext(tg, { fetch: f, now: () => 1, api });
+  assert.equal(a?.csb_email, "a@cards.turkarta.me");
+  assert.equal(a?.cards?.[0]?.product_id, "p-ecom");
+  clearUserContextCache();
+  const old = await userContext(tg, { fetch: fakeFetch(200, { found: true, cards: [card] }).f, now: () => 1, api });
+  assert.equal(old?.found, true);
+  assert.equal(old?.csb_email, undefined);
+  assert.equal(old?.cards?.[0]?.product_id, undefined);
+});
+
 test("500, invalid JSON and bad shape return null, cached for 30 s only", async () => {
   for (const [status, body] of [[500, {}], [200, "not json"], [200, { found: "yes" }]] as const) {
     clearUserContextCache();

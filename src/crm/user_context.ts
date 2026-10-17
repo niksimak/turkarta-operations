@@ -17,10 +17,12 @@ const UserContextSchema = z.object({
   name: Nullable(z.string()),
   email: Nullable(z.string()),
   email_verified: z.boolean().optional(),
+  csb_email: Nullable(z.string()),
   registered_at: Nullable(z.string()),
   kyc_level: Nullable(z.number()),
   cards: z.array(z.object({
-    last4: z.string(), status: z.string(), plan: z.string().nullable(), balance_usd: z.string().nullable(),
+    last4: z.string(), status: z.string(), plan: z.string().nullable(), product_id: Nullable(z.string()),
+    balance_usd: z.string().nullable(),
   })).optional(),
   recent_topups: z.array(z.object({
     amount_rub: z.string().nullable(), amount_usd: z.string().nullable(),
