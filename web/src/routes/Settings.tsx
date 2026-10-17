@@ -6,6 +6,7 @@ import { toast } from "../components/Toast";
 import { ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { playBlip } from "../lib/notify";
+import { disablePush, enablePush, syncPush, type PushState } from "../lib/push";
 import { useMe, useUpdatePrefs, type Operator, type OperatorPrefs } from "../lib/queries";
 import {
   canEditTeamSettings,
@@ -717,6 +718,7 @@ function PersonalTab({ me }: { me: Operator }) {
         >
           <Switch labelledBy="pref-desktop" checked={me.prefs.desktop} onChange={(desktop) => set({ desktop })} />
         </PrefRow>
+        <PushRow />
         <PrefRow label="Сообщать о" help="Личные события приходят всегда: назначения, упоминания, ответы клиентов." labelId="pref-scope">
           <Segmented
             labelledBy="pref-scope"
@@ -739,6 +741,59 @@ function PersonalTab({ me }: { me: Operator }) {
         </p>
       )}
     </div>
+  );
+}
+
+const PUSH_HELP: Record<Exclude<PushState, "disabled_server">, string> = {
+  unsupported: "Этот браузер не умеет push-уведомления.",
+  ios_install: "На iPhone сначала добавьте Поддержку на экран Домой: Поделиться → На экран Домой.",
+  denied: "Браузер запретил уведомления. Разрешите их в настройках сайта.",
+  off: "Приходят, даже когда вкладка закрыта: новые обращения, назначения, ответы клиентов и напоминания ответить.",
+  on: "Включены на этом устройстве.",
+};
+
+/** Web Push for this browser; hidden until the server has a VAPID key. */
+function PushRow() {
+  const [state, setState] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    syncPush().then(
+      (s) => live && setState(s),
+      () => live && setState("off"),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (state === null || state === "disabled_server") return null;
+  const toggle = async (on: boolean) => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      setState(await (on ? enablePush() : disablePush()));
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <PrefRow
+      label="Push-уведомления на этом устройстве"
+      help={failed ? "Не получилось. Повторите." : PUSH_HELP[state]}
+      labelId="pref-push"
+    >
+      <Switch
+        labelledBy="pref-push"
+        checked={state === "on"}
+        disabled={busy || (state !== "on" && state !== "off")}
+        onChange={(on) => void toggle(on)}
+      />
+    </PrefRow>
   );
 }
 

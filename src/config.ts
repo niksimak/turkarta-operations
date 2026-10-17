@@ -13,6 +13,9 @@ const Env = z.object({
   SUPPORT_SURFACE: z.enum(["bitrix", "crm"]).default("bitrix"),
   // Shared with turkarta's admin SSO issuer (HMAC-SHA256). Unset = CRM login disabled.
   CRM_SSO_SECRET: z.string().min(32).optional(),
+  // VAPID key pair for operator Web Push (PWA). Unset = push dark; the in-tab notifications still work.
+  CRM_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  CRM_VAPID_PRIVATE_KEY: z.string().min(1).optional(),
   SUPPORT_RUNTIME: z.enum(["relay", "sandbox"]).default("relay"),
   LEADS_BOT_TOKEN: z.string().default(""),
   SUPPORT_BOT_TOKEN: z.string().default(""),

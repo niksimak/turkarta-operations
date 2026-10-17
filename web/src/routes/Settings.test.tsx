@@ -6,6 +6,18 @@ import { createQueryClient } from "../app";
 import { resetApiStateForTests } from "../lib/api";
 import { jsonResponse } from "../test/fakes";
 import { Settings } from "./Settings";
+import type { PushState } from "../lib/push";
+
+const push = vi.hoisted(() => ({
+  state: "off" as PushState,
+  enablePush: vi.fn(async () => "on" as PushState),
+  disablePush: vi.fn(async () => "off" as PushState),
+}));
+vi.mock("../lib/push", () => ({
+  syncPush: async () => push.state,
+  enablePush: push.enablePush,
+  disablePush: push.disablePush,
+}));
 
 const prefs = { theme: "system", sound: true, volume: 0.6, desktop: true, notify_scope: "all", send_key: "mod_enter" };
 const support = {
@@ -42,11 +54,11 @@ function mockFetch(handlers: Record<string, Handler>) {
 
 const ok = (body: unknown) => () => jsonResponse(200, body);
 
-function renderSettings() {
+function renderSettings(path = "/settings") {
   const client = createQueryClient();
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/settings"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Settings />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -208,5 +220,49 @@ describe("Settings, Команда", () => {
     expect(within(oleg).getByRole("switch")).toBeTruthy();
     expect(within(anya).getByRole("button", { name: "Снять со смены: Аня Смирнова" })).toBeTruthy();
     expect(within(oleg).queryByRole("button", { name: /Снять со смены/ })).toBeNull();
+  });
+});
+
+describe("Settings, Личные: push on this device", () => {
+  beforeEach(() => {
+    resetApiStateForTests();
+    push.state = "off";
+    push.enablePush.mockClear();
+    push.disablePush.mockClear();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+  const routes = { "GET /crm/api/me": ok(support) };
+
+  it("turns push on and off from the switch", async () => {
+    mockFetch(routes);
+    renderSettings("/settings?tab=personal");
+    const sw = await screen.findByRole("switch", { name: "Push-уведомления на этом устройстве" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(sw);
+    await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("true"));
+    expect(push.enablePush).toHaveBeenCalledTimes(1);
+    fireEvent.click(sw);
+    await waitFor(() => expect(sw.getAttribute("aria-checked")).toBe("false"));
+    expect(push.disablePush).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains the iPhone Home Screen step and disables the switch", async () => {
+    push.state = "ios_install";
+    mockFetch(routes);
+    renderSettings("/settings?tab=personal");
+    expect(await screen.findByText(/добавьте Поддержку на экран Домой/)).toBeTruthy();
+    expect((screen.getByRole("switch", { name: "Push-уведомления на этом устройстве" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("hides the row while push is not configured on the server", async () => {
+    push.state = "disabled_server";
+    mockFetch(routes);
+    renderSettings("/settings?tab=personal");
+    await screen.findByRole("switch", { name: "Звук" });
+    await act(async () => {});
+    expect(screen.queryByRole("switch", { name: "Push-уведомления на этом устройстве" })).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import type { Operator } from "./queries";
 
-export type NotifyKind = "new_ticket" | "assigned" | "mention" | "user_replied";
+export type NotifyKind = "new_ticket" | "assigned" | "mention" | "user_replied" | "reminder";
 
 export interface NotifyEvent {
   operatorId: number | null;
@@ -20,10 +20,13 @@ export function isNotifyEvent(data: unknown): data is NotifyEvent {
   );
 }
 
-/** Addressed to me (or everyone), and not a queue event when I asked for my tickets only. */
+/**
+ * Addressed to me (or everyone), and no broadcast when I asked for my tickets only.
+ * Mirrors the push targets in src/crm/push.ts.
+ */
 export function shouldNotify(e: NotifyEvent, me: Pick<Operator, "id" | "prefs">): boolean {
   if (e.operatorId !== null && e.operatorId !== me.id) return false;
-  if (me.prefs.notify_scope === "mine" && e.kind === "new_ticket") return false;
+  if (me.prefs.notify_scope === "mine" && e.operatorId === null) return false;
   return true;
 }
 
@@ -72,6 +75,7 @@ export const NOTIFY_FALLBACK_TITLE: Record<NotifyKind, string> = {
   assigned: "Вам назначено обращение",
   mention: "Вас упомянули в заметке",
   user_replied: "Клиент ответил",
+  reminder: "Ждёт ответа",
 };
 
 export interface NotifyDeps {

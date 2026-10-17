@@ -23,8 +23,8 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
 }
 
 // Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0018_support_video.sql"].map((name) =>
-  fileURLToPath(new URL(`../migrations/${name}`, import.meta.url)));
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql"]
+  .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
 /** Apply the idempotent CRM migrations on boot. */
 export async function ensureCrmSchema(): Promise<void> {

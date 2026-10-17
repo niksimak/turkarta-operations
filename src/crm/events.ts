@@ -3,12 +3,14 @@ import { sql } from "../db.js";
 export type PresenceState = "viewing" | "typing";
 export type Viewer = { operatorId: number; name: string; state: PresenceState };
 
+export type NotifyKind = "new_ticket" | "assigned" | "mention" | "user_replied" | "reminder";
+
 export type CrmEvent =
   | { type: "ticket.created" | "ticket.updated"; ticketId: string }
   | { type: "message.created"; ticketId: string; messageId?: string }
   | { type: "operator.updated"; operatorId: number }
   | { type: "presence"; ticketId: string; viewers: Viewer[] }
-  | { type: "notify"; operatorId: number | null; kind: "new_ticket" | "assigned" | "mention" | "user_replied"; ticketId: string; title: string; body: string };
+  | { type: "notify"; operatorId: number | null; kind: NotifyKind; ticketId: string; title: string; body: string };
 
 const CHANNEL = "crm_events";
 const PRESENCE_TTL_MS = 10_000;

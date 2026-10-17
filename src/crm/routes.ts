@@ -17,6 +17,7 @@ import { createCanned, deleteCanned, listCanned, updateCanned, useCanned } from 
 import { presence, subscribe } from "./events.js";
 import { heartbeat, listOperators, setShift, updateOperator, updatePrefs } from "./operators.js";
 import { InvalidReply, retryDelivery, sendReply, type ReplyInput } from "./reply.js";
+import { deleteSubscription, pushPublicKey, saveSubscription } from "./push.js";
 import { getSettings, settingsLog, updateSettings } from "./settings.js";
 import { stats } from "./stats.js";
 import {
@@ -48,6 +49,12 @@ const COOKIE_ONLY_GET = new RegExp(`^${BASE}/api/(stream|attachments/[^/]+)$`);
 const StatusBody = z.object({ status: z.enum(["new", "allocated", "awaiting", "resolved"]) }).strict();
 const AssignBody = z.object({ operator_id: z.number().int().positive().nullable() }).strict();
 const ShiftBody = z.object({ on: z.boolean() }).strict();
+const PushEndpoint = z.string().url().max(2000).refine((u) => u.startsWith("https://"), "https only");
+const PushSubscribeBody = z.object({
+  endpoint: PushEndpoint,
+  keys: z.object({ p256dh: z.string().min(1).max(200), auth: z.string().min(1).max(100) }),
+}).strip();
+const PushUnsubscribeBody = z.object({ endpoint: PushEndpoint }).strip();
 const PresenceBody = z.object({ state: z.enum(["viewing", "typing"]) }).strict();
 const ReplyKind = z.enum(["reply", "note"]);
 const JsonReply = z.object({ kind: ReplyKind.default("reply"), body: z.string().default("") }).strict();
@@ -175,16 +182,18 @@ function spa(webRoot: string): MiddlewareHandler {
     if (p === `${BASE}/api` || p.startsWith(`${BASE}/api/`) || p === `${BASE}/sso`) return next();
     // Backend-only deploys and tests run without a web build.
     if (!existsSync(indexPath)) return c.json({ error: "not_found" }, 404);
-    assets ??= serveStatic({
-      root: webRoot,
-      rewriteRequestPath: (path) => path.slice(BASE.length) || "/",
-      onFound: (path, ctx) => {
-        // Vite fingerprints everything under assets/.
-        if (path.startsWith(join(webRoot, "assets"))) ctx.header("Cache-Control", "public, max-age=31536000, immutable");
-      },
-    });
+    assets ??= serveStatic({ root: webRoot, rewriteRequestPath: (path) => path.slice(BASE.length) || "/" });
     const res = await assets(c, async () => {});
-    if (res) return res;
+    if (res) {
+      // Set on the response itself: serveStatic's onFound runs after the response is built.
+      const file = p.slice(BASE.length);
+      // Vite fingerprints everything under assets/.
+      if (file.startsWith("/assets/")) res.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      // The service worker must reach browsers the moment it changes.
+      if (file === "/sw.js") res.headers.set("Cache-Control", "no-cache");
+      if (file.endsWith(".webmanifest")) res.headers.set("Content-Type", "application/manifest+json");
+      return res;
+    }
     return c.html(await readFile(indexPath, "utf8"), 200, { "Cache-Control": "no-cache" });
   };
 }
@@ -241,6 +250,24 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     return c.json({ ok: true });
   });
   r.put("/api/me/prefs", async (c) => c.json(await updatePrefs(c.get("operator"), await readJson(c))));
+
+  // Web Push for this browser (PWA). 404 while VAPID is not configured, so the UI can hide the switch.
+  r.get("/api/push/key", (c) => {
+    const publicKey = pushPublicKey();
+    if (!publicKey) throw new NotFound("push_disabled");
+    return c.json({ publicKey });
+  });
+  r.post("/api/push/subscribe", async (c) => {
+    if (!pushPublicKey()) throw new NotFound("push_disabled");
+    const s = PushSubscribeBody.parse(await readJson(c));
+    await saveSubscription(c.get("operator").id, s, c.req.header("user-agent")?.slice(0, 300) ?? null);
+    return c.json({ ok: true });
+  });
+  r.post("/api/push/unsubscribe", async (c) => {
+    const { endpoint } = PushUnsubscribeBody.parse(await readJson(c));
+    await deleteSubscription(c.get("operator").id, endpoint);
+    return c.json({ ok: true });
+  });
 
   r.get("/api/tickets", async (c) => {
     const p = ListParams.parse(queryParams(c));
