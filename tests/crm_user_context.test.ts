@@ -44,10 +44,17 @@ test("caches within 60 s and refetches after", async () => {
 test("keeps the CSB email and card product_id, and parses a payload without them", async () => {
   clearUserContextCache();
   const card = { last4: "1234", status: "active", plan: "travel", balance_usd: "1.00" };
-  const { f } = fakeFetch(200, { found: true, csb_email: "a@cards.turkarta.me", cards: [{ ...card, product_id: "p-ecom" }] });
+  const topup = { amount_rub: "3000", amount_usd: "31.19", status: "funded", created_at: "2026-10-17T10:12:00Z" };
+  const { f } = fakeFetch(200, {
+    found: true, csb_email: "a@cards.turkarta.me", antarctic_user_id: "ant-7", cards: [{ ...card, product_id: "p-ecom" }],
+    recent_topups: [{ ...topup, rail: "antarctic", antarctic: { order_id: "o-1", payment_uuid: null } }],
+  });
   const a = await userContext(tg, { fetch: f, now: () => 1, api });
   assert.equal(a?.csb_email, "a@cards.turkarta.me");
   assert.equal(a?.cards?.[0]?.product_id, "p-ecom");
+  assert.equal(a?.antarctic_user_id, "ant-7");
+  assert.equal(a?.recent_topups?.[0]?.rail, "antarctic");
+  assert.deepEqual(a?.recent_topups?.[0]?.antarctic, { order_id: "o-1", payment_uuid: null });
   clearUserContextCache();
   const old = await userContext(tg, { fetch: fakeFetch(200, { found: true, cards: [card] }).f, now: () => 1, api });
   assert.equal(old?.found, true);

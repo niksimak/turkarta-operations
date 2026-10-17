@@ -444,7 +444,14 @@ describe("Inbox", () => {
             kyc_level: 2.5,
             csb_email: "u1@cards.turkarta.me",
             cards: [{ last4: "4242", status: "active", plan: "Travel", product_id: "20170310100493724", balance_usd: "120.5" }],
-            recent_topups: [{ amount_rub: "10000", amount_usd: "110", status: "paid", created_at: ago(60) }],
+            antarctic_user_id: "ant-user-77",
+            recent_topups: [
+              { amount_rub: "10000", amount_usd: "110", status: "paid", rail: "xhub", antarctic: null, created_at: ago(60) },
+              {
+                amount_rub: "3000", amount_usd: "31.19", status: "rail_failed", rail: "antarctic",
+                antarctic: { order_id: "ant-order-1", payment_uuid: "aw-uuid-1" }, created_at: ago(120),
+              },
+            ],
             admin_url: "https://admin.example/users/u-1",
           },
         }),
@@ -457,6 +464,12 @@ describe("Inbox", () => {
     expect(within(panel).getByText("CSB email")).toBeTruthy();
     expect(within(panel).getByText("u1@cards.turkarta.me")).toBeTruthy();
     expect(within(panel).getByText("product 20170310100493724")).toBeTruthy();
+    expect(within(panel).getByText("Antarctic ID")).toBeTruthy();
+    expect(within(panel).getByText("ant-user-77")).toBeTruthy();
+    expect(within(panel).getByText("x-hub")).toBeTruthy();
+    expect(within(panel).getByText("Antarctic")).toBeTruthy();
+    expect(within(panel).getByText("ant-order-1")).toBeTruthy();
+    expect(within(panel).getByText("aw-uuid-1")).toBeTruthy();
     expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://admin.example/users/u-1");
   });
 
