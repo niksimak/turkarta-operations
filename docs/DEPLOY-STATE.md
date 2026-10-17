@@ -1,6 +1,36 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-06-30_
+_Last updated: 2026-10-17_
+
+## Status: support CRM LIVE on Fly, Bitrix off — 2026-10-17
+
+- Host: Fly app `turkarta-operations` (personal org, `ams`), 1 machine, image
+  `registry.fly.io/turkarta-operations:crm-fee15a9` (main `fee15a9`, PR #9).
+  `https://support.turkarta.me` (DNS at ps.kz, Fly cert issued); `/` redirects to `/crm`.
+- `SUPPORT_SURFACE=crm` since 10:29:42Z. Bitrix gets no calls. Operators answer only in the
+  CRM, opened from the Turkarta admin «Поддержка» (SSO, `CRM_SSO_SECRET` on both apps).
+- Secrets: the 25 Render env vars copied as-is, plus `SUPPORT_SURFACE`, `PUBLIC_BASE_URL`,
+  `CRM_SSO_SECRET`. `DATABASE_URL` is the direct Neon endpoint (no pooler).
+- Both bot webhooks point at `support.turkarta.me` (checked with getWebhookInfo, 0 pending).
+  Bot downtime during the move: 10:20:29Z to 10:22:16Z.
+- Cutover: `crm_cutover --apply` stamped 713 open tickets as overdue-pinged and requeued 8.
+  «Автоназначение» and «Просрочка» were off during the flip (crm_settings_log rows with no
+  operator), back on after. `forum_farewell --send` posted in 8 open topics.
+- Turkarta prod: backend v84 `prod-04a55334` with `OPS_SUPPORT_BASE_URL=https://support.turkarta.me`
+  and `CRM_SSO_SECRET`. Webapp `prodweb-04a55334` (every photo of a message in the web chat).
+- Rollback: `fly secrets set SUPPORT_SURFACE=bitrix -a turkarta-operations` restores ops'
+  Bitrix mode, but the Bitrix app handler still points at Render, so Bitrix replies need
+  Render resumed too. Full rollback = resume Render (it re-takes the webhooks on start) and
+  `fly secrets unset OPS_SUPPORT_BASE_URL -a turkarta-backend-prod`.
+  Turkarta images before this move: backend `prod-6907209e`, webapp `prodweb-964361f6`.
+- TEMP: 2026-10-17 Render service `srv-d90g7t4m0tmc73dpi000` suspended, not deleted. Flip when:
+  one clean week on Fly (2026-10-24), then delete it. Owner: Nikita.
+- TEMP: 2026-10-17 Bitrix code and `BITRIX_*` secrets still in ops, unused in crm mode. Flip when:
+  the owner removes the Bitrix24 app; then a cleanup PR drops the code and the secrets. Owner: Nikita.
+- TEMP: 2026-10-17 Turkarta `ops_support_base_url` code default still the Render URL (env
+  overrides it on prod). Flip when: Render is deleted; small Turkarta PR sets the Fly URL. Owner: Nikita.
+- Open: dev Turkarta (`turkarta-backend-dev`) has no `OPS_SUPPORT_BASE_URL`, so its web chat
+  calls the suspended Render URL. Not checked further.
 
 ## Status: operator-reply relay fixed (web tickets) — 2026-06-30
 
@@ -181,12 +211,12 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
 
 **2026-08-04 session close:** Bitrix hub COMPLETE — all 3 support channels two-way in «Открытая линия 3» (web: log+push; tg: bot DM, dedup by bitrix_message_id). Support-reply push callback live against prod api. TG topic runs in parallel (primacy decision pending); TG media = placeholders. 🔴 Rotate: Bitrix webhook URL, app token, client_secret (all burned in build chat).
 
-## Fly.io (planned 2026-10-16)
+## Fly.io (live since 2026-10-17, see the status at the top)
 
 - App: `turkarta-operations`, region `ams`, config `fly.toml` (repo root).
 - Domain: `support.turkarta.me` (`fly certs add`). It becomes `PUBLIC_BASE_URL`.
   The CRM lives at `https://support.turkarta.me/crm`; `/` redirects there.
-- Not created yet. No deploy, no secrets set. Spec: `docs/superpowers/specs/2026-10-16-support-crm-design.md` §15.
+- Spec: `docs/superpowers/specs/2026-10-16-support-crm-design.md` §15.
 - Rule: never scale above 1 machine. Presence is in memory, workers run in-process,
   and bot webhooks must not run twice.
 
