@@ -2,6 +2,22 @@
 
 _Last updated: 2026-10-17_
 
+## Status: CRM follow-ups live, image `crm-de7997e` — 2026-10-17 evening
+
+- Live image `registry.fly.io/turkarta-operations:crm-de7997e` (main `de7997e`), PRs #11–#17:
+  backlog archive script (#11), lost session → admin sign-in and back (#12), client panel
+  CSB email + card `product_id` (#13), settings history «Система» (#14), mobile menu (#15),
+  top-up rail + Antarctic ids (#16), ticket opens without waiting on Turkarta + hover prefetch (#17).
+  Previous images: `crm-79e0986` (#11–#15), `crm-fee15a9` (cutover).
+- Rollback: `fly deploy --image registry.fly.io/turkarta-operations:crm-79e0986 -a turkarta-operations`.
+- Panel fields need Turkarta prod ≥ main `d211c608` (#1082, #1084, #1085, #1086); without it
+  they are just absent (all optional in the parser).
+- Open: the Bitrix delivery-confirmation retry (`[bitrix-ol] delivery confirmation pending`,
+  ACCESS_DENIED, msgs ol-14005/ol-14009) still runs hourly in crm mode. Harmless; drop it in the
+  Bitrix removal PR.
+- Open: CRM speed beyond #17 not measured yet (DB round-trip ams → Neon); the probe failed on
+  a flaky local network to Fly.
+
 ## Status: support CRM LIVE on Fly, Bitrix off — 2026-10-17
 
 - Host: Fly app `turkarta-operations` (personal org, `ams`), 1 machine, image
