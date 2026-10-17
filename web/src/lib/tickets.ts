@@ -84,9 +84,11 @@ export interface UserContext {
   name?: string | null;
   email?: string | null;
   email_verified?: boolean;
+  /** The CSB client alias (our domain), which CSB knows the client by. */
+  csb_email?: string | null;
   registered_at?: string | null;
   kyc_level?: number | null;
-  cards?: Array<{ last4: string; status: string; plan: string | null; balance_usd: string | null }>;
+  cards?: Array<{ last4: string; status: string; plan: string | null; product_id?: string | null; balance_usd: string | null }>;
   recent_topups?: Array<{ amount_rub: string | null; amount_usd: string | null; status: string; created_at: string }>;
   admin_url?: string | null;
 }

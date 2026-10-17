@@ -216,18 +216,29 @@ function Account({ user }: { user: TicketDetail["user"] }) {
               <CopyValue label="ID пользователя" value={user.user_id} />
             </Field>
           )}
+          {user.csb_email && (
+            <Field label="CSB email">
+              <CopyValue label="CSB email" value={user.csb_email} />
+            </Field>
+          )}
         </dl>
       </Section>
       <Section title="Карты">
         {cards.length ? (
           <ul className="flex flex-col">
             {cards.map((c, i) => (
-              <li key={`${c.last4}-${i}`} className="flex items-baseline gap-2 py-1">
-                <span className="num font-mono text-sm">•• {c.last4}</span>
-                <span className="min-w-0 flex-1 truncate text-sm text-text-muted">
-                  {[c.plan, CARD_STATUS[c.status] ?? c.status].filter(Boolean).join(", ")}
-                </span>
-                <span className="num text-sm">{formatMoney(c.balance_usd, "USD")}</span>
+              <li key={`${c.last4}-${i}`} className="py-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="num font-mono text-sm">•• {c.last4}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-text-muted">
+                    {[c.plan, CARD_STATUS[c.status] ?? c.status].filter(Boolean).join(", ")}
+                  </span>
+                  <span className="num text-sm">{formatMoney(c.balance_usd, "USD")}</span>
+                </div>
+                {/* Which CSB product: tells an e-com card from the others. */}
+                {c.product_id && (
+                  <div className="truncate font-mono text-xs text-text-muted">product {c.product_id}</div>
+                )}
               </li>
             ))}
           </ul>
