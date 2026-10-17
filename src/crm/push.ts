@@ -5,7 +5,8 @@
  * here to every browser an operator subscribed (crm_push_subscriptions). Targets mirror the web
  * `shouldNotify` rule: a personal event (assigned, mention, client replied, reply reminder) goes to
  * that operator; a broadcast (operatorId null) goes to operators watching «Все». The service worker
- * (web/public/sw.js) skips showing it while a CRM tab is focused, so nobody is notified twice.
+ * (web/public/sw.js) always shows it (iOS revokes subscriptions that push silently), but silently
+ * while a CRM tab is focused, which already blips and toasts in-app.
  *
  * Dark until CRM_VAPID_PUBLIC_KEY / CRM_VAPID_PRIVATE_KEY are set. Sends are fire-and-forget with
  * a per-send timeout; a 404/410 from the push service means the browser dropped the subscription,

@@ -41,14 +41,17 @@ describe("sw.js", () => {
     }));
   });
 
-  it("stays quiet while a CRM tab is focused, and on a malformed push", async () => {
+  // Every push must show a notification: Chrome otherwise shows its own generic one, and iOS
+  // revokes the subscription after a few silent pushes.
+  it("always notifies: silently while a CRM tab is focused, generically on a malformed push", async () => {
     const focused = loadWorker([{ focused: true, visibilityState: "visible", url: "https://support.turkarta.me/crm/" }]);
     await focused.fire("push", pushEvent(MSG));
-    expect(focused.self.registration.showNotification).not.toHaveBeenCalled();
+    expect(focused.self.registration.showNotification).toHaveBeenCalledWith("Новое обращение", expect.objectContaining({ silent: true }));
     const bad = loadWorker();
     await bad.fire("push", { data: { json: () => { throw new Error("not json"); } } });
     await bad.fire("push", pushEvent({ body: "no title" }));
-    expect(bad.self.registration.showNotification).not.toHaveBeenCalled();
+    expect(bad.self.registration.showNotification).toHaveBeenCalledTimes(2);
+    expect(bad.self.registration.showNotification).toHaveBeenCalledWith("Поддержка", expect.objectContaining({ silent: false }));
   });
 
   it("a tap focuses the open CRM tab and opens the ticket there, else opens a window", async () => {
