@@ -586,7 +586,7 @@ function SettingsHistory() {
                   {formatSettingValue(r.key, r.new_value)}
                 </p>
                 <p className="num whitespace-nowrap text-sm text-text-muted">
-                  {r.operator_name ?? "Неизвестный оператор"}, {formatDateTime(r.created_at)}
+                  {r.operator_name ?? "Система"}, {formatDateTime(r.created_at)}
                 </p>
               </li>
             ))}

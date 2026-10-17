@@ -86,6 +86,7 @@ export interface SettingsLogEntry {
   key: string;
   old_value: unknown;
   new_value: unknown;
+  /** Null when written outside the UI (a script or the cutover), shown as «Система». */
   operator_name: string | null;
   created_at: string;
 }

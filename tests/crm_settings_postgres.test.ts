@@ -58,6 +58,16 @@ test("settings store: merge, changed-only audit log, invalid stored value falls 
     assert.equal(log[0]!.key, "auto_assign_max_open");
     assert.equal(log[0]!.operator_name, "Anna");
     assert.equal((await mod.settingsLog(1)).length, 1);
+
+    // A row written outside the UI (cutover SQL): no operator, no old value. The old value
+    // reads as the key's default, which is what was in effect before the first write.
+    await sql`insert into crm_settings_log (key, old_value, new_value, operator_id)
+      values ('tg_ping_overdue', null, 'false'::jsonb, null)`;
+    const [sys] = await mod.settingsLog(1);
+    assert.equal(sys!.key, "tg_ping_overdue");
+    assert.equal(sys!.old_value, true);
+    assert.equal(sys!.new_value, false);
+    assert.equal(sys!.operator_name, null);
   } finally {
     await sql.end();
     await (await import("../dist/db.js")).sql.end();

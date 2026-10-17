@@ -135,7 +135,8 @@ export async function settingsLog(limit = 50): Promise<Array<{
     limit ${limit}`;
   return rows.map((r) => ({
     key: String(r.key),
-    old_value: r.old_value,
+    // A write from outside the UI may log no old value: the default was in effect then.
+    old_value: r.old_value ?? DEFAULT_SETTINGS[r.key as SettingKey] ?? null,
     new_value: r.new_value,
     operator_name: r.operator_name === null ? null : String(r.operator_name),
     created_at: new Date(r.created_at as string | Date).toISOString(),

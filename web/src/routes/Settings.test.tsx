@@ -124,6 +124,22 @@ describe("Settings, Команда", () => {
     await waitFor(() => expect(screen.queryByText("От 1 до 240 минут")).toBeNull());
   });
 
+  it("labels a change made outside the UI as «Система»", async () => {
+    mockFetch({
+      "GET /crm/api/me": ok(lead),
+      "GET /crm/api/settings": ok(settings),
+      "GET /crm/api/settings/log": ok([
+        { key: "tg_ping_overdue", old_value: true, new_value: false, operator_name: null, created_at: "2026-10-17T10:28:00Z" },
+      ]),
+      "GET /crm/api/operators": ok(operators),
+    });
+    renderSettings();
+    const row = (await screen.findByText("Просрочка")).closest("li")!;
+    expect(row.textContent).toContain("вкл → выкл");
+    expect(row.textContent).toContain("Система,");
+    expect(row.textContent).not.toContain("Неизвестный оператор");
+  });
+
   it("rejects a non-number before calling the server", async () => {
     const fetch = mockFetch({
       "GET /crm/api/me": ok(lead),
