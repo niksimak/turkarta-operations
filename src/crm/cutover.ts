@@ -43,3 +43,42 @@ export async function crmCutover(sql: postgres.Sql, apply: boolean): Promise<Cut
     throw err;
   }
 }
+
+class ArchiveDryRun extends Error {
+  constructor(readonly count: number) { super("dry_run"); }
+}
+
+/**
+ * One-off after cutover (scripts/crm_archive_backlog.ts): resolves open tickets opened before `before`
+ * that the customer has not written to since, so the Bitrix-era backlog stops feeding auto-assign and
+ * the queue. No resolve message is sent; a customer who writes again reopens the ticket as new.
+ * Each one gets a status_changed event with reason cutover_backlog, which is also the rollback key.
+ */
+export async function archiveBacklog(sql: postgres.Sql, before: Date, apply: boolean): Promise<number> {
+  const at = before.toISOString();
+  try {
+    return await sql.begin(async (tx) => {
+      const rows = await tx<{ id: string; from: string }[]>`
+        with old as (
+          select r.id, r.status from support_requests r
+           where r.status in ${tx(OPEN)} and r.created_at < ${at}::timestamptz
+             and not exists (select 1 from support_messages m
+                              where m.ticket_id = r.id and m.sender = 'user' and m.created_at >= ${at}::timestamptz)
+           for update of r
+        )
+        update support_requests r set status = 'resolved', resolved_at = now(), waiting_since = null
+          from old where r.id = old.id
+        returning r.id, old.status as from`;
+      for (const r of rows) {
+        await tx`insert into crm_ticket_events (ticket_id, type, actor_operator_id, payload)
+          values (${r.id}, 'status_changed', null,
+                  ${JSON.stringify({ from: r.from, to: "resolved", reason: "cutover_backlog" })}::text::jsonb)`;
+      }
+      if (!apply) throw new ArchiveDryRun(rows.length);
+      return rows.length;
+    });
+  } catch (err) {
+    if (err instanceof ArchiveDryRun) return err.count;
+    throw err;
+  }
+}
