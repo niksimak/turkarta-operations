@@ -20,7 +20,8 @@ import { InvalidReply, retryDelivery, sendReply, type ReplyInput } from "./reply
 import { getSettings, settingsLog, updateSettings } from "./settings.js";
 import { stats } from "./stats.js";
 import {
-  assign, BadCursor, Conflict, Forbidden, listTickets, NotFound, setStatus, take, takeOver, ticketDetail, ticketItem,
+  assign, BadCursor, Conflict, Forbidden, listTickets, NotFound, setStatus, take, takeOver, ticketCustomer, ticketDetail,
+  ticketItem,
   type ListQuery,
 } from "./tickets.js";
 import { canEditTeamSettings, type Operator } from "./types.js";
@@ -247,8 +248,14 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     const id = c.req.param("id");
     const d = await ticketDetail(id);
     if (!d) throw new NotFound();
-    const user = await userContext({ user_tg: d.ticket.user_tg, web_user_id: d.ticket.web_user_id }).catch(() => null);
-    return c.json({ ...d, user, viewers: presence.list(id) });
+    return c.json({ ...d, viewers: presence.list(id) });
+  });
+
+  // Its own call: the Turkarta lookup (up to 3 s) must never hold up opening a ticket.
+  r.get("/api/tickets/:id/user", async (c) => {
+    const t = await ticketCustomer(c.req.param("id"));
+    if (!t) throw new NotFound();
+    return c.json(await userContext(t).catch(() => null));
   });
 
   const writable = crmWritable();

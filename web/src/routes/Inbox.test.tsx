@@ -8,7 +8,7 @@ import { resetApiStateForTests } from "../lib/api";
 import { resetToastsForTests } from "../components/Toast";
 import { resetPresenceForTests } from "../lib/presence";
 import { UNSUPPORTED_TEXT } from "../components/MessageBubble";
-import type { TicketDetail, TicketListItem } from "../lib/tickets";
+import type { TicketDetail, TicketListItem, UserContext } from "../lib/tickets";
 
 const NOW = Date.parse("2026-10-16T12:00:00Z");
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -67,7 +67,10 @@ const T2 = item({
   intake_pending: true,
 });
 
-function detail(over: Partial<TicketDetail> = {}): TicketDetail {
+// `user` is what GET /tickets/:id/user answers; the detail itself does not carry it.
+type DetailFixture = TicketDetail & { user: UserContext | null };
+
+function detail(over: Partial<DetailFixture> = {}): DetailFixture {
   return {
     ticket: { ...T1, device: "iPhone", category: null, web_user_id: null },
     messages: [
@@ -110,7 +113,7 @@ function summary(id: number, name: string, onShift: boolean) {
   return { ...rest, id, name, role: id === 9 ? "admin" : "support", on_shift: onShift, open_tickets: 2 };
 }
 
-type Handler = (init: RequestInit, url: URL) => Response;
+type Handler = (init: RequestInit, url: URL) => Response | Promise<Response>;
 
 function mockApi(routes: Array<[string, Handler]>) {
   const calls: Array<{ method: string; path: string; body?: string }> = [];
@@ -135,10 +138,10 @@ function mockApi(routes: Array<[string, Handler]>) {
 const ok = (body: unknown) => () => jsonResponse(200, body);
 const page = (items: TicketListItem[]) => ok({ items, nextCursor: null, counts: { queue: 1, mine: 1, overdue: 1 } });
 
-const baseRoutes = (d: TicketDetail = detail()): Array<[string, Handler]> => [
+const baseRoutes = (d: DetailFixture = detail()): Array<[string, Handler]> => [
   ["GET /crm/api/me", ok(operator)],
   ["GET /crm/api/tickets", page([T1, T2])],
-  ["GET /crm/api/tickets/*", ok(d)],
+  ["GET /crm/api/tickets/*", (_init, url) => jsonResponse(200, url.pathname.endsWith("/user") ? d.user : d)],
   ["GET /crm/api/settings", ok(settings)],
   ["GET /crm/api/operators", ok([summary(7, "Аня Смирнова", true), summary(9, "Олег", false)])],
 ];
@@ -404,6 +407,28 @@ describe("Inbox", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "5550001. Скопировать TG id" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("5550001"));
     expect(await screen.findByText("Скопировано: TG id")).toBeTruthy();
+  });
+
+  it("prefetches a ticket on hover, so opening it is instant", async () => {
+    const { calls } = mockApi(baseRoutes());
+    renderAt("/");
+    const row = await screen.findByRole("link", { name: new RegExp(T2.user_name!) });
+    expect(calls.some((c) => c.path === `/crm/api/tickets/${T2.id}`)).toBe(false);
+    fireEvent.mouseEnter(row);
+    await waitFor(() => expect(calls.some((c) => c.path === `/crm/api/tickets/${T2.id}`)).toBe(true));
+  });
+
+  it("opens the thread without waiting for the Turkarta account", async () => {
+    const d = detail();
+    mockApi([
+      ["GET /crm/api/tickets/*", (_init, url) => (url.pathname.endsWith("/user") ? new Promise<Response>(() => {}) : jsonResponse(200, d))],
+      ...baseRoutes(d),
+    ]);
+    renderAt(`/t/${T1.id}?v=queue`);
+    const thread = await screen.findByRole("list", { name: "Переписка" });
+    expect(await within(thread).findByText("Не пришёл код")).toBeTruthy();
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(within(panel).getByText("Загружаем аккаунт…")).toBeTruthy();
   });
 
   it("shows the Turkarta account when found", async () => {

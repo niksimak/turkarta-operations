@@ -10,8 +10,10 @@ import {
   displayName,
   STATUS_LABEL,
   usePastTickets,
+  useTicketUser,
   type TicketDetail,
   type TicketListItem,
+  type UserContext,
 } from "../lib/tickets";
 
 const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(" ");
@@ -87,7 +89,9 @@ interface Props {
 }
 
 export function UserPanel({ detail, view, onClose }: Props) {
-  const { ticket, user } = detail;
+  const { ticket } = detail;
+  const account = useTicketUser(ticket.id);
+  const user = account.data ?? null;
   const past = usePastTickets(ticket);
   const tgId = ticket.user_tg ?? user?.tg_id ?? null;
   const username = ticket.user_username ?? user?.tg_username ?? null;
@@ -144,7 +148,7 @@ export function UserPanel({ detail, view, onClose }: Props) {
           </dl>
         </Section>
 
-        <Account user={user} />
+        <Account user={user} loading={account.isPending} />
 
         <Section title="Прошлые обращения">
           {past.isLoading ? (
@@ -167,7 +171,14 @@ export function UserPanel({ detail, view, onClose }: Props) {
   );
 }
 
-function Account({ user }: { user: TicketDetail["user"] }) {
+function Account({ user, loading }: { user: UserContext | null; loading: boolean }) {
+  if (loading) {
+    return (
+      <Section title="Аккаунт Turkarta">
+        <p className="text-sm text-text-muted">Загружаем аккаунт…</p>
+      </Section>
+    );
+  }
   if (!user) {
     return (
       <Section title="Аккаунт Turkarta">

@@ -66,6 +66,7 @@ mock.module("../dist/crm/tickets.js", { namedExports: {
     ? { ticket: { id, user_tg: 42, web_user_id: null }, messages: [], events: [] }
     : null),
   ticketItem: async (id: string) => ({ id }),
+  ticketCustomer: async (id: string) => (id === TICKET ? { user_tg: 42, web_user_id: null } : null),
   take: async (id: string, me: Op) => {
     record("take", id, me.id);
     throw new Conflict("assigned_to_other", { id: 9, name: "Boris" });
@@ -161,14 +162,19 @@ test("NotFound, BadCursor and validation errors map to 404, 400, 422", async () 
   assert.equal(callsOf("setStatus").length, 0);
 });
 
-test("ticket list parses filters; detail carries user context and viewers", async () => {
+test("ticket list parses filters; detail carries viewers; the account loads on its own", async () => {
   const list = await req("/crm/api/tickets?view=mine&status=awaiting&channel=web&operator=3&overdue=1&q=ivan&limit=5",
     { headers: H("tok-support") });
   assert.equal(list.status, 200);
   const q = callsOf("listTickets").at(-1)!.args[1];
   assert.deepEqual(q, { view: "mine", status: "awaiting", channel: "web", operatorId: 3, overdue: true, q: "ivan", limit: 5 });
   const d = await (await req(`/crm/api/tickets/${TICKET}`, { headers: H("tok-support") })).json();
-  assert.deepEqual(d.user, { found: true, tg_id: 42 });
+  // The Turkarta lookup is a separate call, so opening a ticket never waits on it.
+  assert.equal(d.user, undefined);
+  const u = await req(`/crm/api/tickets/${TICKET}/user`, { headers: H("tok-support") });
+  assert.equal(u.status, 200);
+  assert.deepEqual(await u.json(), { found: true, tg_id: 42 });
+  assert.equal((await req("/crm/api/tickets/nope/user", { headers: H("tok-support") })).status, 404);
   assert.deepEqual(d.viewers, [{ operatorId: 2, name: "Lena", state: "viewing" }]);
   assert.equal(d.ticket.id, TICKET);
 });
