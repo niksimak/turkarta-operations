@@ -2,6 +2,22 @@
 
 _Last updated: 2026-10-17_
 
+## Status: PWA push + video replies live, image `crm-f0aa27e` — 2026-10-17 night
+
+- Live image `registry.fly.io/turkarta-operations:crm-f0aa27e` (main `f0aa27e`): #19 PWA (manifest,
+  `/crm/sw.js`, per-device «Push-уведомления» switch) + Web Push to every operator for new ticket
+  (scope «Все»), assigned, client replied, and the reply reminder when a ticket goes overdue;
+  #20 operator video replies (one per message, MP4/MOV/WEBM, ≤ 20 MB, Telegram `sendVideo`,
+  CRM plays inline with Range support).
+- Secrets added (staged, then this deploy): `CRM_VAPID_PUBLIC_KEY`, `CRM_VAPID_PRIVATE_KEY`
+  (generated on the owner's Mac, never printed). Subject = `PUBLIC_BASE_URL`.
+- Schema on boot: `0017_crm_push.sql` (table `crm_push_subscriptions`), `0018_support_video.sql`
+  (kind / media / size checks widened in place; verified on prod after boot).
+- Web customers: the video player ships in Turkarta webapp #1090 (merged to main, not on prod yet);
+  until then a video reply shows as a broken image in the web chat, Telegram is fine.
+- Rollback: `fly deploy --image registry.fly.io/turkarta-operations:crm-de7997e -a turkarta-operations`
+  (old code runs on the widened schema); push off: `fly secrets unset CRM_VAPID_PUBLIC_KEY CRM_VAPID_PRIVATE_KEY`.
+
 ## Status: CRM follow-ups live, image `crm-de7997e` — 2026-10-17 evening
 
 - Live image `registry.fly.io/turkarta-operations:crm-de7997e` (main `de7997e`), PRs #11–#17:
