@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
 
 // Every colour is a CSS variable from src/styles/tokens.css, so one class works
 // in both themes. Do not add raw hex values here.
@@ -83,5 +84,8 @@ export default {
       width: { rail: "13.5rem", "rail-compact": "3.5rem" },
     },
   },
-  plugins: [],
+  plugins: [
+    // `wide:` styles the rail at full width: on a large screen, or inside the menu opened on a small one.
+    plugin(({ addVariant }) => addVariant("wide", ["@media (min-width: 1024px)", ".rail-wide &"])),
+  ],
 } satisfies Config;

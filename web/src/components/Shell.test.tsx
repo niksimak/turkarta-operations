@@ -74,6 +74,34 @@ describe("Shell", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/crm/api/me/heartbeat", expect.anything()));
   });
 
+  it("opens the full menu from the compact rail and closes it on Escape, the scrim or a link", async () => {
+    mockFetch({
+      "GET /crm/api/me": ok(operator),
+      "GET /crm/api/tickets?view=queue&limit=1": ok({ items: [], nextCursor: null, counts: { queue: 4, mine: 2, overdue: 1 } }),
+      "POST /crm/api/me/heartbeat": ok({ ok: true }),
+    });
+    renderShell();
+    const nav = await screen.findByRole("navigation", { name: "Разделы" });
+    const menu = screen.getByRole("button", { name: "Открыть меню" });
+    expect(menu.getAttribute("aria-expanded")).toBe("false");
+    expect(nav.className).not.toContain("rail-wide");
+
+    fireEvent.click(menu);
+    expect(nav.className).toContain("rail-wide");
+    expect(menu.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(nav.className).not.toContain("rail-wide"));
+
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByTestId("rail-scrim"));
+    await waitFor(() => expect(nav.className).not.toContain("rail-wide"));
+
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByRole("link", { name: "Очередь: 4" }));
+    await waitFor(() => expect(nav.className).not.toContain("rail-wide"));
+    expect(screen.queryByTestId("rail-scrim")).toBeNull();
+  });
+
   it("toggles the shift with an optimistic switch", async () => {
     let shiftBody = "";
     let server = { ...operator };

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
@@ -8,6 +8,7 @@ import { ticketKeys } from "../lib/tickets";
 import { useCrmStream, type CrmEvent } from "../lib/sse";
 import { api, ApiError, json, leaveTo, loginFailedUrl } from "../lib/api";
 import { useTheme, storedThemePref, type ThemePref } from "../lib/theme";
+import { useModal } from "../lib/modal";
 import {
   keys,
   useCounts,
@@ -60,6 +61,10 @@ export function Shell() {
     [qc, navigate],
   );
   const stream = useCrmStream(onEvent);
+  // Small screens: the compact rail opens as a full-width menu over the page.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   useEffect(() => {
     document.title = "Поддержка";
@@ -73,55 +78,85 @@ export function Shell() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg text-text">
-      <nav
-        aria-label="Разделы"
-        className="flex w-rail-compact shrink-0 flex-col border-r border-border bg-surface-2 lg:w-rail"
-      >
-        <Brand />
-        {me.data ? (
-          <>
-            <div className="flex flex-col gap-0.5 px-2 pt-2">
-              <NavItem to="/" icon="queue" label="Очередь" count={counts.data?.queue} />
-              <NavItem to="/mine" icon="mine" label="Мои" count={counts.data?.mine} />
-              <NavItem to="/all" icon="all" label="Все" />
-              <NavItem
-                to="/all?overdue=1"
-                icon="overdue"
-                label="Просрочено"
-                count={counts.data?.overdue}
-                tone="late"
-              />
-            </div>
-            <div className="mx-4 my-3 h-px bg-border" />
-            <div className="flex flex-col gap-0.5 px-2">
-              <NavItem to="/stats" icon="stats" label="Статистика" />
-              <NavItem to="/canned" icon="canned" label="Шаблоны" />
-              <NavItem to="/settings" icon="settings" label="Настройки" />
-            </div>
-            <div className="flex-1" />
-            <Reconnecting active={stream.reconnecting} />
-            <OperatorControls me={me.data} />
-          </>
-        ) : (
-          <RailSkeleton />
+      {/* Keeps the compact rail's room while the opened menu floats over the page. */}
+      <div className="w-rail-compact shrink-0 lg:w-rail">
+        {menuOpen && (
+          <div
+            data-testid="rail-scrim"
+            aria-hidden="true"
+            onClick={closeMenu}
+            className="scrim-in fixed inset-0 z-40 bg-scrim lg:hidden"
+          />
         )}
-      </nav>
+        {menuOpen && <MenuFocus navRef={navRef} onClose={closeMenu} />}
+        <nav
+          ref={navRef}
+          aria-label="Разделы"
+          tabIndex={-1}
+          // Following a link from the opened menu closes it.
+          onClick={(e) => menuOpen && (e.target as HTMLElement).closest("a") && closeMenu()}
+          className={cx(
+            "flex h-full w-full flex-col border-r border-border bg-surface-2 focus-visible:outline-none",
+            menuOpen && "rail-wide sheet-in-left max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:w-rail max-lg:shadow-pop",
+          )}
+        >
+          <Brand menuOpen={menuOpen} onMenu={() => setMenuOpen((o) => !o)} />
+          {me.data ? (
+            <>
+              <div className="flex flex-col gap-0.5 px-2 pt-2">
+                <NavItem to="/" icon="queue" label="Очередь" count={counts.data?.queue} />
+                <NavItem to="/mine" icon="mine" label="Мои" count={counts.data?.mine} />
+                <NavItem to="/all" icon="all" label="Все" />
+                <NavItem
+                  to="/all?overdue=1"
+                  icon="overdue"
+                  label="Просрочено"
+                  count={counts.data?.overdue}
+                  tone="late"
+                />
+              </div>
+              <div className="mx-4 my-3 h-px bg-border" />
+              <div className="flex flex-col gap-0.5 px-2">
+                <NavItem to="/stats" icon="stats" label="Статистика" />
+                <NavItem to="/canned" icon="canned" label="Шаблоны" />
+                <NavItem to="/settings" icon="settings" label="Настройки" />
+              </div>
+              <div className="flex-1" />
+              <Reconnecting active={stream.reconnecting} />
+              <OperatorControls me={me.data} />
+            </>
+          ) : (
+            <RailSkeleton />
+          )}
+        </nav>
+      </div>
       <main className="min-w-0 flex-1 overflow-auto">{ready && <Outlet />}</main>
       <Toaster />
     </div>
   );
 }
 
-function Brand() {
+/** Focus and Escape for the opened menu; mounted only while it is open. */
+function MenuFocus({ navRef, onClose }: { navRef: RefObject<HTMLElement | null>; onClose: () => void }) {
+  useModal(navRef, { onClose });
+  return null;
+}
+
+function Brand({ menuOpen, onMenu }: { menuOpen: boolean; onMenu: () => void }) {
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2.5 px-3 lg:px-4">
-      <span
-        aria-hidden="true"
-        className="grid size-7 shrink-0 place-items-center rounded-sm bg-accent text-sm font-semibold text-accent-fg lg:hidden"
+    <div className="flex h-14 shrink-0 items-center gap-2.5 px-3 wide:px-4">
+      {/* Small screens: the badge opens the full menu. Large screens show the name instead. */}
+      <button
+        type="button"
+        onClick={onMenu}
+        aria-expanded={menuOpen}
+        aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
+        title={menuOpen ? "Закрыть меню" : "Меню"}
+        className="press grid size-7 shrink-0 place-items-center rounded-sm bg-accent text-sm font-semibold text-accent-fg lg:hidden"
       >
         П
-      </span>
-      <span className="sr-only text-md font-semibold lg:not-sr-only">Поддержка</span>
+      </button>
+      <span className="sr-only text-md font-semibold wide:not-sr-only">Поддержка</span>
     </div>
   );
 }
@@ -160,14 +195,14 @@ function NavItem({ to, icon, label, count, tone = "neutral" }: NavItemProps) {
       aria-label={showCount ? `${label}: ${value}` : label}
       title={label}
       className={cx(
-        "press relative flex h-9 items-center justify-center gap-2.5 rounded-sm px-2 lg:h-8 lg:justify-start",
+        "press relative flex h-9 items-center justify-center gap-2.5 rounded-sm px-2 wide:h-8 wide:justify-start",
         active
           ? "bg-surface font-semibold text-text shadow-[0_0_0_1px_var(--border)]"
           : "hover-surface text-text-muted",
       )}
     >
       <Icon name={icon} className={cx("shrink-0", active && "text-accent")} />
-      <span className="hidden flex-1 truncate lg:block">{label}</span>
+      <span className="hidden flex-1 truncate wide:block">{label}</span>
       {showCount && (
         <span
           aria-hidden="true"
@@ -175,12 +210,12 @@ function NavItem({ to, icon, label, count, tone = "neutral" }: NavItemProps) {
             "num grid place-items-center rounded-xs text-xs font-semibold",
             // Compact rail: a small corner tab ringed in the rail colour; wide rail: inline.
             "absolute right-0 top-0 h-4 min-w-4 px-0.5 shadow-[0_0_0_2px_var(--surface-2)]",
-            "lg:static lg:h-5 lg:min-w-5 lg:px-1 lg:shadow-none",
+            "wide:static wide:h-5 wide:min-w-5 wide:px-1 wide:shadow-none",
             tone === "late"
               ? "bg-sla-late-soft text-sla-late"
               : value === 0
-                ? "text-text-muted max-lg:hidden"
-                : "bg-surface text-text lg:shadow-[0_0_0_1px_var(--border)]",
+                ? "hidden text-text-muted wide:grid"
+                : "bg-surface text-text wide:shadow-[0_0_0_1px_var(--border)]",
           )}
         >
           {value > 999 ? "999+" : value}
@@ -197,14 +232,14 @@ function Reconnecting({ active }: { active: boolean }) {
       role="status"
       className={cx(
         active &&
-          "mx-2 mb-2 flex items-center justify-center gap-2 rounded-sm bg-sla-warn-soft px-2 py-1.5 text-xs text-sla-warn lg:justify-start",
+          "mx-2 mb-2 flex items-center justify-center gap-2 rounded-sm bg-sla-warn-soft px-2 py-1.5 text-xs text-sla-warn wide:justify-start",
       )}
       title={active ? "Связь с сервером потеряна. Переподключаемся." : undefined}
     >
       {active && (
         <>
           <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-sla-warn" />
-          <span className="sr-only lg:not-sr-only">Переподключение…</span>
+          <span className="sr-only wide:not-sr-only">Переподключение…</span>
         </>
       )}
     </p>
@@ -228,9 +263,9 @@ function OperatorControls({ me }: { me: Operator }) {
   };
 
   return (
-    <div className="flex flex-col gap-2 border-t border-border px-2 py-3 lg:px-3">
-      <div className="flex items-center justify-center gap-2 lg:justify-between">
-        <span id="shift-label" className="sr-only text-base lg:not-sr-only">
+    <div className="flex flex-col gap-2 border-t border-border px-2 py-3 wide:px-3">
+      <div className="flex items-center justify-center gap-2 wide:justify-between">
+        <span id="shift-label" className="sr-only text-base wide:not-sr-only">
           На смене
         </span>
         <Switch
@@ -240,7 +275,7 @@ function OperatorControls({ me }: { me: Operator }) {
           title={me.on_shift ? "Вы на смене. Новые обращения назначаются вам" : "Вы не на смене"}
         />
       </div>
-      <div className="flex flex-col items-center gap-2 lg:flex-row lg:justify-between">
+      <div className="flex flex-col items-center gap-2 wide:flex-row wide:justify-between">
         <IconToggle
           label="Звук"
           pressed={me.prefs.sound}
@@ -252,14 +287,14 @@ function OperatorControls({ me }: { me: Operator }) {
       </div>
       {failed && (
         <p role="alert" className="text-xs text-danger">
-          <span aria-hidden="true" className="lg:hidden" title="Не сохранилось. Повторите">
+          <span aria-hidden="true" className="wide:hidden" title="Не сохранилось. Повторите">
             <Icon name="alert" />
           </span>
-          <span className="sr-only lg:not-sr-only">Не сохранилось. Повторите.</span>
+          <span className="sr-only wide:not-sr-only">Не сохранилось. Повторите.</span>
         </p>
       )}
-      <div className="flex items-center justify-center gap-2 lg:justify-between">
-        <div className="hidden min-w-0 lg:block">
+      <div className="flex items-center justify-center gap-2 wide:justify-between">
+        <div className="hidden min-w-0 wide:block">
           <p className="truncate text-sm font-semibold">{me.name}</p>
           <p className="truncate text-xs text-text-muted">
             {me.role === "admin" ? "Администратор" : "Поддержка"}
@@ -379,7 +414,7 @@ function ThemeSwitch({ value, onChange }: { value: ThemePref; onChange: (next: T
         onClick={() => onChange(next.value)}
         aria-label={`Тема: ${current.label}. Переключить на «${next.label}»`}
         title={`Тема: ${current.label}`}
-        className="press hover-surface grid size-8 place-items-center rounded-sm text-text-muted lg:hidden"
+        className="press hover-surface grid size-8 place-items-center rounded-sm text-text-muted wide:hidden"
       >
         <Icon name={current.icon} />
       </button>
@@ -387,7 +422,7 @@ function ThemeSwitch({ value, onChange }: { value: ThemePref; onChange: (next: T
         role="radiogroup"
         aria-label="Тема"
         onKeyDown={onKeyDown}
-        className="hidden rounded-sm bg-bg p-0.5 shadow-[inset_0_0_0_1px_var(--border)] lg:flex"
+        className="hidden rounded-sm bg-bg p-0.5 shadow-[inset_0_0_0_1px_var(--border)] wide:flex"
       >
         {THEMES.map((t, i) => {
           const active = t.value === value;
