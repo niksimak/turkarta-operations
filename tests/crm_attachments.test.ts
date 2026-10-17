@@ -64,3 +64,27 @@ test("unknown id gives 404", async () => {
   const res = await attachmentResponse("nope", { load: async () => null });
   assert.equal(res.status, 404);
 });
+
+const clip = { media_type: "video/mp4", content: Buffer.from([10, 11, 12, 13, 14]), tg_file_id: null };
+
+test("stored video honours byte ranges so browsers can stream and seek", async () => {
+  const whole = await attachmentResponse("v1", { load: async () => clip });
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get("accept-ranges"), "bytes");
+  assert.equal(whole.headers.get("content-length"), "5");
+
+  const part = await attachmentResponse("v1", { load: async () => clip, range: "bytes=1-3" });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get("content-range"), "bytes 1-3/5");
+  assert.equal(part.headers.get("content-type"), "video/mp4");
+  assert.deepEqual(Buffer.from(await part.arrayBuffer()), Buffer.from([11, 12, 13]));
+
+  const open = await attachmentResponse("v1", { load: async () => clip, range: "bytes=2-" });
+  assert.equal(open.headers.get("content-range"), "bytes 2-4/5");
+  const suffix = await attachmentResponse("v1", { load: async () => clip, range: "bytes=-2" });
+  assert.deepEqual(Buffer.from(await suffix.arrayBuffer()), Buffer.from([13, 14]));
+
+  const bad = await attachmentResponse("v1", { load: async () => clip, range: "bytes=9-12" });
+  assert.equal(bad.status, 416);
+  assert.equal(bad.headers.get("content-range"), "bytes */5");
+});

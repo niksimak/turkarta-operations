@@ -201,6 +201,31 @@ test("multipart reply: an invalid photo reports its index", async () => {
   assert.deepEqual(await res.json(), { error: "photo_invalid", index: 1 });
 });
 
+const mp4 = () => new File([new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode("ftypisom"), 0, 0])], "how.mp4", { type: "video/mp4" });
+
+test("multipart reply: one video reaches sendReply; a bad or second video is refused", async () => {
+  const fd = new FormData();
+  fd.set("body", "Инструкция");
+  fd.set("video", mp4());
+  const res = await req(`/crm/api/tickets/${TICKET}/messages`, { method: "POST", headers: H("tok-support"), body: fd });
+  assert.equal(res.status, 200);
+  const input = callsOf("sendReply").at(-1)!.args[2] as { photos: unknown[]; video?: { mediaType: string; filename: string } };
+  assert.deepEqual([input.video?.mediaType, input.video?.filename, input.photos.length], ["video/mp4", "how.mp4", 0]);
+
+  const before = callsOf("sendReply").length;
+  const bad = new FormData();
+  bad.set("video", new File([new Uint8Array([1, 2, 3])], "x.mp4", { type: "video/mp4" }));
+  const r1 = await req(`/crm/api/tickets/${TICKET}/messages`, { method: "POST", headers: H("tok-support"), body: bad });
+  assert.equal(r1.status, 422);
+  assert.deepEqual(await r1.json(), { error: "video_invalid" });
+  const two = new FormData();
+  two.append("video", mp4());
+  two.append("video", mp4());
+  const r2 = await req(`/crm/api/tickets/${TICKET}/messages`, { method: "POST", headers: H("tok-support"), body: two });
+  assert.equal(r2.status, 422);
+  assert.equal(callsOf("sendReply").length, before);
+});
+
 test("multipart reply with one photo and JSON note reach sendReply", async () => {
   const fd = new FormData();
   fd.set("body", " привет ");
