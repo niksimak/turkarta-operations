@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, json } from "./api";
 import { addOutgoing, bindServerId, confirmOutgoing, dropOutgoing, removeOutgoing, withOutbox } from "./outbox";
@@ -113,7 +114,6 @@ export interface TicketDetail {
   ticket: TicketDetailItem;
   messages: CrmMessage[];
   events: TicketEventRow[];
-  user: UserContext | null;
   viewers: Viewer[];
 }
 
@@ -203,12 +203,32 @@ export function useTicketList(f: ListFilters) {
   });
 }
 
+const ticketQuery = (id: string) => ({
+  queryKey: ticketKeys.detail(id),
+  // Unconfirmed sends survive a refetch that lands before their POST returns.
+  queryFn: async () => withOutbox(id, await api<TicketDetail>(`/tickets/${encodeURIComponent(id)}`)),
+});
+
 export function useTicket(id: string | undefined) {
+  return useQuery({ ...ticketQuery(id ?? ""), enabled: Boolean(id) });
+}
+
+/** Warms a ticket before it is opened (hover, focus, keyboard cursor), so opening it is instant. */
+export function usePrefetchTicket(): (id: string) => void {
+  const qc = useQueryClient();
+  return useCallback((id: string) => void qc.prefetchQuery({ ...ticketQuery(id), staleTime: 15_000 }), [qc]);
+}
+
+/**
+ * The customer's Turkarta account, fetched apart from the ticket so a slow Turkarta never holds up
+ * the thread. Keyed outside "tickets": live ticket events must not re-run this lookup.
+ */
+export function useTicketUser(id: string | undefined) {
   return useQuery({
-    queryKey: ticketKeys.detail(id ?? ""),
-    // Unconfirmed sends survive a refetch that lands before their POST returns.
-    queryFn: async () => withOutbox(id!, await api<TicketDetail>(`/tickets/${encodeURIComponent(id!)}`)),
+    queryKey: ["user-context", id ?? ""] as const,
+    queryFn: () => api<UserContext | null>(`/tickets/${encodeURIComponent(id!)}/user`),
     enabled: Boolean(id),
+    staleTime: 60_000,
   });
 }
 

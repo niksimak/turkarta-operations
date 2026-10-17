@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { SlaBadge } from "./SlaBadge";
 import { usePresence } from "../lib/presence";
@@ -11,6 +11,7 @@ import {
   STATUS_LABEL,
   type ChannelFilter,
   type TicketListItem,
+  usePrefetchTicket,
   type Viewer,
 } from "../lib/tickets";
 
@@ -93,6 +94,11 @@ export const TicketRow = forwardRef<HTMLAnchorElement, Props>(function TicketRow
   ref,
 ) {
   const viewers = usePresence(ticket.id, meId);
+  const prefetch = usePrefetchTicket();
+  // j/k moves the cursor ahead of Enter: warm the ticket it lands on.
+  useEffect(() => {
+    if (cursor) prefetch(ticket.id);
+  }, [cursor, prefetch, ticket.id]);
   const name = displayName(ticket);
   const showHandle = Boolean(ticket.user_name?.trim() && ticket.user_username);
   return (
@@ -102,6 +108,8 @@ export const TicketRow = forwardRef<HTMLAnchorElement, Props>(function TicketRow
       aria-current={open ? "true" : undefined}
       data-ticket-id={ticket.id}
       data-cursor={cursor || undefined}
+      onMouseEnter={() => prefetch(ticket.id)}
+      onFocus={() => prefetch(ticket.id)}
       className={cx(
         "relative flex h-14 flex-col justify-center gap-0.5 px-3 transition-colors duration-fast",
         open ? "bg-accent-soft" : "hover-surface",
