@@ -1,10 +1,9 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
-import { NEXT_PATH_RE } from "../lib/api";
+import { adminLoginHref } from "../lib/api";
 
-/** The only way into the CRM: the Turkarta admin issues a fresh SSO link. */
-export const ADMIN_SUPPORT_URL = "https://api.turkarta.me/admin/support-crm";
+export { ADMIN_SUPPORT_URL } from "../lib/api";
 
 export const LOGIN_FAILED_COPY: Record<string, string> = {
   malformed: "Ссылка для входа повреждена.",
@@ -20,11 +19,6 @@ const FALLBACK = "Не удалось войти.";
 
 export function loginFailedMessage(reason: string | null): string {
   return (reason && Object.hasOwn(LOGIN_FAILED_COPY, reason) ? LOGIN_FAILED_COPY[reason] : undefined) ?? FALLBACK;
-}
-
-/** The admin SSO link, carrying the CRM path to return to when it is one the issuer accepts. */
-export function adminLoginHref(next: string | null): string {
-  return next && NEXT_PATH_RE.test(next) ? `${ADMIN_SUPPORT_URL}?next=${encodeURIComponent(next)}` : ADMIN_SUPPORT_URL;
 }
 
 export function LoginFailed() {

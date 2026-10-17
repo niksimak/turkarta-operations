@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { createQueryClient, routes } from "../app";
 import { navIsActive } from "./Shell";
 import { FakeEventSource, installFakeEventSource, jsonResponse, stubLocationAssign } from "../test/fakes";
-import { resetApiStateForTests } from "../lib/api";
+import { ADMIN_SUPPORT_URL, resetApiStateForTests } from "../lib/api";
 
 const operator = {
   id: 7,
@@ -172,12 +172,12 @@ describe("Shell", () => {
     expect(screen.getByRole("button", { name: "Повторить" })).toBeTruthy();
   });
 
-  it("sends a visitor without a session to login-failed", async () => {
+  it("sends a visitor without a session straight to the admin sign-in", async () => {
     const location = stubLocationAssign();
     try {
       mockFetch({ "GET /crm/api/me": () => jsonResponse(401, { error: "unauthorized" }) });
       const { client } = renderShell();
-      await waitFor(() => expect(location.assign).toHaveBeenCalledWith("/crm/login-failed?reason=session"));
+      await waitFor(() => expect(location.assign).toHaveBeenCalledWith(ADMIN_SUPPORT_URL));
       await waitFor(() => expect(client.getQueryState(["me"])?.status).toBe("error"));
       expect(screen.queryByText("Не удалось загрузить профиль")).toBeNull();
     } finally {

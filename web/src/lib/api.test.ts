@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, json, LOGIN_FAILED_SESSION, loginFailedUrl, resetApiStateForTests, shouldRetry } from "./api";
+import { ADMIN_SUPPORT_URL, api, ApiError, json, LOGIN_FAILED_SESSION, loginFailedUrl, resetApiStateForTests, sessionLostUrl, shouldRetry } from "./api";
 import { jsonResponse, stubLocationAssign } from "../test/fakes";
 
 describe("api", () => {
@@ -33,7 +33,7 @@ describe("api", () => {
     expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
   });
 
-  it("redirects to login-failed once, however many calls get 401", async () => {
+  it("sends a 401 straight to the admin sign-in once, however many calls get 401", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => jsonResponse(401, { error: "unauthorized" })));
     const results = await Promise.allSettled([api("/me"), api("/tickets"), api("/me/heartbeat")]);
     for (const r of results) {
@@ -44,18 +44,27 @@ describe("api", () => {
       expect(err.body).toEqual({ error: "unauthorized" });
     }
     expect(location.assign).toHaveBeenCalledTimes(1);
-    expect(location.assign).toHaveBeenCalledWith(LOGIN_FAILED_SESSION);
-    expect(LOGIN_FAILED_SESSION).toBe("/crm/login-failed?reason=session");
+    expect(location.assign).toHaveBeenCalledWith(ADMIN_SUPPORT_URL);
   });
 
-  it("keeps the CRM path on a 401 so re-login returns to it", async () => {
+  it("keeps the CRM path on a 401 so the admin sign-in returns to it", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,
       value: { ...window.location, pathname: "/crm/t/7c1e-ab", assign: location.assign },
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: "unauthorized" })));
     await api("/tickets/7c1e-ab").catch(() => undefined);
-    expect(location.assign).toHaveBeenCalledWith("/crm/login-failed?reason=session&next=%2Fcrm%2Ft%2F7c1e-ab");
+    expect(location.assign).toHaveBeenCalledWith(`${ADMIN_SUPPORT_URL}?next=%2Fcrm%2Ft%2F7c1e-ab`);
+  });
+
+  it("shows login-failed instead of bouncing again when the last sign-in hop was under 30 s ago", () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    expect(sessionLostUrl("/crm/all", 1_000_000, storage)).toBe(`${ADMIN_SUPPORT_URL}?next=%2Fcrm%2Fall`);
+    expect(sessionLostUrl("/crm/all", 1_029_999, storage)).toBe("/crm/login-failed?reason=session&next=%2Fcrm%2Fall");
+    expect(sessionLostUrl("/crm/all", 1_060_000, storage)).toBe(`${ADMIN_SUPPORT_URL}?next=%2Fcrm%2Fall`);
+    const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    expect(sessionLostUrl("/crm", 1, broken)).toBe(LOGIN_FAILED_SESSION + "&next=%2Fcrm");
   });
 
   it("passes only paths the SSO issuer accepts as next", () => {
