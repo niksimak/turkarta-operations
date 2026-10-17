@@ -172,6 +172,13 @@ export async function listTickets(
   return { items: page.map(toItem), nextCursor, counts: { queue: c!.queue, mine: c!.mine, overdue: c!.overdue } };
 }
 
+/** Just who the ticket belongs to: the key for the Turkarta account lookup. */
+export async function ticketCustomer(id: string): Promise<{ user_tg: number | null; web_user_id: string | null } | null> {
+  if (!UUID_RE.test(id)) return null;
+  const [r] = await sql`select user_tg::text as user_tg, web_user_id from support_requests where id = ${id}`;
+  return r ? { user_tg: num(r.user_tg), web_user_id: (r.web_user_id as string | null) ?? null } : null;
+}
+
 export async function ticketItem(id: string): Promise<TicketListItem | null> {
   if (!UUID_RE.test(id)) return null;
   const [r] = await sql`${itemSelect(sql``)} where r.id = ${id}`;

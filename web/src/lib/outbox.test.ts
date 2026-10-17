@@ -31,7 +31,6 @@ const detail = (messages: CrmMessage[]): TicketDetail => ({
   ticket: {} as TicketDetail["ticket"],
   messages,
   events: [],
-  user: null,
   viewers: [],
 });
 

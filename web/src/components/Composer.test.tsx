@@ -62,7 +62,6 @@ const detail = (over: Partial<TicketListItem> = {}): TicketDetail => ({
   ticket: ticket(over),
   messages: [userMessage],
   events: [],
-  user: { found: false },
   viewers: [],
 });
 
