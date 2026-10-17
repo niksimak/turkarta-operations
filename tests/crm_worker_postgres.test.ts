@@ -270,9 +270,16 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       assert.equal(sent.overdue[0]!.minutes, 6);
       assert.ok((await row(id)).overdue_pinged_at instanceof Date);
       assert.equal((await row(ok)).overdue_pinged_at, null);
+      await settle();
+      const reminders = () => events.filter((e) => e.type === "notify" && e.kind === "reminder");
+      assert.deepEqual(reminders(), [
+        { type: "notify", operatorId: 1, kind: "reminder", ticketId: id, title: "Ждёт ответа 6 мин", body: "Иван" },
+      ], "the assignee gets a reply reminder");
 
       assert.equal((await worker.tick(undefined, deps)).overdue, 0, "same waiting period pings once");
       assert.equal(sent.overdue.length, 1);
+      await settle();
+      assert.equal(reminders().length, 1, "one reminder per waiting period");
 
       // Agent replies, then the user writes again: a new waiting period on the follow-up target (15 min).
       await sql`update support_requests set waiting_since = null where id = ${ok}`;
@@ -291,6 +298,12 @@ test("crm worker: auto-assign, shift timeout, nobody on shift, overdue, stuck de
       assert.equal((await worker.tick(undefined, deps)).overdue, 1);
       assert.equal(sent.overdue.length, 0);
       assert.ok((await row(quiet)).overdue_pinged_at instanceof Date, "marked even when the ping is off");
+      await settle();
+      assert.deepEqual(
+        events.filter((e) => e.type === "notify" && e.kind === "reminder").map((e) => [e.ticketId, e.operatorId]),
+        [[quiet, null]],
+        "the reminder does not depend on the TG ping; unassigned goes to everyone watching the queue",
+      );
     });
 
     await t.test("alert failures never break tick", async () => {

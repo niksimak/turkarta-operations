@@ -94,11 +94,19 @@ export async function tick(
   }
 
   // Marked even when the ping is off, so turning it on later does not flush a backlog.
-  const overdue = await sql<{ id: string; minutes: number }[]>`
+  const overdue = await sql<{ id: string; minutes: number; operator_id: string | null; user_name: string | null; user_username: string | null }[]>`
     update support_requests r set overdue_pinged_at = ${at}
      where ${overdueCond(s, at)}
        and (r.overdue_pinged_at is null or r.overdue_pinged_at < r.waiting_since)
-    returning r.id, floor(extract(epoch from (${at} - r.waiting_since)) / 60)::int as minutes`;
+    returning r.id, floor(extract(epoch from (${at} - r.waiting_since)) / 60)::int as minutes,
+              r.assigned_operator_id::text as operator_id, r.user_name, r.user_username`;
+  // A reply reminder for the assignee (or everyone watching the queue), whatever the TG ping says.
+  for (const o of overdue) {
+    await publish({
+      type: "notify", operatorId: o.operator_id === null ? null : Number(o.operator_id), kind: "reminder",
+      ticketId: o.id, title: `Ждёт ответа ${o.minutes} мин`, body: ticketWho(o),
+    });
+  }
   if (s.tg_ping_overdue && alert) {
     for (const o of overdue) {
       await safeAlert("overdue", async () => {

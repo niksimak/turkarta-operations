@@ -35,6 +35,13 @@ describe("shouldNotify", () => {
     expect(shouldNotify(event(), me({ notify_scope: "mine" }))).toBe(false);
     expect(shouldNotify(event({ operatorId: 7, kind: "mention" }), me({ notify_scope: "mine" }))).toBe(true);
   });
+
+  it("a reply reminder reaches the assignee; an unassigned one only those watching «Все» (same rule as push)", () => {
+    expect(shouldNotify(event({ operatorId: 7, kind: "reminder" }), me({ notify_scope: "mine" }))).toBe(true);
+    expect(shouldNotify(event({ operatorId: 8, kind: "reminder" }), me())).toBe(false);
+    expect(shouldNotify(event({ operatorId: null, kind: "reminder" }), me())).toBe(true);
+    expect(shouldNotify(event({ operatorId: null, kind: "reminder" }), me({ notify_scope: "mine" }))).toBe(false);
+  });
 });
 
 describe("handleNotify", () => {
