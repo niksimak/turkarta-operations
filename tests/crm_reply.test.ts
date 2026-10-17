@@ -25,6 +25,7 @@ function fakeTransport(fail?: { method: string; error: unknown }) {
   const tg: TgTransport = {
     async sendMessage(chatId, text) { calls.push({ method: "sendMessage", chatId, text }); maybeFail("sendMessage"); return { message_id: ++n }; },
     async sendPhoto(chatId, _photo, caption) { calls.push({ method: "sendPhoto", chatId, caption }); maybeFail("sendPhoto"); return file(); },
+    async sendVideo(chatId, _video, caption) { calls.push({ method: "sendVideo", chatId, caption }); maybeFail("sendVideo"); return file(); },
     async sendMediaGroup(chatId, photos, caption) {
       calls.push({ method: "sendMediaGroup", chatId, caption, count: photos.length });
       maybeFail("sendMediaGroup");
@@ -162,4 +163,29 @@ test("grammyTransport sends bytes as InputFile and returns the largest photo siz
   const media = seen[2]!.args[1] as Array<Record<string, unknown>>;
   assert.deepEqual(media.map((m) => [m.type, m.caption]), [["photo", "first"], ["photo", undefined]]);
   assert.ok(media.every((m) => m.media instanceof InputFile));
+});
+
+const video = { bytes: new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]), filename: "how-to.mp4" };
+
+test("a video goes out as sendVideo with the body as caption", async () => {
+  const { tg, calls } = fakeTransport();
+  const files = await reply.sendTelegram(tg, 42, "Видеоинструкция", [video], async () => {}, true);
+  assert.deepEqual(calls, [{ method: "sendVideo", chatId: 42, caption: "Видеоинструкция" }]);
+  assert.equal(files.length, 1);
+});
+
+test("a video with a body over the caption limit is followed by the text", async () => {
+  const { tg, calls } = fakeTransport();
+  await reply.sendTelegram(tg, 42, "я".repeat(1025), [video], async () => {}, true);
+  assert.deepEqual(calls.map((c) => c.method), ["sendVideo", "sendMessage"]);
+});
+
+test("a reply carries one video and no photos; a video alone needs no text", () => {
+  const v = { content: video.bytes, mediaType: "video/mp4" as const, filename: "how-to.mp4" };
+  assert.equal(reply.validateReply({ kind: "reply", body: "  ", photos: [], video: v }), "");
+  assert.throws(
+    () => reply.validateReply({ kind: "reply", body: "", photos: [{ content: new Uint8Array([1]), mediaType: "image/jpeg", filename: "p.jpg" }], video: v }),
+    (e: { code?: string }) => e.code === "video_with_photos",
+  );
+  assert.equal(reply.validateReply({ kind: "note", body: "для команды", photos: [], video: v }), "для команды", "a note may carry a video like it carries photos");
 });

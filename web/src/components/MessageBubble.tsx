@@ -56,7 +56,10 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
   const mine = m.sender === "agent";
   const note = m.kind === "note";
   const failed = mine && m.delivery_status === "failed";
-  const photos = [...m.attachments].sort((a, b) => a.position - b.position);
+  const sorted = [...m.attachments].sort((a, b) => a.position - b.position);
+  const isVideo = (a: { media_type: string | null }) => Boolean(a.media_type?.startsWith("video/"));
+  const photos = sorted.filter((a) => !isVideo(a));
+  const videos = sorted.filter(isVideo);
 
   return (
     <div
@@ -110,6 +113,18 @@ export function MessageBubble({ message: m, entering, onOpenPhoto, onRetry, retr
             ))}
           </div>
         )}
+        {videos.map((v) => (
+          // preload=metadata: the poster frame and duration, not the whole file, until the operator presses play.
+          <video
+            key={v.id}
+            src={v.preview ?? attachmentUrl(v.id)}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label="Видео"
+            className="block max-h-80 w-64 rounded-sm bg-hover"
+          />
+        ))}
         {m.kind === "unsupported" && (
           <span className="inline-flex w-fit items-center rounded-xs bg-hover px-2 py-0.5 text-sm text-text-muted">
             {unsupportedText(m.unsupported_type)}

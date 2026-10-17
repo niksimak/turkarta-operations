@@ -1,4 +1,4 @@
-export type MessageKind = "text" | "photo" | "note" | "unsupported";
+export type MessageKind = "text" | "photo" | "video" | "note" | "unsupported";
 export type UnsupportedType = "video" | "animation" | "voice" | "document" | "sticker" | "video_note" | "audio";
 export type TicketStatus = "new" | "allocated" | "awaiting" | "resolved";
 export type DeliveryStatus = "pending" | "sent" | "failed";

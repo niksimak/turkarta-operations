@@ -156,7 +156,7 @@ describe("Composer", () => {
     const strip = screen.getByRole("list", { name: "Фото к отправке" });
     expect(within(strip).getAllByRole("listitem")).toHaveLength(3);
     expect(within(toasts()).getByText("Не прикреплено: doc.pdf")).toBeTruthy();
-    expect(within(toasts()).getByText("только фото: JPG, PNG, WEBP")).toBeTruthy();
+    expect(within(toasts()).getByText("только фото (JPG, PNG, WEBP) или видео (MP4, MOV, WEBM)")).toBeTruthy();
     expect(within(toasts()).getAllByText(/^Не прикреплено/)).toHaveLength(1);
     expect(document.activeElement).toBe(textbox());
   });
@@ -187,7 +187,7 @@ describe("Composer", () => {
     expect(within(screen.getByRole("list", { name: "Фото к отправке" })).getAllByRole("listitem")).toHaveLength(10);
     expect(within(toasts()).getByText("не больше 10 фото")).toBeTruthy();
     expect(within(toasts()).getByText("Не прикреплено: p10.jpg")).toBeTruthy();
-    expect(within(toasts()).getByText("только фото: JPG, PNG, WEBP")).toBeTruthy();
+    expect(within(toasts()).getByText("только фото (JPG, PNG, WEBP) или видео (MP4, MOV, WEBM)")).toBeTruthy();
     expect(within(toasts()).getByText("больше 8 МБ")).toBeTruthy();
   });
 
@@ -219,7 +219,7 @@ describe("Composer", () => {
     await screen.findByRole("list", { name: "Переписка" });
     fireEvent.paste(textbox(), { clipboardData: { files: [photo("image.png", "image/png")] } });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    expect(input.accept).toBe("image/jpeg,image/png,image/webp");
+    expect(input.accept).toBe("image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm");
     expect(input.multiple).toBe(true);
     fireEvent.change(input, { target: { files: [photo("x.jpg"), photo("y.jpg")] } });
     const strip = () => screen.getByRole("list", { name: "Фото к отправке" });

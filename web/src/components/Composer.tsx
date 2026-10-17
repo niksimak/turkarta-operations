@@ -15,7 +15,7 @@ import { Icon } from "./Icon";
 import { PhotoStrip } from "./PhotoStrip";
 import { toast } from "./Toast";
 import { fillTemplate, markCannedUsed, searchCanned, slashQuery, useCanned, type CannedReply, type TokenRange } from "../lib/canned";
-import { acceptFiles, groupRejections, nameList, PHOTO_ACCEPT, REJECT_TEXT } from "../lib/files";
+import { acceptFiles, ATTACH_ACCEPT, groupRejections, nameList, REJECT_TEXT } from "../lib/files";
 import { isShortcutBlocked } from "../lib/keyboard";
 import { matchOperators, mentionQuery } from "../lib/mentions";
 import { newClientKey } from "../lib/outbox";
@@ -410,7 +410,7 @@ export function Composer({ ticket, me, locked, mode, onMode, photos, inputRef, r
                   ref={fileInput}
                   type="file"
                   multiple
-                  accept={PHOTO_ACCEPT}
+                  accept={ATTACH_ACCEPT}
                   tabIndex={-1}
                   aria-hidden="true"
                   className="hidden"

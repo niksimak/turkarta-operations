@@ -3,8 +3,12 @@ export const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 export const MAX_PHOTOS = 10;
 export const PHOTO_ACCEPT = PHOTO_TYPES.join(",");
+// One video per message, never next to photos (src/crm/reply.ts).
+export const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"] as const;
+export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+export const ATTACH_ACCEPT = [...PHOTO_TYPES, ...VIDEO_TYPES].join(",");
 
-export type RejectReason = "type" | "size" | "limit";
+export type RejectReason = "type" | "size" | "limit" | "video_size" | "mixed";
 
 export interface AcceptResult {
   accepted: File[];
@@ -12,19 +16,30 @@ export interface AcceptResult {
 }
 
 export const REJECT_TEXT: Record<RejectReason, string> = {
-  type: "только фото: JPG, PNG, WEBP",
+  type: "только фото (JPG, PNG, WEBP) или видео (MP4, MOV, WEBM)",
   size: "больше 8 МБ",
   limit: "не больше 10 фото",
+  video_size: "видео больше 20 МБ",
+  mixed: "одно видео без фото в сообщении",
 };
 
 const isPhotoType = (type: string) => (PHOTO_TYPES as readonly string[]).includes(type.toLowerCase());
+export const isVideoFile = (f: { type: string }) => (VIDEO_TYPES as readonly string[]).includes(f.type.toLowerCase());
 
 /** Splits incoming files into what fits next to `existing` and what does not, with a reason per file. */
 export function acceptFiles(existing: File[], incoming: File[]): AcceptResult {
   const accepted: File[] = [];
   const rejected: AcceptResult["rejected"] = [];
   for (const f of incoming) {
+    const kept = [...existing, ...accepted];
+    if (isVideoFile(f)) {
+      if (f.size > MAX_VIDEO_BYTES) rejected.push({ name: f.name, reason: "video_size" });
+      else if (kept.length > 0) rejected.push({ name: f.name, reason: "mixed" });
+      else accepted.push(f);
+      continue;
+    }
     if (!isPhotoType(f.type)) rejected.push({ name: f.name, reason: "type" });
+    else if (kept.some(isVideoFile)) rejected.push({ name: f.name, reason: "mixed" });
     else if (f.size > MAX_PHOTO_BYTES) rejected.push({ name: f.name, reason: "size" });
     else if (existing.length + accepted.length >= MAX_PHOTOS) rejected.push({ name: f.name, reason: "limit" });
     else accepted.push(f);
@@ -34,7 +49,7 @@ export function acceptFiles(existing: File[], incoming: File[]): AcceptResult {
 
 /** Rejections grouped by reason, in a fixed order: one toast each. */
 export function groupRejections(rejected: AcceptResult["rejected"]): Array<{ reason: RejectReason; names: string[] }> {
-  return (["type", "size", "limit"] as const)
+  return (["type", "size", "video_size", "mixed", "limit"] as const)
     .map((reason) => ({ reason, names: rejected.filter((r) => r.reason === reason).map((r) => r.name) }))
     .filter((g) => g.names.length > 0);
 }

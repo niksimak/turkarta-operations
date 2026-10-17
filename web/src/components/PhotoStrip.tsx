@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
-import { MAX_PHOTOS } from "../lib/files";
+import { isVideoFile, MAX_PHOTOS } from "../lib/files";
 
 /**
  * One object URL per File while it is in the list: revoked when the file is
@@ -61,14 +61,20 @@ export function PhotoStrip({ files, onRemove, refused }: Props) {
   if (!files.length) return null;
   return (
     <div className="flex items-end gap-2 px-2 pt-2">
-      <ul aria-label="Фото к отправке" className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5 pt-1.5 pr-1.5">
+      <ul aria-label={files.some(isVideoFile) ? "Видео к отправке" : "Фото к отправке"} className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5 pt-1.5 pr-1.5">
         {files.map((f) => {
           const url = urls.get(f);
           const bad = f === refused;
           return (
             <li key={fileKey(f)} data-refused={bad ? "" : undefined} className="thumb-in relative size-14 shrink-0">
               <div title={bad ? "Фото не принято" : undefined} className="relative size-full overflow-hidden rounded-sm bg-hover">
-                {url && (
+                {url && isVideoFile(f) && (
+                  <>
+                    <video src={url} muted playsInline preload="metadata" aria-label={f.name} className="block size-full object-cover" />
+                    <span aria-hidden="true" className="absolute inset-0 grid place-items-center text-white">▶</span>
+                  </>
+                )}
+                {url && !isVideoFile(f) && (
                   <img
                     src={url}
                     alt={bad ? `${f.name}, не принято` : f.name}
@@ -88,7 +94,7 @@ export function PhotoStrip({ files, onRemove, refused }: Props) {
               <button
                 type="button"
                 onClick={() => onRemove(f)}
-                aria-label={`Убрать фото ${f.name}`}
+                aria-label={`Убрать ${isVideoFile(f) ? "видео" : "фото"} ${f.name}`}
                 title="Убрать"
                 className="press absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-surface text-text-muted shadow-[0_0_0_1px_var(--border-strong)] hover:text-text"
               >
@@ -99,7 +105,7 @@ export function PhotoStrip({ files, onRemove, refused }: Props) {
         })}
       </ul>
       <span className="num shrink-0 pb-1 text-xs text-text-muted">
-        {files.length} из {MAX_PHOTOS}
+        {files.some(isVideoFile) ? "видео" : `${files.length} из ${MAX_PHOTOS}`}
       </span>
     </div>
   );

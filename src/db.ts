@@ -22,10 +22,11 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
     on public.support_attachments (message_id)`;
 }
 
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql"]
+// Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql"]
   .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
-/** Apply the idempotent CRM migrations on boot (same files `pnpm migrate` runs). */
+/** Apply the idempotent CRM migrations on boot. */
 export async function ensureCrmSchema(): Promise<void> {
   // ALTER TABLE queues behind any open lock; fail boot fast instead of hanging the deploy.
   await sql.begin(async (tx) => {

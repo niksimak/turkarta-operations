@@ -3,6 +3,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, ApiError, json } from "./api";
 import { addOutgoing, bindServerId, confirmOutgoing, dropOutgoing, removeOutgoing, withOutbox } from "./outbox";
 import { keys, READ_ONLY_TEXT, useMe, type Operator, type TicketCounts } from "./queries";
+import { isVideoFile } from "./files";
 import { DEFAULT_SLA, type SlaSettings } from "./sla";
 
 // Mirrors src/crm/tickets.ts (TicketListItem, TicketDetailItem, CrmMessage, TicketEventRow).
@@ -47,7 +48,7 @@ export interface Attachment {
 export interface CrmMessage {
   id: string;
   sender: "user" | "agent" | "system";
-  kind: "text" | "photo" | "note" | "unsupported";
+  kind: "text" | "photo" | "video" | "note" | "unsupported";
   body: string;
   unsupported_type: string | null;
   author_name: string | null;
@@ -402,21 +403,21 @@ export interface SendVars {
   photos: File[];
 }
 
-function sendForm({ kind, body, photos }: SendVars): FormData {
+export function sendForm({ kind, body, photos }: SendVars): FormData {
   const form = new FormData();
   form.append("kind", kind);
   form.append("body", body);
-  for (const p of photos) form.append("photos", p, p.name);
+  for (const p of photos) form.append(isVideoFile(p) ? "video" : "photos", p, p.name);
   return form;
 }
 
-function optimisticMessage(vars: SendVars, me: Operator | undefined, after: string | undefined, previews: string[]): CrmMessage {
+export function optimisticMessage(vars: SendVars, me: Operator | undefined, after: string | undefined, previews: string[]): CrmMessage {
   // Never sort above the last message on a client clock that runs behind the server.
   const at = Math.max(Date.now(), after ? Date.parse(after) + 1 : 0);
   return {
     id: vars.clientKey,
     sender: "agent",
-    kind: vars.kind === "note" ? "note" : vars.photos.length ? "photo" : "text",
+    kind: vars.kind === "note" ? "note" : vars.photos.some(isVideoFile) ? "video" : vars.photos.length ? "photo" : "text",
     body: vars.body,
     unsupported_type: null,
     author_name: me?.name ?? null,
@@ -483,6 +484,10 @@ export function sendErrorText(err: unknown, photoNames: string[]): { text: strin
           return { text: "Не больше 10 фото в сообщении." };
         case "too_long":
           return { text: "Текст длиннее 4000 символов. Сократите его." };
+        case "video_invalid":
+          return { text: "Видео не принято: нужен MP4, MOV или WEBM до 20 МБ." };
+        case "video_with_photos":
+          return { text: "Видео отправляется без фото. Уберите фото или видео." };
         case "photo_invalid":
           return {
             text: "Фото не принято. Уберите его и отправьте снова.",
@@ -491,7 +496,7 @@ export function sendErrorText(err: unknown, photoNames: string[]): { text: strin
       }
       return { text: "Сообщение не прошло проверку. Обновите страницу." };
     }
-    if (err.status === 413) return { text: "Фото слишком тяжёлые. Уберите часть и отправьте снова." };
+    if (err.status === 413) return { text: "Файлы слишком тяжёлые. Уберите часть и отправьте снова." };
     if (err.status === 409 || err.status === 403 || err.status === 404) return { text: actionErrorText(err) };
   }
   return { text: "Не отправилось. Повторите." };

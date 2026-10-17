@@ -10,7 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { config, legacySurface } from "../config.js";
-import { MAX_PHOTO_BYTES, validatePhoto, type ValidPhoto } from "../support_media.js";
+import { MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, validatePhoto, validateVideo, type ValidPhoto } from "../support_media.js";
 import { attachmentResponse } from "./attachments.js";
 import { consumeSso, deleteSession, operatorForSession, requireOperator, SESSION_COOKIE, SESSION_TTL_HOURS } from "./auth.js";
 import { createCanned, deleteCanned, listCanned, updateCanned, useCanned } from "./canned.js";
@@ -36,6 +36,7 @@ const DEFAULT_WEB_ROOT = fileURLToPath(new URL("../web/", import.meta.url));
 const PING_MS = 20_000;
 const JSON_MAX_BYTES = 1024 * 1024;
 const PHOTO_FIELDS = new Set(["photos", "photos[]"]);
+const VIDEO_FIELD = "video";
 const MESSAGES_PATH = new RegExp(`^${BASE}/api/tickets/[^/]+/messages$`);
 const MAX_PHOTOS = 10;
 const DAY_MS = 86_400_000;
@@ -133,7 +134,7 @@ function defaultStatsRange(now: number): { from: Date; to: Date } {
   return { from: new Date(mskMidnight - 6 * DAY_MS), to: new Date(now) };
 }
 
-async function replyInput(c: Context): Promise<ReplyInput | { photoInvalid: number }> {
+async function replyInput(c: Context): Promise<ReplyInput | { photoInvalid: number } | { videoInvalid: true }> {
   if (!(c.req.header("content-type") ?? "").startsWith("multipart/form-data")) {
     const j = JsonReply.parse(await readJson(c));
     return { kind: j.kind, body: j.body, photos: [] };
@@ -147,10 +148,20 @@ async function replyInput(c: Context): Promise<ReplyInput | { photoInvalid: numb
   const kind = (form.kind ?? "reply") as ReplyInput["kind"];
   const body = form.body ?? "";
   const raw: unknown[] = [];
+  const rawVideo: unknown[] = [];
   for (const [name, value] of Object.entries(form)) {
     const values = Array.isArray(value) ? value : [value];
     if (PHOTO_FIELDS.has(name)) raw.push(...values);
+    else if (name === VIDEO_FIELD) rawVideo.push(...values);
     else if (values.some((v) => v instanceof File)) throw invalid({ [name]: "unknown_field" });
+  }
+  if (rawVideo.length > 0) {
+    const [f] = rawVideo;
+    if (rawVideo.length > 1 || !(f instanceof File) || f.size <= 0 || f.size > MAX_VIDEO_BYTES) return { videoInvalid: true };
+    const video = validateVideo(new Uint8Array(await f.arrayBuffer()), f.type, f.name);
+    if (!video) return { videoInvalid: true };
+    if (raw.length > 0) throw new InvalidReply("video_with_photos");
+    return { kind, body, photos: [], video };
   }
   if (raw.length > MAX_PHOTOS) throw new InvalidReply("too_many_photos");
   const photos: ValidPhoto[] = [];
@@ -293,6 +304,7 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     async (c) => {
       const input = await replyInput(c);
       if ("photoInvalid" in input) return c.json({ error: "photo_invalid", index: input.photoInvalid }, 422);
+      if ("videoInvalid" in input) return c.json({ error: "video_invalid" }, 422);
       return c.json(await sendReply(c.req.param("id"), c.get("operator"), input));
     },
   );
@@ -326,7 +338,7 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     return c.json({ ok: true });
   });
 
-  r.get("/api/attachments/:id", (c) => attachmentResponse(c.req.param("id")));
+  r.get("/api/attachments/:id", (c) => attachmentResponse(c.req.param("id"), { range: c.req.header("range") }));
 
   r.get("/api/canned", async (c) => c.json(await listCanned(c.req.query("q"))));
   r.post("/api/canned", async (c) => c.json(await createCanned(await readJson(c), c.get("operator"))));

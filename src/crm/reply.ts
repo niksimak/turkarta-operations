@@ -1,6 +1,6 @@
 import { InputFile, type Bot } from "grammy";
 import { getTicket, sql, type Ticket } from "../db.js";
-import type { ValidPhoto } from "../support_media.js";
+import type { ValidPhoto, ValidVideo } from "../support_media.js";
 import * as turkartaApi from "../turkarta_api.js";
 import { publish } from "./events.js";
 import { claim, Conflict, crmMessage, NotFound, withLockedTicket, type CrmMessage } from "./tickets.js";
@@ -12,11 +12,14 @@ export interface TgTransport {
   sendMessage(chatId: number, text: string): Promise<{ message_id: number }>;
   sendPhoto(chatId: number, photo: OutPhoto, caption?: string): Promise<SentPhoto>;
   sendMediaGroup(chatId: number, photos: OutPhoto[], caption?: string): Promise<SentPhoto[]>;
+  sendVideo(chatId: number, video: OutPhoto, caption?: string): Promise<SentPhoto>;
 }
-export interface ReplyInput { kind: "reply" | "note"; body: string; photos: ValidPhoto[] }
+/** A reply carries photos or one video, never both (Telegram cannot caption a mixed album well). */
+export interface ReplyInput { kind: "reply" | "note"; body: string; photos: ValidPhoto[]; video?: ValidVideo }
 export interface ReplyDeps { tg?: TgTransport; notify?: typeof turkartaApi.notifySupportReply }
 
-export type InvalidReplyCode = "empty" | "note_needs_body" | "too_many_photos" | "too_long";
+export type InvalidReplyCode =
+  | "empty" | "note_needs_body" | "too_many_photos" | "too_long" | "video_with_photos";
 export class InvalidReply extends Error {
   readonly code: InvalidReplyCode;
   constructor(code: InvalidReplyCode) {
@@ -32,9 +35,11 @@ const CAPTION_MAX = 1024;
 const ERROR_MAX = 200;
 const SEND_TIMEOUT_MS = 60_000;
 const WEB_PHOTO_PREVIEW = "📷 Фото";
+const WEB_VIDEO_PREVIEW = "🎥 Видео";
 const SYSTEM_AUTHOR = "crm:system";
 
 type TgPhotoMessage = { message_id: number; photo?: Array<{ file_id: string; file_unique_id: string }> };
+type TgVideoMessage = { message_id: number; video?: { file_id: string; file_unique_id: string } };
 
 export function grammyTransport(api: Bot["api"]): TgTransport {
   // grammY's Node typings name the older abort-controller shim; native signals implement the same interface.
@@ -62,6 +67,12 @@ export function grammyTransport(api: Bot["api"]): TgTransport {
       const sent = await api.sendMediaGroup(chatId, media, {}, signal());
       return sent.map((m) => largest(m as TgPhotoMessage));
     },
+    async sendVideo(chatId, video, caption) {
+      const file = new InputFile(video.bytes, video.filename);
+      const m = (await api.sendVideo(chatId, file, { supports_streaming: true, ...(caption ? { caption } : {}) }, signal())) as TgVideoMessage;
+      if (!m.video) throw Object.assign(new Error("no video in Telegram response"), { code: "no_video" });
+      return { message_id: m.message_id, fileId: m.video.file_id, fileUniqueId: m.video.file_unique_id };
+    },
   };
 }
 
@@ -83,13 +94,16 @@ async function defaultTransport(): Promise<TgTransport> {
 export async function sendTelegram(
   tg: TgTransport, chatId: number, body: string, photos: OutPhoto[],
   onPhotosSent: (sent: SentPhoto[]) => Promise<void> = async () => {},
+  asVideo = false,
 ): Promise<SentPhoto[]> {
   if (photos.length === 0) {
     await tg.sendMessage(chatId, body);
     return [];
   }
   const caption = body && body.length <= CAPTION_MAX ? body : undefined;
-  const sent = photos.length === 1 ? [await tg.sendPhoto(chatId, photos[0]!, caption)] : await tg.sendMediaGroup(chatId, photos, caption);
+  const sent = asVideo
+    ? [await tg.sendVideo(chatId, photos[0]!, caption)]
+    : photos.length === 1 ? [await tg.sendPhoto(chatId, photos[0]!, caption)] : await tg.sendMediaGroup(chatId, photos, caption);
   await onPhotosSent(sent);
   if (body && !caption) await tg.sendMessage(chatId, body);
   return sent;
@@ -108,9 +122,10 @@ export function deliveryError(err: unknown): string {
 export function validateReply(input: ReplyInput): string {
   const body = input.body.trim();
   if (input.photos.length > MAX_PHOTOS) throw new InvalidReply("too_many_photos");
+  if (input.video && input.photos.length > 0) throw new InvalidReply("video_with_photos");
   if (body.length > MAX_BODY) throw new InvalidReply("too_long");
   if (input.kind === "note" && !body) throw new InvalidReply("note_needs_body");
-  if (input.kind === "reply" && !body && input.photos.length === 0) throw new InvalidReply("empty");
+  if (input.kind === "reply" && !body && input.photos.length === 0 && !input.video) throw new InvalidReply("empty");
   return body;
 }
 
@@ -130,12 +145,12 @@ async function setDelivery(messageId: string, status: "sent" | "failed", error: 
 
 /** Delivers a committed agent message and records the outcome. Never throws on a send failure. */
 async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps): Promise<void> {
-  const [m] = await sql<{ body: string }[]>`select body from support_messages where id = ${messageId}`;
-  const body = m!.body;
+  const [m] = await sql<{ body: string; kind: string }[]>`select body, kind from support_messages where id = ${messageId}`;
+  const { body, kind } = m!;
 
   if (ticket.user_tg != null) {
-    const files = await sql<{ id: string; filename: string; content: Uint8Array | null; tg_file_id: string | null }[]>`
-      select id, filename, content, tg_file_id from support_attachments
+    const files = await sql<{ id: string; filename: string; media_type: string; content: Uint8Array | null; tg_file_id: string | null }[]>`
+      select id, filename, media_type, content, tg_file_id from support_attachments
        where message_id = ${messageId} order by position, created_at`;
     const chatId = Number(ticket.user_tg);
     try {
@@ -153,7 +168,7 @@ async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps): Prom
             await sql`update support_attachments set tg_file_id = ${s.fileId}, tg_file_unique_id = ${s.fileUniqueId}
               where id = ${files[i]!.id}`;
           }
-        });
+        }, files.some((f) => f.media_type.startsWith("video/")));
       }
     } catch (err) {
       const error = deliveryError(err);
@@ -170,7 +185,8 @@ async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps): Prom
   if (!ticket.web_user_id) return;
   try {
     await (deps.notify ?? turkartaApi.notifySupportReply)({
-      web_user_id: ticket.web_user_id, ticket_id: ticket.id, message_id: messageId, preview: body || WEB_PHOTO_PREVIEW,
+      web_user_id: ticket.web_user_id, ticket_id: ticket.id, message_id: messageId,
+      preview: body || (kind === "video" ? WEB_VIDEO_PREVIEW : WEB_PHOTO_PREVIEW),
     });
   } catch (err) {
     console.error(`[crm-reply] web notify failed message=${messageId} code=${(err as { code?: string }).code ?? "error"}`);
@@ -191,7 +207,7 @@ export async function sendReply(ticketId: string, me: Operator, input: ReplyInpu
   const { messageId, ticket } = await withLockedTicket(ticketId, async (tx, t) => {
     if (t.status === "resolved") throw new Conflict("resolved");
     if (isReply) await claim(tx, t, me);
-    const kind = isReply ? (input.photos.length ? "photo" : "text") : "note";
+    const kind = isReply ? (input.video ? "video" : input.photos.length ? "photo" : "text") : "note";
     // Notes are 'system' so the AI review trigger (0012) never queues them.
     const [m] = await tx<{ id: string }[]>`
       insert into support_messages
@@ -201,7 +217,7 @@ export async function sendReply(ticketId: string, me: Operator, input: ReplyInpu
              ${isReply ? tx`extract(epoch from now() - r.waiting_since)::int` : tx`null`}
         from support_requests r where r.id = ${t.id}
       returning id`;
-    for (const [i, p] of input.photos.entries()) {
+    for (const [i, p] of (input.video ? [input.video] : input.photos).entries()) {
       await tx`
         insert into support_attachments (message_id, media_type, filename, size_bytes, content, position)
         values (${m!.id}, ${p.mediaType}, ${p.filename}, ${p.content.length}, ${p.content}, ${i})`;

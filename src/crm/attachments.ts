@@ -7,6 +7,8 @@ export type AttachmentDeps = {
   getFile?: (fileId: string) => Promise<{ file_path?: string }>;
   fetch?: typeof fetch;
   load?: (id: string) => Promise<Row | null>;
+  /** The request's Range header; videos need it to stream and seek (Safari will not play without it). */
+  range?: string;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -29,6 +31,39 @@ async function defaultGetFile(fileId: string): Promise<{ file_path?: string }> {
   return body.result ?? {};
 }
 
+/** A single `bytes=a-b` / `bytes=a-` / `bytes=-n` range over `size` bytes, or "invalid". */
+export function parseRange(header: string, size: number): { start: number; end: number } | "invalid" | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === "") {
+    const n = Number(m[2]);
+    if (n === 0) return "invalid";
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  return start >= size || start > end ? "invalid" : { start, end };
+}
+
+function storedResponse(row: Row & { content: Buffer }, rangeHeader: string | undefined): Response {
+  const bytes = new Uint8Array(row.content);
+  const headers = { "content-type": row.media_type, "cache-control": CACHE, "accept-ranges": "bytes" };
+  const range = rangeHeader ? parseRange(rangeHeader, bytes.length) : null;
+  if (range === "invalid") {
+    return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${bytes.length}` } });
+  }
+  if (!range) return new Response(bytes, { headers: { ...headers, "content-length": String(bytes.length) } });
+  const part = bytes.subarray(range.start, range.end + 1);
+  return new Response(part, {
+    status: 206,
+    headers: { ...headers, "content-length": String(part.length), "content-range": `bytes ${range.start}-${range.end}/${bytes.length}` },
+  });
+}
+
 function unavailable(id: string, code: number | string): Response {
   console.error(`[crm-attachments] tg fetch failed id=${id} code=${code}`);
   return Response.json({ error: "photo_unavailable" }, { status: 502 });
@@ -41,11 +76,7 @@ export async function attachmentResponse(
   const row = await (deps.load ?? loadRow)(id);
   if (!row) return Response.json({ error: "not_found" }, { status: 404 });
 
-  if (row.content) {
-    return new Response(new Uint8Array(row.content), {
-      headers: { "content-type": row.media_type, "cache-control": CACHE },
-    });
-  }
+  if (row.content) return storedResponse({ ...row, content: row.content }, deps.range);
   if (!row.tg_file_id) return Response.json({ error: "not_found" }, { status: 404 });
 
   const getFile = deps.getFile ?? defaultGetFile;

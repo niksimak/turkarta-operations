@@ -409,6 +409,26 @@ describe("Inbox", () => {
     expect(await screen.findByText("Скопировано: TG id")).toBeTruthy();
   });
 
+  it("plays an operator video in the thread", async () => {
+    const d = detail();
+    d.messages.push({
+      id: "mv", sender: "agent", kind: "video", body: "Инструкция", unsupported_type: null, author_name: "Олег",
+      created_at: ago(10), delivery_status: "sent", delivery_error: null,
+      attachments: [{ id: "av1", media_type: "video/mp4", position: 0 }],
+    });
+    mockApi(baseRoutes(d));
+    renderAt(`/t/${T1.id}?v=queue`);
+    const thread = await screen.findByRole("list", { name: "Переписка" });
+    const video = await waitFor(() => {
+      const v = thread.querySelector("video");
+      expect(v).toBeTruthy();
+      return v!;
+    });
+    expect(video.getAttribute("src")).toBe("/crm/api/attachments/av1");
+    expect(video.hasAttribute("controls")).toBe(true);
+    expect(video.getAttribute("aria-label")).toBe("Видео");
+  });
+
   it("prefetches a ticket on hover, so opening it is instant", async () => {
     const { calls } = mockApi(baseRoutes());
     renderAt("/");

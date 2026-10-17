@@ -66,7 +66,7 @@ function toItem(r: Row): TicketListItem {
     user_username: (r.user_username as string | null) ?? null,
     user_tg: num(r.user_tg),
     email: (r.email as string | null) ?? null,
-    last_message_preview: r.preview_kind === "photo" && body === "" ? "Фото" : body,
+    last_message_preview: body === "" && r.preview_kind === "photo" ? "Фото" : body === "" && r.preview_kind === "video" ? "Видео" : body,
     last_message_at: iso(r.last_message_at),
     waiting_since: iso(r.waiting_since),
     first_response_at: iso(r.first_response_at),
