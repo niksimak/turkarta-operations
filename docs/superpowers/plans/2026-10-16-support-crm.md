@@ -112,7 +112,7 @@ primary_region = "ams"
 ```
 
 - [ ] **Step 2: Validate** — Run: `fly config validate -c fly.toml` (requires `fly auth whoami` OK). Expected: `Configuration is valid`.
-- [ ] **Step 3: Append to `docs/DEPLOY-STATE.md`** a section "Fly.io (planned 2026-10-16)": app name, region, domain `crm.turkarta.me`, the move sequence from spec §15, and the rule "never scale above 1 machine".
+- [ ] **Step 3: Append to `docs/DEPLOY-STATE.md`** a section "Fly.io (planned 2026-10-16)": app name, region, domain `support.turkarta.me`, the move sequence from spec §15, and the rule "never scale above 1 machine".
 - [ ] **Step 4: Commit** `git add fly.toml docs/DEPLOY-STATE.md && git commit -m "infra: fly.io config for ops"`
 
 ---
@@ -798,7 +798,7 @@ Behaviour:
 Work in a new worktree: `git -C ~/projects/turkarta worktree add ../turkarta-crm-sso -b feat/support-crm-sso origin/main` (the main checkout is mid-cherry-pick; do not touch it).
 
 **Files (turkarta):**
-- Modify: `apps/api/turkarta/config.py` (`crm_sso_secret: SecretStr = SecretStr("")`; `ops_support_base_url` default → `"https://crm.turkarta.me"`)
+- Modify: `apps/api/turkarta/config.py` (`crm_sso_secret: SecretStr = SecretStr("")`; `ops_support_base_url` default → `"https://support.turkarta.me"`)
 - Create: `apps/api/turkarta/routes/admin_support_crm.py` — `GET /admin/support-crm` (`require_support_role`), builds token identical to ops `signSsoToken` (`base64url(json.dumps(claims, separators=(",", ":")))` + `.` + `base64url(hmac_sha256(secret, payload_part))`, no padding), claims `{sub, name, email, role, jti: uuid4 hex, exp: now+60}`, optional `next` param validated `^/crm(/[\w\-/]*)?$`; 503 page if secret empty; 302 to `{ops_support_base_url}/crm/sso?t=…`.
 - Modify: `apps/api/turkarta/routes/_admin_html.py` `NAV_ITEMS`: add `("/admin/support-crm", "Поддержка", SUPPORT_ROLES)` after «Клиенты и карты».
 - Modify: `apps/api/turkarta/main.py`: include the router in the `support_only` mount list.
@@ -825,8 +825,8 @@ Work in a new worktree: `git -C ~/projects/turkarta worktree add ../turkarta-crm
 ### Task 21: Deploy (prod, manual, after PRs merge)
 
 Each step states blast radius + rollback before running (global rule).
-1. `fly apps create turkarta-operations`; `fly secrets set` all current Render env + `CRM_SSO_SECRET`, `SUPPORT_SURFACE=bitrix`, `PUBLIC_BASE_URL=https://crm.turkarta.me`.
-2. DNS `crm.turkarta.me` CNAME → Fly; `fly certs add crm.turkarta.me`.
+1. `fly apps create turkarta-operations`; `fly secrets set` all current Render env + `CRM_SSO_SECRET`, `SUPPORT_SURFACE=bitrix`, `PUBLIC_BASE_URL=https://support.turkarta.me`.
+2. DNS `support.turkarta.me` CNAME → Fly; `fly certs add support.turkarta.me`.
 3. `fly deploy` (boot applies `0016` via `ensureCrmSchema` and re-points bot webhooks). Suspend Render immediately.
 4. Turkarta: set `OPS_SUPPORT_BASE_URL` + `CRM_SSO_SECRET` on both Fly apps; deploy turkarta PR.
 5. Bitrix handler URLs to the Fly host while `bitrix` mode remains.

@@ -448,12 +448,12 @@ into the ops image and served by ops itself.
   (shared-cpu-1x, 512 MB), health check on `GET /health`. Single machine on
   purpose: in-memory presence, in-process workers, and bot webhooks must not
   run twice.
-- Custom domain `crm.turkarta.me` (`fly certs add`), which becomes
-  `PUBLIC_BASE_URL`. The CRM lives at `https://crm.turkarta.me/crm`.
+- Custom domain `support.turkarta.me` (`fly certs add`), which becomes
+  `PUBLIC_BASE_URL`. The CRM lives at `https://support.turkarta.me/crm`.
 - Secrets: every current Render env var copied with `fly secrets set`, plus
   `SUPPORT_SURFACE` and `CRM_SSO_SECRET`. Turkarta gets `CRM_SSO_SECRET`, and
   its existing `ops_support_base_url` (default hard-coded to the Render URL in
-  `config.py:509`) is set to `https://crm.turkarta.me` in env on both Fly apps
+  `config.py:509`) is set to `https://support.turkarta.me` in env on both Fly apps
   and in the code default.
 - DB stays on Neon `turkarta-ops`; nothing to migrate.
 

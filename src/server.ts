@@ -36,6 +36,7 @@ const TG_LEADS_PATH = `/tg/leads/${config.TELEGRAM_WEBHOOK_SECRET}`;
 const TG_SUPPORT_PATH = `/tg/support/${config.TELEGRAM_WEBHOOK_SECRET}`;
 
 app.get("/health", (c) => c.json({ status: "ok" }));
+app.get("/", (c) => c.redirect("/crm"));
 
 // Bitrix requires an externally reachable file URL. This proxy keeps the
 // Telegram bot token out of that URL and rejects expired or modified links.

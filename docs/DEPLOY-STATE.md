@@ -184,8 +184,8 @@ TypeScript (grammY + Hono) ops hub with **two bots in one service**. Builds clea
 ## Fly.io (planned 2026-10-16)
 
 - App: `turkarta-operations`, region `ams`, config `fly.toml` (repo root).
-- Domain: `crm.turkarta.me` (`fly certs add`). It becomes `PUBLIC_BASE_URL`.
-  The CRM lives at `https://crm.turkarta.me/crm`.
+- Domain: `support.turkarta.me` (`fly certs add`). It becomes `PUBLIC_BASE_URL`.
+  The CRM lives at `https://support.turkarta.me/crm`; `/` redirects there.
 - Not created yet. No deploy, no secrets set. Spec: `docs/superpowers/specs/2026-10-16-support-crm-design.md` §15.
 - Rule: never scale above 1 machine. Presence is in memory, workers run in-process,
   and bot webhooks must not run twice.
