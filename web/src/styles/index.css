@@ -95,7 +95,8 @@
   .pop-in {
     transform-origin: var(--origin, top right);
   }
-  .sheet-in {
+  .sheet-in,
+  .sheet-in-left {
     transition:
       transform var(--dur-slow) var(--ease-drawer),
       opacity var(--dur-fast) ease;
@@ -117,6 +118,10 @@
   .sheet-in {
     transform: translateX(100%);
   }
+  /* The mobile menu: the rail opening from the left edge. */
+  .sheet-in-left {
+    transform: translateX(-100%);
+  }
   .scrim-in {
     opacity: 0;
   }
@@ -124,11 +129,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pop-in,
-  .sheet-in {
+  .sheet-in,
+  .sheet-in-left {
     transition-property: opacity;
   }
   @starting-style {
-    .sheet-in {
+    .sheet-in,
+    .sheet-in-left {
       transform: none;
       opacity: 0;
     }
