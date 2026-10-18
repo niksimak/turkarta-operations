@@ -39,7 +39,11 @@ describe("TopicsSection", () => {
     await screen.findByText("Пополнение не пришло");
     fireEvent.change(screen.getByPlaceholderText("Новая тема"), { target: { value: "Комиссия" } });
     fireEvent.click(screen.getByRole("button", { name: "Добавить" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "Ниже" })[0] as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getAllByRole("button", { name: "Ниже" })[0]!);
+    await waitFor(() => expect(calls).toHaveLength(3));
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "В архив" })[1] as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getAllByRole("button", { name: "В архив" })[1]!);
     await waitFor(() => expect(calls).toEqual([
       ["POST /crm/api/topics", { name: "Комиссия" }],
@@ -64,5 +68,30 @@ describe("TopicsSection", () => {
     await screen.findByText("Пополнение не пришло");
     expect(screen.queryByPlaceholderText("Новая тема")).toBeNull();
     expect(screen.queryByRole("button", { name: "В архив" })).toBeNull();
+  });
+
+  it("renames on Enter, and sends nothing on Escape or an unchanged name", async () => {
+    const calls = setup(lead);
+    await screen.findByText("Карта отклонена");
+    fireEvent.click(screen.getByText("Карта отклонена"));
+    fireEvent.change(screen.getByLabelText("Название темы"), { target: { value: "Карта не работает" } });
+    fireEvent.keyDown(screen.getByLabelText("Название темы"), { key: "Escape" });
+    expect(screen.queryByLabelText("Название темы")).toBeNull();
+    fireEvent.click(screen.getByText("Карта отклонена"));
+    fireEvent.submit(screen.getByLabelText("Название темы"));
+    expect(screen.queryByLabelText("Название темы")).toBeNull();
+    expect(calls).toEqual([]);
+    fireEvent.click(screen.getByText("Карта отклонена"));
+    fireEvent.change(screen.getByLabelText("Название темы"), { target: { value: "Карта не работает" } });
+    fireEvent.submit(screen.getByLabelText("Название темы"));
+    await waitFor(() => expect(calls).toEqual([["PUT /crm/api/topics/2", { name: "Карта не работает" }]]));
+  });
+
+  it("toasts when the first PUT of a swap fails", async () => {
+    const calls = setup(lead, () => jsonResponse(500, { error: "boom" }));
+    await screen.findByText("Пополнение не пришло");
+    fireEvent.click(screen.getAllByRole("button", { name: "Ниже" })[0]!);
+    expect(await screen.findByText("Не сохранилось. Повторите.")).toBeTruthy();
+    expect(calls).toEqual([["PUT /crm/api/topics/1", { position: 2 }]]);
   });
 });

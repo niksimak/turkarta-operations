@@ -21,23 +21,39 @@ export function TopicsSection({ me }: { me: Operator }) {
   const canEdit = canEditTeamSettings(me);
   const [draft, setDraft] = useState("");
 
-  const onError = (err: unknown) => toast(topicErrorText(err), { tone: "danger", key: "topic-update" });
+  const [busy, setBusy] = useState(false);
+  const pending = busy || update.isPending;
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      toast(topicErrorText(err), { tone: "danger", key: "topic-update" });
+    } finally {
+      setBusy(false);
+    }
+  };
   const patch = (id: number, p: Partial<Pick<Topic, "name" | "position" | "archived">>) =>
-    update.mutate({ id, patch: p }, { onError });
+    run(() => update.mutateAsync({ id, patch: p }));
 
   const all = topics.data ?? [];
   const active = all.filter((t) => !t.archived).sort((a, b) => a.position - b.position);
   const archived = all.filter((t) => t.archived);
 
-  const swap = (a: Topic, b: Topic) => {
-    patch(a.id, { position: b.position });
-    patch(b.id, { position: a.position });
-  };
+  const swap = (a: Topic, b: Topic) =>
+    run(async () => {
+      await update.mutateAsync({ id: a.id, patch: { position: b.position } });
+      await update.mutateAsync({ id: b.id, patch: { position: a.position } });
+    });
 
   const add = () => {
     const name = draft.trim();
     if (!name) return;
-    create.mutate({ name }, { onSuccess: () => setDraft(""), onError });
+    void run(async () => {
+      await create.mutateAsync({ name });
+      setDraft("");
+    });
   };
 
   return (
@@ -53,14 +69,14 @@ export function TopicsSection({ me }: { me: Operator }) {
           <li key={t.id} className="flex flex-wrap items-center gap-2 px-4 py-2">
             {canEdit ? (
               <>
-                <TopicName topic={t} onSave={(name) => patch(t.id, { name })} />
-                <button type="button" className={secondary} disabled={i === 0} onClick={() => swap(t, active[i - 1]!)}>
+                <TopicName topic={t} disabled={pending} onSave={(name) => patch(t.id, { name })} />
+                <button type="button" className={secondary} disabled={pending || i === 0} onClick={() => void swap(t, active[i - 1]!)}>
                   Выше
                 </button>
-                <button type="button" className={secondary} disabled={i === active.length - 1} onClick={() => swap(t, active[i + 1]!)}>
+                <button type="button" className={secondary} disabled={pending || i === active.length - 1} onClick={() => void swap(t, active[i + 1]!)}>
                   Ниже
                 </button>
-                <button type="button" className={secondary} onClick={() => patch(t.id, { archived: true })}>
+                <button type="button" className={secondary} disabled={pending} onClick={() => void patch(t.id, { archived: true })}>
                   В архив
                 </button>
               </>
@@ -104,7 +120,7 @@ export function TopicsSection({ me }: { me: Operator }) {
               <li key={t.id} className="flex items-center gap-2 px-4 py-2">
                 <span className="min-w-0 flex-1">{t.name}</span>
                 {canEdit && (
-                  <button type="button" className={secondary} onClick={() => patch(t.id, { archived: false })}>
+                  <button type="button" className={secondary} disabled={pending} onClick={() => void patch(t.id, { archived: false })}>
                     Вернуть
                   </button>
                 )}
@@ -117,13 +133,14 @@ export function TopicsSection({ me }: { me: Operator }) {
   );
 }
 
-function TopicName({ topic, onSave }: { topic: Topic; onSave: (name: string) => void }) {
+function TopicName({ topic, disabled, onSave }: { topic: Topic; disabled: boolean; onSave: (name: string) => unknown }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(topic.name);
   if (!editing) {
     return (
       <button
         type="button"
+        disabled={disabled}
         className="min-w-0 flex-1 truncate text-left hover:underline"
         onClick={() => {
           setValue(topic.name);
@@ -153,7 +170,7 @@ function TopicName({ topic, onSave }: { topic: Topic; onSave: (name: string) => 
         className={inputClass}
       />
       {changed && (
-        <button type="submit" className={secondary}>
+        <button type="submit" disabled={disabled} className={secondary}>
           Сохранить
         </button>
       )}
