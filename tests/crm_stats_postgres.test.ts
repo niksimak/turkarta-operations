@@ -9,6 +9,11 @@ const FROM = new Date("2026-10-01T00:00:00+03:00");
 const TO = new Date("2026-10-05T00:00:00+03:00");
 const msk = (s: string) => `2026-${s}+03:00`;
 
+// The resolution metrics have their own fixture (crm_stats_resolution_postgres.test.ts).
+const NEW_TEAM = ["resolution_median_s", "one_reply_pct", "messages_per_ticket", "heatmap"];
+const NEW_OP = ["resolution_median_s", "one_reply_pct"];
+const omit = (o: object, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
+
 const T1 = "00000000-0000-0000-0000-000000000001";
 const T2 = "00000000-0000-0000-0000-000000000002";
 const T3 = "00000000-0000-0000-0000-000000000003";
@@ -99,7 +104,7 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
     const range = { from: FROM, to: TO };
     const zoe = await mod.stats(range, op(3, "Zoe", "admin", false), settings);
 
-    assert.deepEqual(zoe.team, {
+    assert.deepEqual(omit(zoe.team, NEW_TEAM), {
       new_per_day: [
         { day: "2026-10-01", bot: 1, miniapp: 0, web: 0 },
         { day: "2026-10-02", bot: 0, miniapp: 1, web: 1 },
@@ -128,14 +133,14 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
       response_median_s: null, response_p90_s: null, first_response_median_s: null, first_response_p90_s: null,
       within_sla_pct: null, reopen_rate_pct: null,
     };
-    assert.deepEqual(zoe.operators, [anna, boris, zoeRow]);
+    assert.deepEqual(zoe.operators.map((o) => omit(o, NEW_OP)), [anna, boris, zoeRow]);
 
     // Lead sees every row; a plain support operator sees the team block and only their own row.
     const lead = await mod.stats(range, op(2, "Boris", "support", true), settings);
-    assert.deepEqual(lead.operators, [anna, boris, zoeRow]);
+    assert.deepEqual(lead.operators.map((o) => omit(o, NEW_OP)), [anna, boris, zoeRow]);
     const own = await mod.stats(range, op(1, "Anna", "support", false), settings);
     assert.deepEqual(own.team, zoe.team);
-    assert.deepEqual(own.operators, [anna]);
+    assert.deepEqual(own.operators.map((o) => omit(o, NEW_OP)), [anna]);
 
     // Stricter follow-up target moves Anna's 100 s reply out of SLA: 1 of 3.
     const strict = await mod.stats(range, op(1, "Anna", "support", false), { ...settings, sla_followup_minutes: 1 });
@@ -145,7 +150,7 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
     // Empty range: one zero day, null percentages, backlog still reflects now.
     const empty = await mod.stats({ from: new Date("2026-01-01T00:00:00+03:00"), to: new Date("2026-01-02T00:00:00+03:00") },
       op(3, "Zoe", "admin", false), settings);
-    assert.deepEqual(empty.team, {
+    assert.deepEqual(omit(empty.team, NEW_TEAM), {
       new_per_day: [{ day: "2026-01-01", bot: 0, miniapp: 0, web: 0 }],
       backlog: 3, oldest_waiting_minutes: 42, within_sla_pct: null,
     });
