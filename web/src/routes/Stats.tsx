@@ -5,7 +5,7 @@ import { Segmented } from "../components/Segmented";
 import { StatsChart } from "../components/StatsChart";
 import { StatsHeatmap } from "../components/StatsHeatmap";
 import { TopicStatsTable } from "../components/TopicStatsTable";
-import { csatText, MIN_CSAT_ANSWERS } from "../lib/csat";
+import { csatMuted, csatText } from "../lib/csat";
 import { formatNumber } from "../lib/format";
 import { useMe } from "../lib/queries";
 import { canEditTeamSettings } from "../lib/settings";
@@ -233,7 +233,7 @@ function ResolutionTiles({ data }: { data: StatsResponse }) {
       label: "Клиенты довольны",
       note: "оценки 👍",
       value: csatText(t.csat_pct, t.csat_answers),
-      muted: t.csat_answers < MIN_CSAT_ANSWERS,
+      muted: csatMuted(t.csat_answers),
     },
   ];
   return (
@@ -284,12 +284,15 @@ export interface Sort {
   dir: "asc" | "desc";
 }
 
+/** A CSAT percent the UI hides (too few answers) must not order the rows. */
+const sortValue = (r: OperatorStats, key: SortKey) => (key === "csat_pct" && csatMuted(r.csat_answers) ? null : r[key]);
+
 /** Nulls always sink to the bottom, whichever way the column sorts. */
 export function sortOperators(rows: OperatorStats[], sort: Sort): OperatorStats[] {
   const sign = sort.dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
-    const x = a[sort.key];
-    const y = b[sort.key];
+    const x = sortValue(a, sort.key);
+    const y = sortValue(b, sort.key);
     if (x === null && y === null) return 0;
     if (x === null) return 1;
     if (y === null) return -1;
@@ -309,7 +312,7 @@ function cell(col: Column, v: string | number | null): ReactNode {
 
 function csatCell(r: OperatorStats): ReactNode {
   const text = csatText(r.csat_pct, r.csat_answers);
-  return r.csat_answers < MIN_CSAT_ANSWERS ? <span className="text-text-muted">{text}</span> : text;
+  return csatMuted(r.csat_answers) ? <span className="text-text-muted">{text}</span> : text;
 }
 
 function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) {

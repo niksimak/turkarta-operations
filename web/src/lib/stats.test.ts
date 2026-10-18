@@ -60,6 +60,14 @@ describe("operator table sort", () => {
     expect(sortOperators(rows, { key, dir: "desc" }).map((r) => r.name)).toEqual(["Борис", "Вера", "Аня"]);
     expect(sortOperators(rows, { key: "name", dir: "asc" }).map((r) => r.name)).toEqual(["Аня", "Борис", "Вера"]);
   });
+
+  it("sorts «Довольны» by the shown value: rows with <5 answers sink both ways", () => {
+    const c = (name: string, pct: number, answers: number) => ({ ...row(name, null), csat_pct: pct, csat_answers: answers });
+    const rs = [c("Мало", 100, 3), c("Первый", 80, 50), c("Второй", 60, 10)];
+    const key = "csat_pct" as const;
+    expect(sortOperators(rs, { key, dir: "desc" }).map((r) => r.name)).toEqual(["Первый", "Второй", "Мало"]);
+    expect(sortOperators(rs, { key, dir: "asc" }).map((r) => r.name)).toEqual(["Второй", "Первый", "Мало"]);
+  });
 });
 
 describe("niceTicks", () => {

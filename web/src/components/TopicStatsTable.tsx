@@ -1,4 +1,4 @@
-import { csatText, MIN_CSAT_ANSWERS } from "../lib/csat";
+import { csatMuted, csatText } from "../lib/csat";
 import { formatDuration, formatPercent, type TopicStats } from "../lib/stats";
 
 const delta = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0");
@@ -29,7 +29,7 @@ export function TopicStatsTable({ rows }: { rows: TopicStats[] }) {
               <td className="num px-4 text-right">
                 {r.resolution_median_s === null ? <span className="text-text-muted">нет</span> : formatDuration(r.resolution_median_s)}
               </td>
-              <td className={r.csat_answers < MIN_CSAT_ANSWERS ? "num px-4 text-right text-text-muted" : "num px-4 text-right"}>
+              <td className={csatMuted(r.csat_answers) ? "num px-4 text-right text-text-muted" : "num px-4 text-right"}>
                 {csatText(r.csat_pct, r.csat_answers)}
               </td>
             </tr>
