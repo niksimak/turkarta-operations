@@ -77,6 +77,17 @@ describe("Stats page", () => {
     expect(screen.getByRole("button", { name: "Довольны" })).toBeTruthy();
   });
 
+  it("notes the CSAT response rate, or «оценки 👍» when nobody was asked", async () => {
+    renderStats({ team, operators: [op], topics: [] });
+    const label = await screen.findByText("Клиенты довольны", { exact: false });
+    expect(within(label.closest("div")!).getByText("· ответили 10 из 12")).toBeTruthy();
+    cleanup();
+
+    renderStats({ team: { ...team, csat_pct: null, csat_answers: 0, csat_asked: 0 }, operators: [op], topics: [] });
+    const empty = await screen.findByText("Клиенты довольны", { exact: false });
+    expect(within(empty.closest("div")!).getByText("· оценки 👍")).toBeTruthy();
+  });
+
   it("says «нет решённых» when nothing was resolved", async () => {
     renderStats({
       team: { ...team, resolution_median_s: null, one_reply_pct: null, messages_per_ticket: null, heatmap: [] },

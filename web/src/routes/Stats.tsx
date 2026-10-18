@@ -231,7 +231,7 @@ function ResolutionTiles({ data }: { data: StatsResponse }) {
     },
     {
       label: "Клиенты довольны",
-      note: "оценки 👍",
+      note: t.csat_asked > 0 ? `ответили ${t.csat_answers} из ${t.csat_asked}` : "оценки 👍",
       value: csatText(t.csat_pct, t.csat_answers),
       muted: csatMuted(t.csat_answers),
     },
