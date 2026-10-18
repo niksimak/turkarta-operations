@@ -72,13 +72,13 @@ test("stats: team block and per-operator rows from a fixed fixture", { skip: !ur
 
     // T3 web-onboarding: a welcome ticket created at signup, 3 h before the customer wrote. Its first-response
     // time is the reply's 180 s, not first_response_at - created_at. Anna assigns to Boris (counts for nobody).
-    // Boris: first 180 (in), note, photo 1000 (out), unmeasured reply.
+    // Boris: first 180 (in), note, photo 1000 (out), unmeasured video reply.
     await ticket(T3, "web-onboarding", msk("10-02T09:00:00"), "awaiting", { first_response_at: msk("10-02T12:03:00"), assigned: 2 });
     await ev(T3, "assigned", 1, { operator_id: 2, operator_name: "Boris" }, msk("10-02T12:00:30"));
     await msg(T3, "agent", "text", msk("10-02T12:03:00"), "crm:2", 180);
     await msg(T3, "agent", "note", msk("10-02T12:05:00"), "crm:2", null);
     await msg(T3, "agent", "photo", msk("10-02T12:20:00"), "crm:2", 1000);
-    await msg(T3, "agent", "text", msk("10-02T12:21:00"), "crm:2", null);
+    await msg(T3, "agent", "video", msk("10-02T12:21:00"), "crm:2", null);
     await msg(T3, "agent", "text", msk("10-05T00:00:00"), "crm:2", 30); // at TO: excluded (half-open)
 
     // T4 web, Moscow day 10-04. Anna takes over; a Bitrix reply (no crm author) is ignored; waiting 42m10s.

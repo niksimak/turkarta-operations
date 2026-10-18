@@ -33,7 +33,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
            (m.created_at = r.first_response_at) as is_first
       from public.support_messages m
       join public.support_requests r on r.id = m.ticket_id
-     where m.sender = 'agent' and m.kind in ('text','photo') and m.author_id like 'crm:%'
+     where m.sender = 'agent' and m.kind in ('text','photo','video') and m.author_id like 'crm:%'
        and m.created_at >= ${from} and m.created_at < ${to}`;
   const inSla = sql`response_seconds <= case when is_first then ${firstTarget}::int else ${followupTarget}::int end`;
 
