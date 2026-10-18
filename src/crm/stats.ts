@@ -26,7 +26,12 @@ export interface OperatorStats {
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-export async function stats(range: StatsRange, me: Operator, s: Settings): Promise<{ team: TeamStats; operators: OperatorStats[] }> {
+export interface TopicStats {
+  topic_id: number | null; name: string; resolved: number; prev_resolved: number;
+  share_pct: number | null; resolution_median_s: number | null;
+}
+
+export async function stats(range: StatsRange, me: Operator, s: Settings): Promise<{ team: TeamStats; operators: OperatorStats[]; topics: TopicStats[] }> {
   const { from, to } = range;
   const firstTarget = s.sla_first_minutes * 60;
   const followupTarget = s.sla_followup_minutes * 60;
@@ -46,7 +51,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
 
   // Operator resolves in range (cutover/bulk closes have no actor), each with the ticket's previous
   // resolve and whether a reopen followed before the ticket's next resolve.
-  const resolveRows = sql`
+  const resolvesIn = (a: Date, b: Date) => sql`
     select e.ticket_id, e.actor_operator_id as op, e.created_at as resolved_at,
            (select max(p.created_at) from public.crm_ticket_events p
              where p.ticket_id = e.ticket_id and p.type = 'status_changed' and p.payload->>'to' = 'resolved'
@@ -65,14 +70,15 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
          order by x.created_at, x.id limit 1
       ) nx on true
      where e.type = 'status_changed' and e.payload->>'to' = 'resolved'
-       and e.created_at >= ${from} and e.created_at < ${to} and e.actor_operator_id is not null`;
+       and e.created_at >= ${a} and e.created_at < ${b} and e.actor_operator_id is not null`;
+  const resolveRows = resolvesIn(from, to);
 
   // One row per resolve whose cycle (after the previous resolve, up to this one) has a customer message.
   // Resolution time runs from the cycle's first customer message, never from created_at (welcome tickets).
-  const cycles = sql`
-    select r.op, r.reopened, m.replies, m.messages,
+  const cyclesIn = (a: Date, b: Date) => sql`
+    select r.ticket_id, r.op, r.reopened, m.replies, m.messages,
            extract(epoch from r.resolved_at - m.first_user_at) as resolution_s
-      from (${resolveRows}) r
+      from (${resolvesIn(a, b)}) r
       cross join lateral (
         select min(created_at) filter (where sender = 'user') as first_user_at,
                count(*) filter (where sender = 'agent' and actor_type = 'human' and author_id like 'crm:%'
@@ -85,6 +91,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
            and (r.reopened_at is null or created_at >= r.reopened_at)
       ) m
      where m.first_user_at is not null`;
+  const cycles = cyclesIn(from, to);
 
   const daysQ = sql`
     select to_char(d, 'YYYY-MM-DD') as day,
@@ -176,7 +183,28 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       left join cyc cy on cy.op = o.id
      order by o.name, o.id`;
 
-  const [days, [now], [teamSla], [teamCycles], heat, rows] = await Promise.all([daysQ, nowQ, teamSlaQ, teamCyclesQ, heatQ, rowsQ]);
+  const prevFrom = new Date(from.getTime() - (to.getTime() - from.getTime()));
+  const topicsQ = sql`
+    with cur as (
+      select s.topic_id, count(*)::int as n from (${resolveRows}) x
+        join public.support_requests s on s.id = x.ticket_id group by 1
+    ), prv as (
+      select s.topic_id, count(*)::int as n from (${resolvesIn(prevFrom, from)}) x
+        join public.support_requests s on s.id = x.ticket_id group by 1
+    ), med as (
+      select s.topic_id, round((percentile_cont(0.5) within group (order by c.resolution_s))::numeric) as m
+        from (${cycles}) c join public.support_requests s on s.id = c.ticket_id group by 1
+    ), k as (select topic_id from cur union select topic_id from prv)
+    select k.topic_id, t.name, t.position, coalesce(cur.n, 0) as resolved, coalesce(prv.n, 0) as prev_resolved,
+           round(100.0 * coalesce(cur.n, 0) / nullif((select sum(n) from cur), 0), 1) as share, med.m as res_med
+      from k
+      left join public.crm_topics t on t.id = k.topic_id
+      left join cur on cur.topic_id is not distinct from k.topic_id
+      left join prv on prv.topic_id is not distinct from k.topic_id
+      left join med on med.topic_id is not distinct from k.topic_id
+     order by coalesce(cur.n, 0) desc, k.topic_id is null, t.position, k.topic_id`;
+
+  const [days, [now], [teamSla], [teamCycles], heat, rows, topicRows] = await Promise.all([daysQ, nowQ, teamSlaQ, teamCyclesQ, heatQ, rowsQ, topicsQ]);
 
   return {
     team: {
@@ -204,6 +232,12 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       reopen_rate_pct: num(r.reopen),
       resolution_median_s: num(r.res_med),
       one_reply_pct: num(r.one_reply),
+    })),
+    topics: topicRows.map((r) => ({
+      topic_id: r.topic_id == null ? null : Number(r.topic_id),
+      name: r.topic_id == null ? "Без темы" : String(r.name),
+      resolved: Number(r.resolved), prev_resolved: Number(r.prev_resolved),
+      share_pct: num(r.share), resolution_median_s: num(r.res_med),
     })),
   };
 }
