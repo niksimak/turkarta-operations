@@ -15,5 +15,5 @@ export interface OperatorPrefs {
 export const DEFAULT_PREFS: OperatorPrefs = {
   theme: "system", sound: true, volume: 0.6, desktop: true, notify_scope: "all", send_key: "mod_enter",
 };
-export type TicketEventType = "created" | "assigned" | "auto_assigned" | "unassigned" | "taken_over" | "status_changed" | "reopened" | "topic_changed";
+export type TicketEventType = "created" | "assigned" | "auto_assigned" | "unassigned" | "taken_over" | "status_changed" | "reopened" | "topic_changed" | "csat";
 export const canEditTeamSettings = (o: Pick<Operator, "role" | "is_lead">) => o.role === "admin" || o.is_lead;

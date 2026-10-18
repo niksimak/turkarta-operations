@@ -1,6 +1,8 @@
 import type postgres from "postgres";
+import { legacySurface } from "../config.js";
 import { sql, type Ticket } from "../db.js";
 import { publish, type CrmEvent } from "./events.js";
+import type { ReplyDeps } from "./reply.js";
 import { getSettings, type Settings } from "./settings.js";
 import type { DeliveryStatus, MessageKind, Operator, TicketEventType, TicketStatus } from "./types.js";
 
@@ -372,7 +374,11 @@ export async function assign(ticketId: string, to: number | null, me: Operator):
 
 export async function setStatus(
   ticketId: string, status: TicketStatus, me: Operator,
-  deps: { onResolved?: (ticket: Ticket, text: string) => Promise<void> } = {},
+  deps: {
+    onResolved?: (ticket: Ticket, text: string) => Promise<void>;
+    onCsat?: (ticket: Ticket, text: string) => Promise<void>;
+    csatDeps?: ReplyDeps;
+  } = {},
 ): Promise<void> {
   const effects = await mutate(ticketId, async (tx, t) => {
     if (t.status === status) return null;
@@ -402,13 +408,26 @@ export async function setStatus(
   });
   if (!effects?.resolved) return;
   const s = await getSettings();
-  if (!s.resolve_message_enabled) return;
-  try {
-    await (deps.onResolved ?? sendResolveMessage)(effects.resolved, s.resolve_message_text);
-  } catch (err) {
-    // The ticket is already resolved; a failed courtesy message must not undo or fail that.
-    console.error(`[crm-tickets] resolve message failed ticket=${ticketId} code=${(err as { code?: string }).code ?? "error"}`);
+  if (s.resolve_message_enabled) {
+    try {
+      await (deps.onResolved ?? sendResolveMessage)(effects.resolved, s.resolve_message_text);
+    } catch (err) {
+      // The ticket is already resolved; a failed courtesy message must not undo or fail that.
+      console.error(`[crm-tickets] resolve message failed ticket=${ticketId} code=${(err as { code?: string }).code ?? "error"}`);
+    }
   }
+  if (!s.csat_enabled || legacySurface()) return;
+  try {
+    await (deps.onCsat ?? ((t, text) => askCsatLazy(t, text, deps.csatDeps)))(effects.resolved, s.csat_text);
+  } catch (err) {
+    console.error(`[crm-tickets] csat failed ticket=${ticketId} code=${(err as { code?: string }).code ?? "error"}`);
+  }
+}
+
+// Lazy: csat.ts imports this module, so a static import would be a cycle.
+async function askCsatLazy(ticket: Ticket, text: string, deps?: ReplyDeps): Promise<void> {
+  const { askCsat } = await import("./csat.js");
+  await askCsat(ticket, text, deps);
 }
 
 // Lazy: reply.ts imports this module, so a static import would be a cycle.

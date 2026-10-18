@@ -8,8 +8,10 @@ import type { Operator } from "./types.js";
 
 export interface OutPhoto { bytes: Uint8Array; filename: string }
 export interface SentPhoto { message_id: number; fileId: string; fileUniqueId: string }
+/** Telegram send options for a text message (inline keyboards). */
+export interface TgExtra { reply_markup?: unknown }
 export interface TgTransport {
-  sendMessage(chatId: number, text: string): Promise<{ message_id: number }>;
+  sendMessage(chatId: number, text: string, extra?: TgExtra): Promise<{ message_id: number }>;
   sendPhoto(chatId: number, photo: OutPhoto, caption?: string): Promise<SentPhoto>;
   sendMediaGroup(chatId: number, photos: OutPhoto[], caption?: string): Promise<SentPhoto[]>;
   sendVideo(chatId: number, video: OutPhoto, caption?: string): Promise<SentPhoto>;
@@ -50,8 +52,8 @@ export function grammyTransport(api: Bot["api"]): TgTransport {
     return { message_id: m.message_id, fileId: p.file_id, fileUniqueId: p.file_unique_id };
   };
   return {
-    async sendMessage(chatId, text) {
-      const m = await api.sendMessage(chatId, text, {}, signal());
+    async sendMessage(chatId, text, extra) {
+      const m = await api.sendMessage(chatId, text, (extra ?? {}) as never, signal());
       return { message_id: m.message_id };
     },
     async sendPhoto(chatId, photo, caption) {
@@ -94,10 +96,10 @@ async function defaultTransport(): Promise<TgTransport> {
 export async function sendTelegram(
   tg: TgTransport, chatId: number, body: string, photos: OutPhoto[],
   onPhotosSent: (sent: SentPhoto[]) => Promise<void> = async () => {},
-  asVideo = false,
+  asVideo = false, extra?: TgExtra,
 ): Promise<SentPhoto[]> {
   if (photos.length === 0) {
-    await tg.sendMessage(chatId, body);
+    await tg.sendMessage(chatId, body, extra);
     return [];
   }
   const caption = body && body.length <= CAPTION_MAX ? body : undefined;
@@ -144,7 +146,7 @@ async function setDelivery(messageId: string, status: "sent" | "failed", error: 
 }
 
 /** Delivers a committed agent message and records the outcome. Never throws on a send failure. */
-async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps): Promise<void> {
+async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps, extra?: TgExtra): Promise<void> {
   const [m] = await sql<{ body: string; kind: string }[]>`select body, kind from support_messages where id = ${messageId}`;
   const { body, kind } = m!;
 
@@ -168,7 +170,7 @@ async function deliver(messageId: string, ticket: Ticket, deps: ReplyDeps): Prom
             await sql`update support_attachments set tg_file_id = ${s.fileId}, tg_file_unique_id = ${s.fileUniqueId}
               where id = ${files[i]!.id}`;
           }
-        }, files.some((f) => f.media_type.startsWith("video/")));
+        }, files.some((f) => f.media_type.startsWith("video/")), extra);
       }
     } catch (err) {
       const error = deliveryError(err);
@@ -268,12 +270,13 @@ export async function retryDelivery(messageId: string, me: Operator, deps: Reply
   return (await crmMessage(messageId))!;
 }
 
-/** An automated agent text (resolve message): no author, no timers, normal delivery state. */
-export async function sendSystemText(ticket: Ticket, text: string, deps: ReplyDeps = {}): Promise<void> {
+/** An automated agent text (resolve message, CSAT prompt): no author, no timers, normal delivery state. Returns the message id. */
+export async function sendSystemText(ticket: Ticket, text: string, deps: ReplyDeps = {}, extra?: TgExtra): Promise<string> {
   const [m] = await sql<{ id: string }[]>`
     insert into support_messages (ticket_id, sender, body, actor_type, author_id, kind, delivery_status)
     values (${ticket.id}, 'agent', ${text}, 'automation', ${SYSTEM_AUTHOR}, 'text', 'pending')
     returning id`;
-  await deliver(m!.id, ticket, deps);
+  await deliver(m!.id, ticket, deps, extra);
   await publish({ type: "message.created", ticketId: ticket.id, messageId: m!.id });
+  return m!.id;
 }
