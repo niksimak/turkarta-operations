@@ -26,8 +26,8 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
   await sql`insert into crm_operators(id,name,role,is_lead) values (7,'Anna','support',false), (10,'Lena','support',true)`;
   const [tk] = await sql`insert into support_requests (user_tg, source, status) values (777, 'bot', 'resolved') returning id`;
   const id = tk!.id as string;
-  const events = async () => (await sql`select type, actor_operator_id, payload from crm_ticket_events
-    where ticket_id = ${id} and type = 'topic_changed' order by id`).map((e) => ({ actor: e.actor_operator_id, ...e.payload }));
+  const events = async (ticketId = id) => (await sql`select type, actor_operator_id, payload from crm_ticket_events
+    where ticket_id = ${ticketId} and type = 'topic_changed' order by id`).map((e) => ({ actor: e.actor_operator_id, ...e.payload }));
   try {
     await t.test("seed: ten topics in order, idempotent on re-run", async () => {
       const { readFileSync } = await import("node:fs");
@@ -52,6 +52,7 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
       assert.equal((await topics.listTopics()).at(-1)!.name, "Комиссия"); // archived stay listed, last
       await assert.rejects(topics.updateTopic(created.id, { name: "x" }, anna), { name: "Forbidden" });
       await assert.rejects(topics.updateTopic(9999, { name: "x" }, lead), { name: "NotFound" });
+      await assert.rejects(topics.updateTopic(2147483648, { name: "x" }, lead), { name: "NotFound" }); // above int4
     });
 
     await t.test("operator sets, changes and clears the topic; archived and unknown ids are refused", async () => {
@@ -62,15 +63,20 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
       await topics.setTicketTopic(id, card.id, anna);
       await topics.setTicketTopic(id, card.id, anna); // same choice: no second event
       await topics.setTicketTopic(id, kyc.id, anna);
-      for (const bad of [archived.id, 9999]) {
+      for (const bad of [archived.id, 9999, 2147483648]) {
         await assert.rejects(topics.setTicketTopic(id, bad, anna),
           (e: { issues?: Array<{ path: string[]; message: string }> }) => e.issues?.[0]?.path[0] === "topic_id");
       }
       const d = await tickets.ticketDetail(id);
       assert.deepEqual([d!.ticket.topic_id, d!.ticket.topic_name, d!.ticket.topic_source], [kyc.id, "KYC/верификация", "operator"]);
       await topics.setTicketTopic(id, null, anna);
+      await topics.setTicketTopic(id, null, anna); // clearing again: no second event
       const cleared = await tickets.ticketDetail(id);
-      assert.deepEqual([cleared!.ticket.topic_id, cleared!.ticket.topic_source], [null, null]);
+      assert.deepEqual([cleared!.ticket.topic_id, cleared!.ticket.topic_source], [null, "operator"]);
+      // Clearing is an operator choice: the AI may not fill it in, and resolving queues no topic job.
+      assert.equal(await topics.applyAiTopic(id, card.id), false);
+      await topics.enqueueTopicJob(sql, id);
+      assert.equal((await sql`select 1 from support_agent_jobs where ticket_id = ${id} and kind = 'topic'`).length, 0);
       assert.deepEqual(await events(), [
         { actor: "7", from: null, to: "Карта отклонена", source: "operator" },
         { actor: "7", from: "Карта отклонена", to: "KYC/верификация", source: "operator" },
@@ -79,19 +85,21 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
     });
 
     await t.test("AI applies only when no operator choice, never an archived topic", async () => {
-      await sql`delete from crm_ticket_events where ticket_id = ${id}`;
+      const [fresh] = await sql`insert into support_requests (user_tg, source, status) values (779, 'bot', 'resolved') returning id`;
+      const id3 = fresh!.id as string;
       const list = await topics.listTopics();
       const topup = list.find((x) => x.name === "Пополнение не пришло")!;
       const other = list.find((x) => x.name === "Другое")!;
       const archived = list.find((x) => x.archived)!;
-      assert.equal(await topics.applyAiTopic(id, archived.id), false);
-      assert.equal(await topics.applyAiTopic(id, topup.id), true); // topic was cleared above: AI may set
-      assert.equal(await topics.applyAiTopic(id, topup.id), false); // same: no change, no event
-      await topics.setTicketTopic(id, other.id, anna);
-      assert.equal(await topics.applyAiTopic(id, topup.id), false); // operator choice wins
-      const d = await tickets.ticketDetail(id);
+      assert.equal(await topics.applyAiTopic(id3, archived.id), false);
+      assert.equal(await topics.applyAiTopic(id3, 2147483648), false); // above int4: unknown, not a 500
+      assert.equal(await topics.applyAiTopic(id3, topup.id), true); // no topic and no operator choice: AI may set
+      assert.equal(await topics.applyAiTopic(id3, topup.id), false); // same: no change, no event
+      await topics.setTicketTopic(id3, other.id, anna);
+      assert.equal(await topics.applyAiTopic(id3, topup.id), false); // operator choice wins
+      const d = await tickets.ticketDetail(id3);
       assert.deepEqual([d!.ticket.topic_name, d!.ticket.topic_source], ["Другое", "operator"]);
-      assert.deepEqual(await events(), [
+      assert.deepEqual(await events(id3), [
         { actor: null, from: null, to: "Пополнение не пришло", source: "ai" },
         { actor: "7", from: "Пополнение не пришло", to: "Другое", source: "operator" },
       ]);

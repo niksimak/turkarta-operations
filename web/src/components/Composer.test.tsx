@@ -9,7 +9,7 @@ import { resetToastsForTests } from "./Toast";
 import { resetPresenceForTests } from "../lib/presence";
 import { resetOutboxForTests } from "../lib/outbox";
 import { MAX_PHOTO_BYTES } from "../lib/files";
-import type { CrmMessage, TicketDetail, TicketListItem } from "../lib/tickets";
+import { ticketKeys, type CrmMessage, type TicketDetail, type TicketListItem } from "../lib/tickets";
 
 const TID = "11111111-1111-4111-8111-111111111111";
 const now = new Date().toISOString();
@@ -81,7 +81,7 @@ const canned = [
 
 type Handler = (init: RequestInit, url: URL) => Response | Promise<Response>;
 
-function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter"; send?: Handler; topics?: unknown[] } = {}) {
+function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter"; send?: Handler; topic?: Handler; topics?: unknown[] } = {}) {
   const calls: Array<{ method: string; path: string; body: unknown }> = [];
   const d = opts.detail ?? detail();
   const fetch = vi.fn(async (input: string, init: RequestInit = {}) => {
@@ -97,11 +97,13 @@ function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter";
     if (method === "GET" && path === "/crm/api/settings") return jsonResponse(404, {});
     if (method === "GET" && path === "/crm/api/canned") return jsonResponse(200, canned);
     if (method === "POST" && path === `/crm/api/tickets/${TID}/messages` && opts.send) return opts.send(init, url);
+    if (method === "POST" && path === `/crm/api/tickets/${TID}/topic` && opts.topic) return opts.topic(init, url);
     if (method === "POST" && path === `/crm/api/tickets/${TID}/topic`) {
-      // Like the server: the stored ticket takes the chosen topic, so the refetch agrees with the optimistic state.
+      // Like the server: the stored ticket takes the chosen topic (clearing is an operator choice too),
+      // so the refetch agrees with the optimistic state.
       const id = (JSON.parse(String(init.body)) as { topic_id: number | null }).topic_id;
       const t = opts.topics?.find((x) => (x as { id: number }).id === id) as { name: string } | undefined;
-      Object.assign(d.ticket, { topic_id: id, topic_name: t?.name ?? null, topic_source: id === null ? null : "operator" });
+      Object.assign(d.ticket, { topic_id: id, topic_name: t?.name ?? null, topic_source: "operator" });
       return jsonResponse(200, { ok: true, ticket: d.ticket });
     }
     return jsonResponse(200, { ok: true });
@@ -606,5 +608,23 @@ describe("Thread header topic menu", () => {
     await waitFor(() =>
       expect(calls.some((c) => c.method === "POST" && c.path === `/crm/api/tickets/${TID}/topic` && c.body === '{"topic_id":1}')).toBe(true),
     );
+  });
+
+  it("clearing an AI topic shows «Без темы» and is optimistically an operator choice", async () => {
+    let release: (r: Response) => void = () => {};
+    const held = new Promise<Response>((r) => { release = r; });
+    const { calls } = mockApi({
+      topics,
+      topic: () => held,
+      detail: detail({ topic_id: 1, topic_name: "KYC/верификация", topic_source: "ai" } as Partial<TicketListItem>),
+    });
+    const client = renderThread();
+    fireEvent.click(await screen.findByRole("button", { name: "Тема: KYC/верификация" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Без темы" }));
+    await screen.findByRole("button", { name: "Тема: Без темы" });
+    const cached = client.getQueryData<TicketDetail>(ticketKeys.detail(TID))!.ticket;
+    expect([cached.topic_id, cached.topic_name, cached.topic_source]).toEqual([null, null, "operator"]);
+    expect(calls.some((c) => c.method === "POST" && c.path === `/crm/api/tickets/${TID}/topic` && c.body === '{"topic_id":null}')).toBe(true);
+    release(jsonResponse(200, { ok: true, ticket: { ...cached } }));
   });
 });

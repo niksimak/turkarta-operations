@@ -329,7 +329,8 @@ function applyAction(t: TicketDetailItem, a: TicketAction, me: Operator | undefi
     case "status":
       return { ...t, status: a.status };
     case "topic":
-      return { ...t, topic_id: a.topic?.id ?? null, topic_name: a.topic?.name ?? null, topic_source: a.topic ? "operator" : null };
+      // Clearing is an operator choice too, as on the server.
+      return { ...t, topic_id: a.topic?.id ?? null, topic_name: a.topic?.name ?? null, topic_source: "operator" };
   }
 }
 

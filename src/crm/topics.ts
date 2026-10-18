@@ -55,7 +55,7 @@ export async function createTopic(input: unknown, me: Operator): Promise<Topic> 
 export async function updateTopic(id: number, patch: unknown, me: Operator): Promise<Topic> {
   if (!canEditTeamSettings(me)) throw new Forbidden();
   const v = TopicPatch.parse(patch);
-  if (!Number.isInteger(id) || id <= 0) throw new NotFound();
+  if (!isTopicId(id)) throw new NotFound();
   const [r] = await uniqueName(() => sql`
     update crm_topics
        set name = coalesce(${v.name ?? null}::text, name),
@@ -69,7 +69,12 @@ export async function updateTopic(id: number, patch: unknown, me: Operator): Pro
   return toTopic(r);
 }
 
+/** crm_topics.id is int4: a larger id is unknown, not a database error. */
+const MAX_ID = 2147483647;
+const isTopicId = (id: number) => Number.isInteger(id) && id > 0 && id <= MAX_ID;
+
 async function activeTopicName(tx: Sql, id: number): Promise<string | null> {
+  if (!isTopicId(id)) return null;
   const [r] = await tx<{ name: string }[]>`select name from crm_topics where id = ${id} and archived_at is null`;
   return r?.name ?? null;
 }
@@ -86,10 +91,9 @@ export async function setTicketTopic(ticketId: string, topicId: number | null, m
     const cur = await currentTopic(tx, ticketId);
     const name = topicId === null ? null : await activeTopicName(tx, topicId);
     if (topicId !== null && name === null) throw fieldError("topic_id", "unknown_topic");
-    if (cur.id === topicId && (topicId === null || cur.source === "operator")) return false;
-    await tx`update support_requests
-        set topic_id = ${topicId}, topic_source = ${topicId === null ? null : "operator"},
-            topic_set_at = ${topicId === null ? null : sql`now()`}
+    // Clearing is an operator choice too: the AI must not fill the topic back in.
+    if (cur.id === topicId && cur.source === "operator") return false;
+    await tx`update support_requests set topic_id = ${topicId}, topic_source = 'operator', topic_set_at = now()
       where id = ${ticketId}`;
     await logEvent(tx, ticketId, "topic_changed", me.id, { from: cur.name, to: name, source: "operator" });
     return true;
