@@ -81,7 +81,7 @@ const canned = [
 
 type Handler = (init: RequestInit, url: URL) => Response | Promise<Response>;
 
-function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter"; send?: Handler } = {}) {
+function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter"; send?: Handler; topics?: unknown[] } = {}) {
   const calls: Array<{ method: string; path: string; body: unknown }> = [];
   const d = opts.detail ?? detail();
   const fetch = vi.fn(async (input: string, init: RequestInit = {}) => {
@@ -93,10 +93,17 @@ function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter";
     if (method === "GET" && path === "/crm/api/tickets") return jsonResponse(200, { items: [d.ticket], nextCursor: null, counts: { queue: 0, mine: 1, overdue: 0 } });
     if (method === "GET" && path === `/crm/api/tickets/${TID}`) return jsonResponse(200, d);
     if (method === "GET" && path === "/crm/api/operators") return jsonResponse(200, operators);
-    if (method === "GET" && path === "/crm/api/topics") return jsonResponse(200, []);
+    if (method === "GET" && path === "/crm/api/topics") return jsonResponse(200, opts.topics ?? []);
     if (method === "GET" && path === "/crm/api/settings") return jsonResponse(404, {});
     if (method === "GET" && path === "/crm/api/canned") return jsonResponse(200, canned);
     if (method === "POST" && path === `/crm/api/tickets/${TID}/messages` && opts.send) return opts.send(init, url);
+    if (method === "POST" && path === `/crm/api/tickets/${TID}/topic`) {
+      // Like the server: the stored ticket takes the chosen topic, so the refetch agrees with the optimistic state.
+      const id = (JSON.parse(String(init.body)) as { topic_id: number | null }).topic_id;
+      const t = opts.topics?.find((x) => (x as { id: number }).id === id) as { name: string } | undefined;
+      Object.assign(d.ticket, { topic_id: id, topic_name: t?.name ?? null, topic_source: id === null ? null : "operator" });
+      return jsonResponse(200, { ok: true, ticket: d.ticket });
+    }
     return jsonResponse(200, { ok: true });
   });
   vi.stubGlobal("fetch", fetch);
@@ -552,5 +559,52 @@ describe("Composer", () => {
     expect(status().textContent).toBe("Режим: заметка");
     fireEvent.keyDown(textbox("Заметка"), { key: ".", ctrlKey: true });
     expect(status().textContent).toBe("Режим: ответ");
+  });
+});
+
+describe("Thread header topic menu", () => {
+  const topics = [
+    { id: 1, name: "KYC/верификация", position: 1, archived: false },
+    { id: 2, name: "Карта отклонена", position: 2, archived: false },
+    { id: 3, name: "Старая", position: 3, archived: true },
+  ];
+
+  beforeEach(() => {
+    resetApiStateForTests();
+    resetToastsForTests();
+    resetPresenceForTests();
+    resetOutboxForTests();
+    installFakeEventSource();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("offers active topics only, picks one optimistically and POSTs its id", async () => {
+    const { calls } = mockApi({ topics });
+    renderThread();
+    fireEvent.click(await screen.findByRole("button", { name: "Тема: Без темы" }));
+    expect(screen.queryByRole("menuitemradio", { name: "Старая" })).toBeNull();
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Карта отклонена" }));
+    await screen.findByRole("button", { name: "Тема: Карта отклонена" });
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.path === `/crm/api/tickets/${TID}/topic` && c.body === '{"topic_id":2}')).toBe(true),
+    );
+  });
+
+  it("shows the ИИ tag on an AI topic and re-picking it still POSTs, so the operator owns it", async () => {
+    const { calls } = mockApi({
+      topics,
+      detail: detail({ topic_id: 1, topic_name: "KYC/верификация", topic_source: "ai" } as Partial<TicketListItem>),
+    });
+    renderThread();
+    const trigger = await screen.findByRole("button", { name: "Тема: KYC/верификация" });
+    expect(within(trigger).getByText("ИИ")).toBeTruthy();
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "KYC/верификация" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.path === `/crm/api/tickets/${TID}/topic` && c.body === '{"topic_id":1}')).toBe(true),
+    );
   });
 });
