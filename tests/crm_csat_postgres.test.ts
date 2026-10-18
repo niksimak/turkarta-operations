@@ -142,13 +142,30 @@ test("CSAT: ask after a CRM resolve, rate, comment, lookups", { skip: !url }, as
       assert.equal((await csatRows(tgTicket)).length, 1);
     });
 
-    await t.test("web channel", async () => {
+    await t.test("web channel is off by default: no survey, no message", async () => {
+      sent.length = 0;
+      const id = await ticket({ user_tg: null, web_user_id: "w-0", channel: "web", source: "web" });
+      await customer(id);
+      await human(id);
+      await resolve(id);
+      assert.equal((await csatRows(id)).length, 0);
+      const prompts = await sql`select id from support_messages where ticket_id = ${id} and body = 'Мы смогли вам помочь?'`;
+      assert.equal(prompts.length, 0);
+      assert.equal(sent.length, 0);
+    });
+
+    await t.test("web channel with csat_web_enabled", async () => {
       sent.length = 0;
       const id = await ticket({ user_tg: null, web_user_id: "w-1", channel: "web", source: "web" });
       webTicket = id;
       await customer(id);
       await human(id);
-      await resolve(id);
+      await sql`insert into crm_settings (key, value) values ('csat_web_enabled', 'true'::jsonb)`;
+      try {
+        await resolve(id);
+      } finally {
+        await sql`delete from crm_settings where key = 'csat_web_enabled'`;
+      }
       const rows = await csatRows(id);
       assert.equal(rows.length, 1);
       webCsat = rows[0]!.id as string;

@@ -269,6 +269,7 @@ export interface CrmSettings extends SlaSettings {
   resolve_message_text: string;
   csat_enabled: boolean;
   csat_text: string;
+  csat_web_enabled: boolean;
 }
 
 export function useOperators(enabled = true) {

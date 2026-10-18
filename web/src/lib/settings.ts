@@ -49,6 +49,7 @@ export const SETTING_GROUPS: FieldGroup[] = [
       { key: "resolve_message_text", label: "Текст сообщения", help: "До 1000 символов.", kind: "text" },
       { key: "csat_enabled", label: "Оценка после решения", help: "Спрашивать клиента «Мы смогли вам помочь?» с кнопками 👍 и 👎.", kind: "bool" },
       { key: "csat_text", label: "Вопрос клиенту", help: "До 200 символов.", kind: "text" },
+      { key: "csat_web_enabled", label: "Оценка в веб-чате", help: "Спрашивать и клиентов веб-приложения. Включите, когда в приложении появятся кнопки оценки.", kind: "bool" },
     ],
   },
   {

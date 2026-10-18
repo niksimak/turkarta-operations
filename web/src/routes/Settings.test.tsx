@@ -31,7 +31,7 @@ const settings = {
   auto_assign_minutes: 5, auto_assign_max_open: null, offline_after_minutes: 15, reopen_days: 7,
   tg_ping_new_ticket: true, tg_ping_overdue: true, tg_ping_no_one_on_shift: true,
   resolve_message_enabled: false, resolve_message_text: "Мы закрыли обращение.",
-  csat_enabled: true, csat_text: "Мы смогли вам помочь?",
+  csat_enabled: true, csat_text: "Мы смогли вам помочь?", csat_web_enabled: false,
 };
 const operators = [
   { id: 7, name: "Аня Смирнова", email: null, role: "support", is_lead: false, auto_assign_enabled: true,
@@ -89,6 +89,8 @@ describe("Settings, Команда", () => {
     expect((screen.getByLabelText("Текст сообщения") as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByRole("switch", { name: "Оценка после решения" })).toBeTruthy();
     expect((screen.getByLabelText("Вопрос клиенту") as HTMLTextAreaElement).value).toBe("Мы смогли вам помочь?");
+    const web = screen.getByRole("switch", { name: "Оценка в веб-чате" });
+    expect(web.getAttribute("aria-checked")).toBe("false");
     expect((screen.getByRole("switch", { name: "Автоназначение" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.change(first, { target: { value: "9" } });

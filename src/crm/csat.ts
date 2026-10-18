@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { sql, type Ticket } from "../db.js";
 import { publish } from "./events.js";
 import { sendSystemText, type ReplyDeps, type TgExtra } from "./reply.js";
+import { getSettings } from "./settings.js";
 import { logEvent } from "./tickets.js";
 
 export type Rating = "up" | "down";
@@ -46,6 +47,8 @@ export async function csatPromptExtra(messageId: string): Promise<TgExtra | unde
 /** Asks once per resolution. Returns the survey id, or null when it is not asked. */
 export async function askCsat(ticket: Ticket, text: string, deps: ReplyDeps = {}): Promise<string | null> {
   if (ticket.status !== "resolved" || !ticket.resolved_at || !(await humanAnswered(ticket.id))) return null;
+  // The web app has no rating buttons yet; asking there would only add an unanswerable message.
+  if (ticket.user_tg == null && !(await getSettings()).csat_web_enabled) return null;
   // resolved_at is copied in SQL: a JS Date drops the microseconds, and the survey is
   // matched to its resolution by exact equality (lockFor, csatForWeb).
   const [row] = await sql<{ id: string }[]>`
