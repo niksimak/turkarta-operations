@@ -11,7 +11,10 @@ export interface TicketListItem {
   first_response_at: string | null; assigned_operator_id: number | null; assigned_operator_name: string | null;
   auto_assigned: boolean; intake_pending: boolean; created_at: string;
 }
-export type TicketDetailItem = TicketListItem & { device: string | null; category: string | null; web_user_id: string | null };
+export type TicketDetailItem = TicketListItem & {
+  device: string | null; category: string | null; web_user_id: string | null;
+  topic_id: number | null; topic_name: string | null; topic_source: "ai" | "operator" | null;
+};
 export interface ListQuery {
   view: "queue" | "mine" | "all"; status?: TicketStatus; channel?: "bot" | "miniapp" | "web"; operatorId?: number;
   overdue?: boolean; q?: string; cursor?: string; limit?: number;
@@ -215,7 +218,8 @@ export async function crmMessage(id: string): Promise<CrmMessage | null> {
 
 export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailItem; messages: CrmMessage[]; events: TicketEventRow[] } | null> {
   if (!UUID_RE.test(id)) return null;
-  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id`)} where r.id = ${id}`;
+  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id, r.topic_id, r.topic_source,
+    (select name from crm_topics where id = r.topic_id) as topic_name`)} where r.id = ${id}`;
   if (!r) return null;
   const msgs = await sql`${messageSelect()} where m.ticket_id = ${id} order by m.seq`;
   const evs = await sql`
@@ -230,6 +234,9 @@ export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailIt
       device: (r.device as string | null) ?? null,
       category: (r.category as string | null) ?? null,
       web_user_id: (r.web_user_id as string | null) ?? null,
+      topic_id: num(r.topic_id),
+      topic_name: (r.topic_name as string | null) ?? null,
+      topic_source: (r.topic_source as "ai" | "operator" | null) ?? null,
     },
     messages: msgs.map(toMessage),
     events: evs.map((e) => ({
@@ -260,7 +267,7 @@ async function operatorRef(tx: Sql, id: number): Promise<{ id: number; name: str
   return o ? { id, name: o.name } : undefined;
 }
 
-async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number | null, payload: Record<string, unknown>) {
+export async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number | null, payload: Record<string, unknown>) {
   await tx`insert into crm_ticket_events (ticket_id, type, actor_operator_id, payload)
     values (${ticketId}, ${type}, ${actor}, ${JSON.stringify(payload)}::text::jsonb)`;
 }

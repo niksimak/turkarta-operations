@@ -94,6 +94,12 @@ mock.module("../dist/crm/settings.js", { namedExports: {
 mock.module("../dist/crm/stats.js", { namedExports: {
   stats: async (...a: unknown[]) => { record("stats", ...a); return { team: {}, operators: [] }; },
 } });
+mock.module("../dist/crm/topics.js", { namedExports: {
+  listTopics: async (...a: unknown[]) => { record("listTopics", ...a); return []; },
+  createTopic: async (...a: unknown[]) => { record("createTopic", ...a); return { id: 1, name: "t", position: 1, archived: false }; },
+  updateTopic: async (...a: unknown[]) => { record("updateTopic", ...a); return { id: 1, name: "t", position: 1, archived: false }; },
+  setTicketTopic: async (...a: unknown[]) => { record("setTicketTopic", ...a); },
+} });
 mock.module("../dist/crm/attachments.js", { namedExports: {
   attachmentResponse: async () => new Response("x", { headers: { "content-type": "image/jpeg" } }),
 } });
