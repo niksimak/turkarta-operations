@@ -209,6 +209,31 @@ test("ticket workflow: take, take-over, assign, status, list, detail", { skip: !
       assert.equal(none.length, 0);
     });
 
+    await t.test("setStatus resolved still resolves when the topic enqueue throws", async () => {
+      const id = await ticket();
+      await sql`insert into support_messages (ticket_id, sender, body, actor_type) values (${id}, 'user', 'help', 'customer')`;
+      // A narrower kind check makes the topic insert fail inside the resolve transaction.
+      await sql`alter table support_agent_jobs drop constraint support_agent_jobs_kind_check`;
+      await sql`alter table support_agent_jobs add constraint support_agent_jobs_kind_check check (kind in ('triage','review')) not valid`;
+      const logged: string[] = [];
+      const origError = console.error;
+      console.error = (...a: unknown[]) => { logged.push(a.map(String).join(" ")); };
+      try {
+        await tickets.setStatus(id, "resolved", anna, { onResolved: async () => {} });
+      } finally {
+        console.error = origError;
+        await sql`alter table support_agent_jobs drop constraint support_agent_jobs_kind_check`;
+        await sql`alter table support_agent_jobs add constraint support_agent_jobs_kind_check check (kind in ('triage','review','topic'))`;
+      }
+      const r = await row(id);
+      assert.equal(r.status, "resolved");
+      assert.ok(r.resolved_at instanceof Date);
+      assert.equal((await sql`select 1 from support_agent_jobs where ticket_id = ${id} and kind = 'topic'`).length, 0);
+      const ev = await eventsOf(id);
+      assert.deepEqual(ev.at(-1)!.payload, { from: "new", to: "resolved" });
+      assert.deepEqual(logged, [`[crm-tickets] topic enqueue failed ticket=${id} code=23514`]);
+    });
+
     await t.test("list queue orders by queued_at asc and counts", async () => {
       await reset();
       const a = await ticket({ queued_at: sql`now() - interval '3 minutes'` });

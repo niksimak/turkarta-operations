@@ -292,7 +292,7 @@ async function toQueue(tx: Sql, t: LockedTicket, actor: number) {
 }
 
 /** Runs `fn` in a transaction holding the ticket's row lock. */
-export async function withLockedTicket<T>(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<T>): Promise<T> {
+export async function withLockedTicket<T>(ticketId: string, fn: (tx: postgres.TransactionSql, t: LockedTicket) => Promise<T>): Promise<T> {
   if (!UUID_RE.test(ticketId)) throw new NotFound();
   try {
     return await sql.begin(async (tx) => {
@@ -319,7 +319,7 @@ export async function claim(tx: Sql, t: LockedTicket, me: Operator): Promise<boo
 }
 
 /** Row-locks the ticket, applies `fn`, then publishes after commit. `fn` returns null for a no-op. */
-async function mutate(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
+async function mutate(ticketId: string, fn: (tx: postgres.TransactionSql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
   let who = "";
   const effects = await withLockedTicket(ticketId, (tx, t) => {
     who = ticketWho(t);
@@ -383,8 +383,14 @@ export async function setStatus(
       if (status !== "resolved" && t.assigned_operator_id === null) await assignTo(tx, t, me, "assigned", me.id);
       if (status === "resolved") {
         await tx`update support_requests set status = 'resolved', resolved_at = now(), waiting_since = null where id = ${t.id}`;
+        // Lazy: topics.ts imports this module, so a static import would be a cycle.
         const { enqueueTopicJob } = await import("./topics.js");
-        await enqueueTopicJob(tx, t.id);
+        try {
+          // A savepoint keeps a failed side job from aborting, and so undoing, the resolve.
+          await tx.savepoint(async (sp) => enqueueTopicJob(sp, t.id));
+        } catch (err) {
+          console.error(`[crm-tickets] topic enqueue failed ticket=${t.id} code=${(err as { code?: string }).code ?? "error"}`);
+        }
       } else {
         await tx`update support_requests set status = ${status} where id = ${t.id}`;
       }
