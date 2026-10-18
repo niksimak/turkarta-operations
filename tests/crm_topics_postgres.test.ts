@@ -155,6 +155,21 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
       await assert.rejects(store.reserve(fresh, "m", "topic", 0.001, { ...budget, monthlyUsd: 0.0001 }), /budget_exceeded/);
       await store.reserve(fresh, "m", "topic", 0.001, budget);
     });
+
+    await t.test("daily digest: failed topic jobs are not analysis failures", async () => {
+      const { OperationsStore } = await import("../dist/agents/operations-store.js");
+      const ops = new OperationsStore(sql);
+      const day = new Date().toISOString().slice(0, 10);
+      const failures = async () => ((await ops.dailyReport(day)) as { analysis_failures: number }).analysis_failures;
+      const [tk] = await sql`insert into support_requests (user_tg, source, status) values (790, 'bot', 'resolved') returning id`;
+      const before = await failures();
+      await sql`insert into support_agent_jobs (ticket_id, kind, through_seq, status, error_code, finished_at)
+        values (${tk!.id}, 'topic', 1, 'failed', 'budget_exceeded', now())`;
+      assert.equal(await failures(), before);
+      await sql`insert into support_agent_jobs (ticket_id, kind, through_seq, status, error_code, finished_at)
+        values (${tk!.id}, 'triage', 1, 'failed', 'analysis_failed', now())`;
+      assert.equal(await failures(), before + 1);
+    });
   } finally {
     await sql.end();
     await (await import("../dist/db.js")).sql.end();

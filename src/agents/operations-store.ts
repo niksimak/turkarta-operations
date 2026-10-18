@@ -166,7 +166,7 @@ export class OperationsStore {
     const [usage] = await this.sql`select coalesce(sum(coalesce(actual_usd,reserved_usd)),0)::float8 as estimated_usd
       from support_agent_calls where created_at>=${start}::timestamptz and created_at<${start}::timestamptz+interval '1 day'`;
     const [failures] = await this.sql`select count(*)::int as analysis_failures from support_agent_jobs
-      where status='failed' and finished_at>=${start}::timestamptz and finished_at<${start}::timestamptz+interval '1 day'`;
+      where status='failed' and kind <> 'topic' and finished_at>=${start}::timestamptz and finished_at<${start}::timestamptz+interval '1 day'`;
     return { day_utc: day, ...report, ...operations, ...delivery, ...usage, ...failures,
       operations_snapshot_at: new Date().toISOString(),
       caveat_ru: "Замечания ИИ требуют проверки. Статусы задач и доставки показаны на момент формирования сводки." };
