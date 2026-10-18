@@ -15,7 +15,7 @@ import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
 import { classifyTelegram, recordUserMessage, type InboundPart, type RecordedMessage } from "../crm/inbound.js";
 import { publish } from "../crm/events.js";
 import {
-  commentCsat, csatByCommentPrompt, rateCsat, setCommentPrompt,
+  commentCsat, csatByCommentPrompt, openSurveyForTg, rateCsat, setCommentPrompt, shortAnswer,
   CSAT_ASK_COMMENT, CSAT_CLOSED, CSAT_COMMENT_THANKS, CSAT_THANKS,
 } from "../crm/csat.js";
 import { getSettings } from "../crm/settings.js";
@@ -590,16 +590,35 @@ supportBot.callbackQuery(/^csat:([0-9a-f-]{36}):(up|down)$/, async (ctx) => {
   if (!res.ok) return void (await ctx.answerCallbackQuery({ text: CSAT_CLOSED }).catch(() => {}));
   await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(CSAT_THANKS).catch(() => {});
-  if (res.askComment) {
-    try {
-      const m = await ctx.reply(CSAT_ASK_COMMENT, { reply_markup: { force_reply: true } });
-      await setCommentPrompt(id!, m.message_id);
-    } catch (err) {
-      const e = err as { error_code?: number; code?: string };
-      console.error(`[crm-csat] comment prompt failed csat=${id} code=${e.error_code ?? e.code ?? "error"}`);
-    }
-  }
+  if (res.askComment) await askForComment(ctx, id!);
 });
+
+/** The optional comment prompt after a 👎; the rating is already saved, so a failure is only logged. */
+async function askForComment(ctx: Context, csatId: string): Promise<void> {
+  try {
+    const m = await ctx.reply(CSAT_ASK_COMMENT, { reply_markup: { force_reply: true } });
+    await setCommentPrompt(csatId, m.message_id);
+  } catch (err) {
+    const e = err as { error_code?: number; code?: string };
+    console.error(`[crm-csat] comment prompt failed csat=${csatId} code=${e.error_code ?? e.code ?? "error"}`);
+  }
+}
+
+/**
+ * A typed «да»/«нет» right after a resolve answers the open survey instead of
+ * reopening the ticket. Returns true when it was taken as the rating.
+ */
+async function typedRating(ctx: Context, userTg: number, text: string): Promise<boolean> {
+  const rating = shortAnswer(text);
+  if (!rating) return false;
+  const csatId = await openSurveyForTg(userTg);
+  if (!csatId) return false;
+  const res = await rateCsat(csatId, { userTg }, rating);
+  if (!res.ok) return false;
+  await ctx.reply(CSAT_THANKS).catch(() => {});
+  if (res.askComment) await askForComment(ctx, csatId);
+  return true;
+}
 
 // ---- end-user DM: guided intake + relay ----------------------------------
 
@@ -622,6 +641,9 @@ supportBot.on("message", async (ctx, next) => {
   const ticket = await db.ticketByUser(user.id);
   const part: InboundPart = classifyTelegram(ctx.message) ?? { kind: "text", body: contentLabel(ctx) };
   const tgMeta = { authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}` };
+
+  // CRM mode: a short yes/no to the open survey is the rating, not a new question.
+  if (!ticket && !legacySurface() && text && (await typedRating(ctx, user.id, text))) return;
 
   // CRM mode: writing again soon after a resolve continues that ticket silently.
   if (!ticket && !legacySurface()) {

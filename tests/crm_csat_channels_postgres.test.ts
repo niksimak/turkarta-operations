@@ -256,6 +256,67 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
       }
     });
 
+    const userMsgCount = async (ticketId: string) =>
+      (await sql`select count(*)::int as n from support_messages where ticket_id = ${ticketId} and sender = 'user'`)[0]!.n as number;
+    const status = async (ticketId: string) => (await sql`select status from support_requests where id = ${ticketId}`)[0]!.status;
+
+    await t.test("a typed «да» answers an open survey: 👍, thanks, ticket stays resolved", async () => {
+      const user = 7341;
+      const tk = await resolvedTicket({ user_tg: user });
+      const id = await survey(tk, "telegram");
+      calls.length = 0;
+      await dm(user, "Да!");
+      const row = await csatRow(id);
+      assert.equal(row.rating, "up");
+      assert.equal(await status(tk), "resolved");
+      assert.equal(await userMsgCount(tk), 0);
+      assert.deepEqual(calls.filter((c) => c.method === "sendMessage").map((c) => c.payload.text), ["Спасибо за оценку!"]);
+      const tickets = await sql`select id from support_requests where user_tg = ${user}`;
+      assert.equal(tickets.length, 1);
+    });
+
+    await t.test("a typed «нет» answers 👎 and asks for a comment", async () => {
+      const user = 7342;
+      const tk = await resolvedTicket({ user_tg: user });
+      const id = await survey(tk, "telegram");
+      calls.length = 0;
+      await dm(user, " нет ");
+      const row = await csatRow(id);
+      assert.equal(row.rating, "down");
+      assert.equal(await status(tk), "resolved");
+      assert.equal(await userMsgCount(tk), 0);
+      const sends = calls.filter((c) => c.method === "sendMessage");
+      assert.deepEqual(sends.map((c) => c.payload.text),
+        ["Спасибо за оценку!", "Что пошло не так? Ответьте на это сообщение — это необязательно."]);
+      assert.equal((sends[1]!.payload.reply_markup as { force_reply?: boolean }).force_reply, true);
+      assert.equal(Number(row.comment_prompt_tg_id), sends[1]!.messageId);
+    });
+
+    await t.test("«да» after the survey is rated follows the normal path and reopens", async () => {
+      const user = 7343;
+      const tk = await resolvedTicket({ user_tg: user });
+      const id = await survey(tk, "telegram");
+      await sql`update crm_csat set rating = 'down', answered_at = now() where id = ${id}`;
+      calls.length = 0;
+      await dm(user, "да");
+      assert.equal((await csatRow(id)).rating, "down");
+      assert.notEqual(await status(tk), "resolved");
+      assert.equal(await userMsgCount(tk), 1);
+      assert.ok(!calls.some((c) => c.payload.text === "Спасибо за оценку!"));
+    });
+
+    await t.test("«спасибо» with an open survey follows the normal path and reopens", async () => {
+      const user = 7344;
+      const tk = await resolvedTicket({ user_tg: user });
+      const id = await survey(tk, "telegram");
+      calls.length = 0;
+      await dm(user, "спасибо");
+      assert.equal((await csatRow(id)).rating, null);
+      assert.notEqual(await status(tk), "resolved");
+      assert.equal(await userMsgCount(tk), 1);
+      assert.ok(!calls.some((c) => c.payload.text === "Спасибо за оценку!"));
+    });
+
     await t.test("retrying a failed CSAT prompt resends the 👍/👎 buttons", async () => {
       const id = await resolvedTicket({ user_tg: 7303 });
       await sql`insert into support_messages (ticket_id, sender, body, actor_type, author_id, author_name, kind, created_at)

@@ -133,6 +133,28 @@ export async function csatByCommentPrompt(userTg: number, replyToMessageId: numb
   return r?.id ?? null;
 }
 
+const SHORT_ANSWERS: Record<string, Rating> = {
+  "да": "up", "ага": "up", "угу": "up", "yes": "up", "👍": "up",
+  "нет": "down", "no": "down", "👎": "down",
+};
+
+/** A typed reply that is exactly a short yes/no («Да!», « нет ») is the rating; anything longer is not. */
+export function shortAnswer(text: string): Rating | null {
+  const norm = text.trim().toLowerCase().replace(/[.!\s]+$/u, "");
+  return Object.hasOwn(SHORT_ANSWERS, norm) ? SHORT_ANSWERS[norm]! : null;
+}
+
+/** The unanswered survey of this Telegram customer's latest resolved ticket, while it is still that resolution. */
+export async function openSurveyForTg(userTg: number): Promise<string | null> {
+  const [r] = await sql<{ id: string }[]>`
+    select c.id from crm_csat c join support_requests r on r.id = c.ticket_id
+     where r.id = (select id from support_requests where user_tg = ${userTg} and status = 'resolved'
+                    order by resolved_at desc limit 1)
+       and r.status = 'resolved' and r.resolved_at = c.resolved_at and c.rating is null
+     limit 1`;
+  return r?.id ?? null;
+}
+
 /** The open survey of a resolved web ticket, for the web chat poll. */
 export async function csatForWeb(ticketId: string): Promise<{ id: string; rating: Rating | null; comment_allowed: boolean } | null> {
   const [r] = await sql<Array<{ id: string; rating: Rating | null; comment: string | null }>>`
