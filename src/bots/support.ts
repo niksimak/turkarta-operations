@@ -585,12 +585,19 @@ supportBot.callbackQuery(/^resolve_do:(.+)$/, async (ctx) => {
 supportBot.callbackQuery(/^csat:([0-9a-f-]{36}):(up|down)$/, async (ctx) => {
   const [, id, rating] = ctx.match!;
   const res = await rateCsat(id!, { userTg: ctx.from.id }, rating as "up" | "down");
-  if (!res.ok) return ctx.answerCallbackQuery({ text: CSAT_CLOSED });
-  await ctx.answerCallbackQuery();
+  // The rating is committed; a Telegram failure from here on must not fail the
+  // update, or the redelivery would fail the same way and never ask for a comment.
+  if (!res.ok) return void (await ctx.answerCallbackQuery({ text: CSAT_CLOSED }).catch(() => {}));
+  await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(CSAT_THANKS).catch(() => {});
   if (res.askComment) {
-    const m = await ctx.reply(CSAT_ASK_COMMENT, { reply_markup: { force_reply: true } });
-    await setCommentPrompt(id!, m.message_id);
+    try {
+      const m = await ctx.reply(CSAT_ASK_COMMENT, { reply_markup: { force_reply: true } });
+      await setCommentPrompt(id!, m.message_id);
+    } catch (err) {
+      const e = err as { error_code?: number; code?: string };
+      console.error(`[crm-csat] comment prompt failed csat=${id} code=${e.error_code ?? e.code ?? "error"}`);
+    }
   }
 });
 
@@ -607,7 +614,7 @@ supportBot.on("message", async (ctx, next) => {
   if (replyTo && text) {
     const csatId = await csatByCommentPrompt(user.id, replyTo);
     if (csatId && (await commentCsat(csatId, { userTg: user.id }, text)).ok) {
-      await ctx.reply(CSAT_COMMENT_THANKS);
+      await ctx.reply(CSAT_COMMENT_THANKS).catch(() => {});
       return;
     }
   }

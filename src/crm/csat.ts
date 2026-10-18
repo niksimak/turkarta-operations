@@ -61,14 +61,14 @@ export async function askCsat(ticket: Ticket, text: string, deps: ReplyDeps = {}
   return row.id;
 }
 
-type Locked = { id: string; ticket_id: string; rating: Rating | null; open: boolean };
+type Locked = { id: string; ticket_id: string; rating: Rating | null; commented: boolean; open: boolean };
 
 /** Locks the survey for its own customer; `open` = the ticket is still in the resolution that was asked about. */
 async function lockFor(tx: Sql, id: string, who: CsatWho): Promise<Locked | null> {
   if (!UUID_RE.test(id)) return null;
   const owner = "userTg" in who ? tx`r.user_tg = ${who.userTg}` : tx`r.web_user_id = ${who.webUserId}`;
   const [r] = await tx<Array<Locked>>`
-    select c.id, c.ticket_id, c.rating, (r.status = 'resolved' and r.resolved_at = c.resolved_at) as open
+    select c.id, c.ticket_id, c.rating, c.comment is not null as commented, (r.status = 'resolved' and r.resolved_at = c.resolved_at) as open
       from crm_csat c join support_requests r on r.id = c.ticket_id
      where c.id = ${id} and ${owner}
        for update of c`;
@@ -99,7 +99,8 @@ export async function commentCsat(id: string, who: CsatWho, comment: string):
     const c = await lockFor(tx, id, who);
     if (!c) return { ok: false as const, reason: "not_found" as const };
     if (!c.open) return { ok: false as const, reason: "closed" as const };
-    if (c.rating !== "down") return { ok: false as const, reason: "invalid" as const };
+    // A comment needs a 👎 and is accepted once.
+    if (c.rating !== "down" || c.commented) return { ok: false as const, reason: "invalid" as const };
     await tx`update crm_csat set comment = ${text}, commented_at = now() where id = ${id}`;
     await logEvent(tx, c.ticket_id, "csat", null, { rating: "down", comment: text });
     return { ok: true as const, ticketId: c.ticket_id };

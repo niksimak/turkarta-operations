@@ -207,6 +207,13 @@ test("CSAT: ask after a CRM resolve, rate, comment, lookups", { skip: !url }, as
       const ev = await csatEvents(id);
       assert.deepEqual(ev.map((e) => e.payload), [{ rating: "down" }, { rating: "down", comment: "долго ждал ответа" }]);
 
+      // A comment is accepted once; the first one is kept and no event is logged.
+      assert.deepEqual(await csat.commentCsat(cid, who, "и ещё"), { ok: false, reason: "invalid" });
+      const [kept] = await csatRows(id);
+      assert.equal(kept!.comment, "долго ждал ответа");
+      assert.equal((kept!.commented_at as Date).getTime(), (after!.commented_at as Date).getTime());
+      assert.equal((await csatEvents(id)).length, 2);
+
       assert.deepEqual(await csat.commentCsat(webCsat, { webUserId: "w-1" }, "ok"), { ok: false, reason: "invalid" });
       assert.deepEqual(await csat.commentCsat(cid, who, "   "), { ok: false, reason: "invalid" });
       assert.deepEqual(await csat.commentCsat(cid, who, "x".repeat(1001)), { ok: false, reason: "invalid" });

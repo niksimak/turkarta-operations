@@ -29,6 +29,8 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
 
   const calls: Array<{ method: string; payload: Record<string, unknown>; messageId?: number }> = [];
   let nextMessageId = 1000;
+  // Methods listed here answer like Telegram does for a stale query or a blocked bot.
+  const failing = new Set<string>();
   supportBot.api.config.use(async (_prev, method, payload) => {
     const p = payload as Record<string, unknown>;
     if (method === "getMe") return { ok: true, result: {
@@ -37,6 +39,7 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
     } } as never;
     const call: (typeof calls)[number] = { method, payload: p };
     calls.push(call);
+    if (failing.has(method)) return { ok: false, error_code: 400, description: "Bad Request: query is too old" } as never;
     if (method === "answerCallbackQuery") return { ok: true, result: true } as never;
     call.messageId = ++nextMessageId;
     return { ok: true, result: { message_id: call.messageId, date: 1, chat: { id: p.chat_id, type: "private" }, text: p.text } } as never;
@@ -158,6 +161,10 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
       assert.equal(commented.status, 200);
       assert.deepEqual(await poll(), { id: webCsat, rating: "down", comment_allowed: false });
       assert.equal((await csatRow(webCsat)).comment, "не помогли");
+      const again = await post({ csat_id: webCsat, web_user_id: "w-9", comment: "и ещё" });
+      assert.equal(again.status, 422);
+      assert.deepEqual(await again.json(), { error: "invalid" });
+      assert.equal((await csatRow(webCsat)).comment, "не помогли");
 
       const foreign = await post({ csat_id: webCsat, web_user_id: "w-8", rating: "up" });
       assert.equal(foreign.status, 404);
@@ -186,6 +193,61 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
       assert.equal(res.status, 422);
       assert.deepEqual(await res.json(), { error: "invalid" });
       assert.equal((await csatRow(id)).comment, null);
+    });
+
+    await t.test("a second reply to the comment prompt is not a comment: it follows the normal path", async () => {
+      const user = 7311;
+      const tk = await resolvedTicket({ user_tg: user });
+      const id = await survey(tk, "telegram");
+      calls.length = 0;
+      await tap(user, user, `csat:${id}:down`);
+      const prompt = calls.find((c) => c.method === "sendMessage")!.messageId!;
+      await dm(user, "первый", prompt);
+      calls.length = 0;
+      await dm(user, "второй", prompt);
+      assert.equal((await csatRow(id)).comment, "первый");
+      assert.ok(!calls.some((c) => c.payload.text === "Спасибо, передали команде."));
+      const [row] = await sql`select status from support_requests where id = ${tk}`;
+      assert.notEqual(row!.status, "resolved");
+      const userMsgs = await sql`select body from support_messages where ticket_id = ${tk} and sender = 'user'`;
+      assert.deepEqual(userMsgs.map((m) => m.body), ["второй"]);
+    });
+
+    await t.test("a failing answerCallbackQuery does not fail the update; the comment prompt still goes out", async () => {
+      const user = 7321;
+      const id = await survey(await resolvedTicket({ user_tg: user }), "telegram");
+      failing.add("answerCallbackQuery");
+      try {
+        calls.length = 0;
+        await tap(user, user, `csat:${id}:down`);
+        const row = await csatRow(id);
+        assert.equal(row.rating, "down");
+        const ask = calls.find((c) => c.method === "sendMessage");
+        assert.equal(ask?.payload.text, "Что пошло не так? Ответьте на это сообщение — это необязательно.");
+        assert.equal(Number(row.comment_prompt_tg_id), ask!.messageId);
+        // A stale tap answers through the same failing call.
+        await tap(9998, 9998, `csat:${id}:up`);
+        assert.equal((await csatRow(id)).rating, "down");
+      } finally {
+        failing.clear();
+      }
+    });
+
+    await t.test("a failing comment prompt or thanks send does not fail the update; the answers are saved", async () => {
+      const user = 7331;
+      const id = await survey(await resolvedTicket({ user_tg: user }), "telegram");
+      failing.add("sendMessage");
+      try {
+        await tap(user, user, `csat:${id}:down`);
+        const row = await csatRow(id);
+        assert.equal(row.rating, "down");
+        assert.equal(row.comment_prompt_tg_id, null);
+        await csat.setCommentPrompt(id, 4321);
+        await dm(user, "всё плохо", 4321);
+        assert.equal((await csatRow(id)).comment, "всё плохо");
+      } finally {
+        failing.clear();
+      }
     });
 
     await t.test("retrying a failed CSAT prompt resends the 👍/👎 buttons", async () => {
