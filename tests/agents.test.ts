@@ -209,7 +209,7 @@ test("topic picks one of the offered active topics from the redacted transcript"
     assert.equal(task, "topic");
     assert.ok(instructions.startsWith(BASE_INSTRUCTIONS));
     seen.push(evidence);
-    return { topic_id: 2, confidence: 0.9 };
+    return { topic_id: "2", confidence: 0.9 };
   } };
   const engine = new SupportEngine(model);
   const topics = [{ id: 1, name: "Пополнение не пришло" }, { id: 2, name: "Карта отклонена" }];
@@ -220,13 +220,13 @@ test("topic picks one of the offered active topics from the redacted transcript"
 });
 
 test("topic outside the offered list is rejected", async () => {
-  const { engine } = modelFor([{ topic_id: 99, confidence: 0.9 }]);
+  const { engine } = modelFor([{ topic_id: "99", confidence: 0.9 }]);
   await assert.rejects(engine.topic([customer("Помогите")], [{ id: 1, name: "Другое" }]), /unknown_topic_reference/);
 });
 
 test("topic schema constrains topic_id to the offered ids", () => {
   const schema = schemaFor("topic", { messages: [], topics: [{ id: 3, name: "A" }, { id: 5, name: "B" }] }) as {
-    properties: { topic_id: { type: string; enum: number[] } };
+    properties: { topic_id: { type: string; enum: string[] } };
   };
-  assert.deepEqual(schema.properties.topic_id, { type: "integer", enum: [3, 5] });
+  assert.deepEqual(schema.properties.topic_id, { type: "string", enum: ["3", "5"] });
 });
