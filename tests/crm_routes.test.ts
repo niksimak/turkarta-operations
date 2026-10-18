@@ -94,6 +94,12 @@ mock.module("../dist/crm/settings.js", { namedExports: {
 mock.module("../dist/crm/stats.js", { namedExports: {
   stats: async (...a: unknown[]) => { record("stats", ...a); return { team: {}, operators: [] }; },
 } });
+mock.module("../dist/crm/topics.js", { namedExports: {
+  listTopics: async (...a: unknown[]) => { record("listTopics", ...a); return []; },
+  createTopic: async (...a: unknown[]) => { record("createTopic", ...a); return { id: 1, name: "t", position: 1, archived: false }; },
+  updateTopic: async (...a: unknown[]) => { record("updateTopic", ...a); return { id: 1, name: "t", position: 1, archived: false }; },
+  setTicketTopic: async (...a: unknown[]) => { record("setTicketTopic", ...a); },
+} });
 mock.module("../dist/crm/attachments.js", { namedExports: {
   attachmentResponse: async () => new Response("x", { headers: { "content-type": "image/jpeg" } }),
 } });
@@ -169,6 +175,22 @@ test("NotFound, BadCursor and validation errors map to 404, 400, 422", async () 
   });
   assert.equal(notJson.status, 422);
   assert.equal(callsOf("setStatus").length, 0);
+});
+
+test("ticket topic: forwards (id, topic_id, operator); string and out-of-int4 ids are 422", async () => {
+  const res = await req(`/crm/api/tickets/${TICKET}/topic`, json("POST", "tok-support", { topic_id: 2 }));
+  assert.equal(res.status, 200);
+  const [id, topicId, me] = callsOf("setTicketTopic").at(-1)!.args as [string, number, Op];
+  assert.deepEqual([id, topicId, me.id], [TICKET, 2, 1]);
+  await req(`/crm/api/tickets/${TICKET}/topic`, json("POST", "tok-support", { topic_id: null }));
+  assert.equal(callsOf("setTicketTopic").at(-1)!.args[1], null);
+  const before = callsOf("setTicketTopic").length;
+  for (const topic_id of ["2", 2147483648, 0, 1.5]) {
+    const bad = await req(`/crm/api/tickets/${TICKET}/topic`, json("POST", "tok-support", { topic_id }));
+    assert.equal(bad.status, 422, String(topic_id));
+    assert.ok((await bad.json()).fields.topic_id, String(topic_id));
+  }
+  assert.equal(callsOf("setTicketTopic").length, before, "invalid bodies never reach the store");
 });
 
 test("ticket list parses filters; detail carries viewers; the account loads on its own", async () => {
@@ -325,6 +347,7 @@ test("bitrix surface: ticket writes are 409 surface_bitrix; reads, canned, prefs
       [`/crm/api/tickets/${TICKET}/take-over`, {}],
       [`/crm/api/tickets/${TICKET}/assign`, { operator_id: 2 }],
       [`/crm/api/tickets/${TICKET}/status`, { status: "resolved" }],
+      [`/crm/api/tickets/${TICKET}/topic`, { topic_id: 2 }],
     ];
     for (const [path, body] of writes) {
       const res = await req(path, json("POST", "tok-support", body));

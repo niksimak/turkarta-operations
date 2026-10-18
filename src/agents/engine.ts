@@ -1,9 +1,19 @@
-import { Answer, BASE_INSTRUCTIONS, Classification, Review, dimensions, type Model, type TranscriptMessage } from "./contracts.js";
+import { Answer, BASE_INSTRUCTIONS, Classification, Review, TopicChoice, dimensions, type Model, type TranscriptMessage } from "./contracts.js";
 import { retrieve, type Article } from "./knowledge.js";
 import { FALLBACK_REPLY, MONEY_REPLY, PLAYFUL_REPLY, isRussian, policyFor, redact, technicalChecklist } from "./policy.js";
 
 export class SupportEngine {
   constructor(private model: Model) {}
+
+  async topic(messages: TranscriptMessage[], topics: Array<{ id: number; name: string }>) {
+    const safe = messages.map((m) => ({ ...m, body: redact(m.body) }));
+    const choice = TopicChoice.parse(await this.model.complete("topic", `${BASE_INSTRUCTIONS}
+Определи одну тему обращения из списка topics: главный вопрос клиента в этой переписке.
+Если ни одна тема не подходит, выбери «Другое», если она есть в списке. Верни только id темы из списка.`,
+      { messages: safe, topics }));
+    if (!topics.some((t) => t.id === choice.topic_id)) throw new Error("unknown_topic_reference");
+    return choice;
+  }
 
   async triage(messages: TranscriptMessage[], articles: Article[]) {
     const safe = messages.map((m) => ({ ...m, body: redact(m.body) }));

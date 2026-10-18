@@ -1,8 +1,9 @@
 import type postgres from "postgres";
 import type { TranscriptMessage } from "./contracts.js";
 
-export interface Job { id: string; ticket_id: string; kind: "triage" | "review"; through_seq: number; lease_token: string; }
+export interface Job { id: string; ticket_id: string; kind: "triage" | "review" | "topic"; through_seq: number; lease_token: string; }
 export interface Budget { dailyUsd: number; monthlyUsd: number; ticketDailyCalls: number; }
+const TOPIC_TICKET_DAILY_CALLS = 3;
 export class AgentStore {
   constructor(private sql: postgres.Sql) {}
 
@@ -65,12 +66,16 @@ export class AgentStore {
         select coalesce(sum(coalesce(actual_usd,reserved_usd)) filter
           (where created_at >= date_trunc('day',now() at time zone 'UTC') at time zone 'UTC'),0)::float8 as day,
           coalesce(sum(coalesce(actual_usd,reserved_usd)),0)::float8 as month,
-          count(*) filter (where ticket_id=${job.ticket_id} and
-            created_at >= date_trunc('day',now() at time zone 'UTC') at time zone 'UTC')::int as calls
+          count(*) filter (where ticket_id=${job.ticket_id} and task <> 'topic' and
+            created_at >= date_trunc('day',now() at time zone 'UTC') at time zone 'UTC')::int as calls,
+          count(*) filter (where ticket_id=${job.ticket_id} and task = 'topic' and
+            created_at >= date_trunc('day',now() at time zone 'UTC') at time zone 'UTC')::int as topic_calls
         from support_agent_calls
         where created_at >= date_trunc('month',now() at time zone 'UTC') at time zone 'UTC'`;
+      // Topic labelling has its own small per-ticket allowance, so it never starves triage or review.
       if (!usage || usage.day + usd > budget.dailyUsd || usage.month + usd > budget.monthlyUsd
-        || usage.calls >= budget.ticketDailyCalls) throw new Error("budget_exceeded");
+        || (task === "topic" ? usage.topic_calls >= TOPIC_TICKET_DAILY_CALLS : usage.calls >= budget.ticketDailyCalls))
+        throw new Error("budget_exceeded");
       const [row] = await tx`insert into support_agent_calls(job_id,ticket_id,model,task,reserved_usd)
         values(${job.id},${job.ticket_id},${model},${task},${usd}) returning id`;
       return String(row!.id);

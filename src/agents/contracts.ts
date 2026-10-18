@@ -29,6 +29,11 @@ export const Review = z.object({
     suggested_reply_ru: z.string().max(2000),
   }).strict()).length(6),
 }).strict();
+export const TopicChoice = z.object({
+  // Strict outputs allow only string enums, so the id arrives as a numeric string.
+  topic_id: z.string().regex(/^\d+$/).transform(Number), confidence: z.number().min(0).max(1),
+}).strict();
+export type TopicChoice = z.infer<typeof TopicChoice>;
 
 // JSON Schema contains only the supported strict-output subset. Zod applies
 // length/range and evidence validation again at the application boundary.
@@ -47,10 +52,15 @@ export const schemas = {
     dimension: enumOf(dimensions), verdict: enumOf(verdicts), message_ids: arrayOf(str),
     explanation_ru: str, suggested_reply_ru: str,
   })) }),
+  topic: objectOf({ topic_id: str, confidence: { type: "number" } }),
 };
 export type Task = keyof typeof schemas;
 /** Constrain references at generation time; the engine still validates evidence. */
 export function schemaFor(task: Task, evidence: unknown): object {
+  if (task === "topic") {
+    const { topics } = z.object({ topics: z.array(z.object({ id: z.number().int() })).min(1).max(100) }).parse(evidence);
+    return objectOf({ topic_id: enumOf(topics.map((t) => String(t.id))), confidence: { type: "number" } });
+  }
   if (task !== "review") return schemas[task];
   const { messages } = z.object({ messages: z.array(z.object({ id: z.string().min(1) })).max(80) }).parse(evidence);
   const ids = [...new Set(messages.map((message) => message.id))];

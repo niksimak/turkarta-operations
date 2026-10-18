@@ -22,7 +22,7 @@ export class OpenAIModel implements Model {
   constructor(private options: { apiKey: string; model: ModelName; meter: Meter; fetch?: typeof fetch }) {}
   async complete(task: Task, instructions: string, evidence: unknown): Promise<unknown> {
     const rates = MODELS[this.options.model];
-    const maxOutput = task === "classify" ? 1000 : task === "answer" ? 1600 : 3600;
+    const maxOutput = task === "classify" ? 1000 : task === "answer" ? 1600 : task === "topic" ? 300 : 3600;
     const payload = {
       model: this.options.model, store: false, max_output_tokens: maxOutput,
       reasoning: { effort: rates.effort },

@@ -56,7 +56,7 @@ describe("Stats page", () => {
   });
 
   it("shows resolution tiles, the heatmap and the two new operator columns", async () => {
-    renderStats({ team, operators: [op] });
+    renderStats({ team, operators: [op], topics: [] });
     expect(await screen.findByText("Время решения")).toBeTruthy();
     // Expected strings come from the app formatters (they may use non-breaking spaces).
     expect(screen.getAllByText(norm(formatDuration(1800))).length).toBe(2); // team tile + Аня's «Решение»
@@ -72,6 +72,7 @@ describe("Stats page", () => {
     renderStats({
       team: { ...team, resolution_median_s: null, one_reply_pct: null, messages_per_ticket: null, heatmap: [] },
       operators: [{ ...op, resolution_median_s: null, one_reply_pct: null }],
+      topics: [],
     });
     expect(await screen.findByText("Время решения")).toBeTruthy();
     expect(screen.getAllByText("нет решённых")).toHaveLength(5); // 3 tiles + 2 operator cells

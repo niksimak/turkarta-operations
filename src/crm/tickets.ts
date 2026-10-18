@@ -11,7 +11,10 @@ export interface TicketListItem {
   first_response_at: string | null; assigned_operator_id: number | null; assigned_operator_name: string | null;
   auto_assigned: boolean; intake_pending: boolean; created_at: string;
 }
-export type TicketDetailItem = TicketListItem & { device: string | null; category: string | null; web_user_id: string | null };
+export type TicketDetailItem = TicketListItem & {
+  device: string | null; category: string | null; web_user_id: string | null;
+  topic_id: number | null; topic_name: string | null; topic_source: "ai" | "operator" | null;
+};
 export interface ListQuery {
   view: "queue" | "mine" | "all"; status?: TicketStatus; channel?: "bot" | "miniapp" | "web"; operatorId?: number;
   overdue?: boolean; q?: string; cursor?: string; limit?: number;
@@ -215,7 +218,8 @@ export async function crmMessage(id: string): Promise<CrmMessage | null> {
 
 export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailItem; messages: CrmMessage[]; events: TicketEventRow[] } | null> {
   if (!UUID_RE.test(id)) return null;
-  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id`)} where r.id = ${id}`;
+  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id, r.topic_id, r.topic_source,
+    (select name from crm_topics where id = r.topic_id) as topic_name`)} where r.id = ${id}`;
   if (!r) return null;
   const msgs = await sql`${messageSelect()} where m.ticket_id = ${id} order by m.seq`;
   const evs = await sql`
@@ -230,6 +234,9 @@ export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailIt
       device: (r.device as string | null) ?? null,
       category: (r.category as string | null) ?? null,
       web_user_id: (r.web_user_id as string | null) ?? null,
+      topic_id: num(r.topic_id),
+      topic_name: (r.topic_name as string | null) ?? null,
+      topic_source: (r.topic_source as "ai" | "operator" | null) ?? null,
     },
     messages: msgs.map(toMessage),
     events: evs.map((e) => ({
@@ -260,7 +267,7 @@ async function operatorRef(tx: Sql, id: number): Promise<{ id: number; name: str
   return o ? { id, name: o.name } : undefined;
 }
 
-async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number | null, payload: Record<string, unknown>) {
+export async function logEvent(tx: Sql, ticketId: string, type: TicketEventType, actor: number | null, payload: Record<string, unknown>) {
   await tx`insert into crm_ticket_events (ticket_id, type, actor_operator_id, payload)
     values (${ticketId}, ${type}, ${actor}, ${JSON.stringify(payload)}::text::jsonb)`;
 }
@@ -285,7 +292,7 @@ async function toQueue(tx: Sql, t: LockedTicket, actor: number) {
 }
 
 /** Runs `fn` in a transaction holding the ticket's row lock. */
-export async function withLockedTicket<T>(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<T>): Promise<T> {
+export async function withLockedTicket<T>(ticketId: string, fn: (tx: postgres.TransactionSql, t: LockedTicket) => Promise<T>): Promise<T> {
   if (!UUID_RE.test(ticketId)) throw new NotFound();
   try {
     return await sql.begin(async (tx) => {
@@ -312,7 +319,7 @@ export async function claim(tx: Sql, t: LockedTicket, me: Operator): Promise<boo
 }
 
 /** Row-locks the ticket, applies `fn`, then publishes after commit. `fn` returns null for a no-op. */
-async function mutate(ticketId: string, fn: (tx: Sql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
+async function mutate(ticketId: string, fn: (tx: postgres.TransactionSql, t: LockedTicket) => Promise<Effects | null>): Promise<Effects | null> {
   let who = "";
   const effects = await withLockedTicket(ticketId, (tx, t) => {
     who = ticketWho(t);
@@ -376,6 +383,14 @@ export async function setStatus(
       if (status !== "resolved" && t.assigned_operator_id === null) await assignTo(tx, t, me, "assigned", me.id);
       if (status === "resolved") {
         await tx`update support_requests set status = 'resolved', resolved_at = now(), waiting_since = null where id = ${t.id}`;
+        // Lazy: topics.ts imports this module, so a static import would be a cycle.
+        const { enqueueTopicJob } = await import("./topics.js");
+        try {
+          // A savepoint keeps a failed side job from aborting, and so undoing, the resolve.
+          await tx.savepoint(async (sp) => enqueueTopicJob(sp, t.id));
+        } catch (err) {
+          console.error(`[crm-tickets] topic enqueue failed ticket=${t.id} code=${(err as { code?: string }).code ?? "error"}`);
+        }
       } else {
         await tx`update support_requests set status = ${status} where id = ${t.id}`;
       }

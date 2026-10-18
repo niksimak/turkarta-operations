@@ -26,6 +26,7 @@ import {
   type ListQuery,
 } from "./tickets.js";
 import { canEditTeamSettings, type Operator } from "./types.js";
+import { createTopic, listTopics, setTicketTopic, updateTopic } from "./topics.js";
 import { userContext } from "./user_context.js";
 
 type Env = { Variables: { operator: Operator } };
@@ -47,6 +48,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const COOKIE_ONLY_GET = new RegExp(`^${BASE}/api/(stream|attachments/[^/]+)$`);
 
 const StatusBody = z.object({ status: z.enum(["new", "allocated", "awaiting", "resolved"]) }).strict();
+const TopicBody = z.object({ topic_id: z.number().int().positive().max(2147483647).nullable() }).strict();
 const AssignBody = z.object({ operator_id: z.number().int().positive().nullable() }).strict();
 const ShiftBody = z.object({ on: z.boolean() }).strict();
 const PushEndpoint = z.string().url().max(2000).refine((u) => u.startsWith("https://"), "https only");
@@ -329,6 +331,11 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     await setStatus(c.req.param("id"), status, c.get("operator"));
     return ticketAck(c);
   });
+  r.post("/api/tickets/:id/topic", writable, async (c) => {
+    const { topic_id } = TopicBody.parse(await readJson(c));
+    await setTicketTopic(c.req.param("id"), topic_id, c.get("operator"));
+    return ticketAck(c);
+  });
   r.post("/api/tickets/:id/presence", async (c) => {
     const id = c.req.param("id");
     if (!UUID_RE.test(id)) throw new NotFound();
@@ -348,6 +355,10 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     return c.json({ ok: true });
   });
   r.post("/api/canned/:id/use", async (c) => c.json({ ok: true, ...(await useCanned(c.req.param("id"))) }));
+
+  r.get("/api/topics", async (c) => c.json(await listTopics()));
+  r.post("/api/topics", async (c) => c.json(await createTopic(await readJson(c), c.get("operator"))));
+  r.put("/api/topics/:id", async (c) => c.json(await updateTopic(Number(c.req.param("id")), await readJson(c), c.get("operator"))));
 
   r.get("/api/operators", async (c) => c.json(await listOperators()));
   r.put("/api/operators/:id", async (c) =>

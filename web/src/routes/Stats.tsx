@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { Segmented } from "../components/Segmented";
 import { StatsChart } from "../components/StatsChart";
 import { StatsHeatmap } from "../components/StatsHeatmap";
+import { TopicStatsTable } from "../components/TopicStatsTable";
 import { formatNumber } from "../lib/format";
 import { useMe } from "../lib/queries";
 import { canEditTeamSettings } from "../lib/settings";
@@ -122,6 +123,9 @@ export function Stats() {
             </Block>
             <Block title="Когда пишут клиенты" aside={<span className="text-sm text-text-muted">По первому сообщению клиента, МСК.</span>}>
               <StatsHeatmap cells={stats.data.team.heatmap} />
+            </Block>
+            <Block title="Причины обращений" aside={<span className="text-sm text-text-muted">По темам решённых обращений.</span>}>
+              <TopicStatsTable rows={stats.data.topics} />
             </Block>
             <Block
               title="Операторы"

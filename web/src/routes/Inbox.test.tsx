@@ -72,7 +72,7 @@ type DetailFixture = TicketDetail & { user: UserContext | null };
 
 function detail(over: Partial<DetailFixture> = {}): DetailFixture {
   return {
-    ticket: { ...T1, device: "iPhone", category: null, web_user_id: null },
+    ticket: { ...T1, device: "iPhone", category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null },
     messages: [
       { id: "m1", sender: "user", kind: "text", body: "Не пришёл код", unsupported_type: null, author_name: null, created_at: ago(30), delivery_status: null, delivery_error: null, attachments: [] },
       { id: "m2", sender: "user", kind: "photo", body: "", unsupported_type: null, author_name: null, created_at: ago(29), delivery_status: null, delivery_error: null, attachments: [{ id: "a1", media_type: "image/jpeg", position: 0 }, { id: "a2", media_type: "image/png", position: 1 }] },
@@ -326,7 +326,7 @@ describe("Inbox", () => {
     const theirs = { ...T1, status: "allocated" as const, assigned_operator_id: 9, assigned_operator_name: "Олег" };
     const { calls } = mockApi([
       ["POST /crm/api/tickets/*", ok({ ok: true, ticket: theirs })],
-      ["GET /crm/api/tickets/*", ok(detail({ ticket: { ...theirs, device: null, category: null, web_user_id: null } }))],
+      ["GET /crm/api/tickets/*", ok(detail({ ticket: { ...theirs, device: null, category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null } }))],
       ...baseRoutes(),
     ]);
     renderAt(`/t/${T1.id}?v=queue`);
@@ -403,7 +403,8 @@ describe("Inbox", () => {
     mockApi(baseRoutes());
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("Нет аккаунта")).toBeTruthy();
+    // The account is its own query, fired when the panel mounts: wait for it, don't assume one tick.
+    expect(await within(panel).findByText("Нет аккаунта")).toBeTruthy();
     fireEvent.click(within(panel).getByRole("button", { name: "5550001. Скопировать TG id" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("5550001"));
     expect(await screen.findByText("Скопировано: TG id")).toBeTruthy();
@@ -479,7 +480,7 @@ describe("Inbox", () => {
     );
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("уровень 2,5")).toBeTruthy();
+    expect(await within(panel).findByText("уровень 2,5")).toBeTruthy();
     expect(within(panel).getByText("•• 4242")).toBeTruthy();
     expect(within(panel).getByText("CSB email")).toBeTruthy();
     expect(within(panel).getByText("u1@cards.turkarta.me")).toBeTruthy();
@@ -562,7 +563,7 @@ describe("Inbox", () => {
     mockApi(baseRoutes(detail({ user: null })));
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("Нет данных аккаунта")).toBeTruthy();
+    expect(await within(panel).findByText("Нет данных аккаунта")).toBeTruthy();
   });
 
   it("pings presence while open and shows who else is here", async () => {

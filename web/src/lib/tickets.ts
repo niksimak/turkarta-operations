@@ -35,6 +35,9 @@ export type TicketDetailItem = TicketListItem & {
   device: string | null;
   category: string | null;
   web_user_id: string | null;
+  topic_id: number | null;
+  topic_name: string | null;
+  topic_source: "ai" | "operator" | null;
 };
 
 export interface Attachment {
@@ -67,7 +70,8 @@ export type TicketEventType =
   | "unassigned"
   | "taken_over"
   | "status_changed"
-  | "reopened";
+  | "reopened"
+  | "topic_changed";
 
 export interface TicketEventRow {
   id: number;
@@ -286,7 +290,8 @@ export type TicketAction =
   | { kind: "take" }
   | { kind: "take-over" }
   | { kind: "assign"; operator: Pick<OperatorSummary, "id" | "name"> | null }
-  | { kind: "status"; status: TicketStatus };
+  | { kind: "status"; status: TicketStatus }
+  | { kind: "topic"; topic: { id: number; name: string } | null };
 
 function requestFor(id: string, a: TicketAction): Promise<{ ok: true; ticket: TicketListItem }> {
   const base = `/tickets/${encodeURIComponent(id)}`;
@@ -299,6 +304,8 @@ function requestFor(id: string, a: TicketAction): Promise<{ ok: true; ticket: Ti
       return api(`${base}/assign`, json("POST", { operator_id: a.operator?.id ?? null }));
     case "status":
       return api(`${base}/status`, json("POST", { status: a.status }));
+    case "topic":
+      return api(`${base}/topic`, json("POST", { topic_id: a.topic?.id ?? null }));
   }
 }
 
@@ -321,6 +328,9 @@ function applyAction(t: TicketDetailItem, a: TicketAction, me: Operator | undefi
         : { ...t, assigned_operator_id: null, assigned_operator_name: null, auto_assigned: false, status: "new" };
     case "status":
       return { ...t, status: a.status };
+    case "topic":
+      // Clearing is an operator choice too, as on the server.
+      return { ...t, topic_id: a.topic?.id ?? null, topic_name: a.topic?.name ?? null, topic_source: "operator" };
   }
 }
 

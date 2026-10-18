@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SupportEngine } from "../src/agents/engine.js";
-import { BASE_INSTRUCTIONS, dimensions, type Model, type Task, type TranscriptMessage } from "../src/agents/contracts.js";
+import { BASE_INSTRUCTIONS, dimensions, schemaFor, type Model, type Task, type TranscriptMessage } from "../src/agents/contracts.js";
 import { MONEY_REPLY, PLAYFUL_REPLY, policyFor, redact } from "../src/agents/policy.js";
 import { parseArticles, retrieve, visibleText } from "../src/agents/knowledge.js";
 import { OpenAIModel } from "../src/agents/openai.js";
@@ -201,4 +201,32 @@ test("internal QA routes reject app credentials and validate IDs", async () => {
   const response = await app.request(path, { headers: { "x-support-ai-secret": secret } });
   assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal((await app.request("/tickets/not-a-uuid", { headers: { "x-support-ai-secret": secret } })).status, 422);
+});
+
+test("topic picks one of the offered active topics from the redacted transcript", async () => {
+  const seen: unknown[] = [];
+  const model: Model = { async complete(task, instructions, evidence) {
+    assert.equal(task, "topic");
+    assert.ok(instructions.startsWith(BASE_INSTRUCTIONS));
+    seen.push(evidence);
+    return { topic_id: "2", confidence: 0.9 };
+  } };
+  const engine = new SupportEngine(model);
+  const topics = [{ id: 1, name: "Пополнение не пришло" }, { id: 2, name: "Карта отклонена" }];
+  assert.deepEqual(await engine.topic([customer("Карта 4111 1111 1111 1111 не проходит")], topics), { topic_id: 2, confidence: 0.9 });
+  const evidence = seen[0] as { messages: TranscriptMessage[]; topics: unknown };
+  assert.doesNotMatch(evidence.messages[0]!.body, /4111 1111 1111 1111/);
+  assert.deepEqual(evidence.topics, topics);
+});
+
+test("topic outside the offered list is rejected", async () => {
+  const { engine } = modelFor([{ topic_id: "99", confidence: 0.9 }]);
+  await assert.rejects(engine.topic([customer("Помогите")], [{ id: 1, name: "Другое" }]), /unknown_topic_reference/);
+});
+
+test("topic schema constrains topic_id to the offered ids", () => {
+  const schema = schemaFor("topic", { messages: [], topics: [{ id: 3, name: "A" }, { id: 5, name: "B" }] }) as {
+    properties: { topic_id: { type: string; enum: string[] } };
+  };
+  assert.deepEqual(schema.properties.topic_id, { type: "string", enum: ["3", "5"] });
 });

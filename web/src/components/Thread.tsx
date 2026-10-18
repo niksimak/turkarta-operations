@@ -11,6 +11,7 @@ import { toast } from "./Toast";
 import { formatDay, formatTime, sameDay } from "../lib/format";
 import { messageKey, releaseKeys } from "../lib/outbox";
 import { usePresence } from "../lib/presence";
+import { useTopics } from "../lib/topics";
 import { READ_ONLY_TEXT, type Operator } from "../lib/queries";
 import {
   actionErrorText,
@@ -114,6 +115,11 @@ export function eventText(e: TicketEventRow): string | null {
       const to = e.payload.to as TicketStatus | undefined;
       if (to === "resolved") return "Решён";
       return to && STATUS_LABEL[to] ? `Статус: ${STATUS_LABEL[to]}` : null;
+    }
+    case "topic_changed": {
+      const to = typeof e.payload.to === "string" ? e.payload.to : null;
+      if (!to) return "Тема снята";
+      return e.payload.source === "ai" ? `Тема (ИИ): ${to}` : `Тема: ${to}`;
     }
     default:
       return null;
@@ -395,6 +401,37 @@ function ThreadHeader({
   const resolved = ticket.status === "resolved";
   const presence = presenceLine(usePresence(ticket.id, me.id));
 
+  const topics = useTopics();
+  const activeTopics = (topics.data ?? []).filter((x) => !x.archived);
+  const topicItems: MenuItem[] = [
+    ...activeTopics.map((x) => ({
+      key: String(x.id),
+      text: x.name,
+      label: <span className="min-w-0 flex-1 truncate">{x.name}</span>,
+      checked: ticket.topic_id === x.id,
+      onSelect: () => {
+        if (ticket.topic_id !== x.id || ticket.topic_source !== "operator") actions.run({ kind: "topic", topic: { id: x.id, name: x.name } });
+      },
+    })),
+    {
+      key: "none",
+      text: "Без темы",
+      label: <span>Без темы</span>,
+      checked: false,
+      disabled: ticket.topic_id === null,
+      separatorBefore: activeTopics.length > 0,
+      onSelect: () => actions.run({ kind: "topic", topic: null }),
+    },
+  ];
+  const topicTrigger = ticket.topic_name ? (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <span className="truncate">{ticket.topic_name}</span>
+      {ticket.topic_source === "ai" && <span className="text-xs text-text-muted">ИИ</span>}
+    </span>
+  ) : (
+    <span className="text-text-muted">Без темы</span>
+  );
+
   const statusItems: MenuItem[] = STATUS_ORDER.filter((s) => s !== "new" || ticket.status === "new").map((s) => ({
     key: s,
     text: STATUS_LABEL[s],
@@ -507,6 +544,7 @@ function ThreadHeader({
           <span className="flex min-w-0 items-center gap-2 text-sm">
             <span>{STATUS_LABEL[ticket.status]}</span>
             <span className="truncate text-text-muted">{free ? "Не назначен" : ticket.assigned_operator_name}</span>
+            <span className="truncate text-text-muted">{ticket.topic_name ?? "Без темы"}</span>
           </span>
         ) : (
           <>
@@ -535,6 +573,14 @@ function ThreadHeader({
                   </span>
                 )
               }
+            />
+            <Menu
+              label={`Тема: ${ticket.topic_name ?? "Без темы"}`}
+              title="Тема"
+              items={topicItems}
+              disabled={actions.pending}
+              triggerClassName="h-7 px-2 text-sm max-w-[14rem]"
+              trigger={topicTrigger}
             />
           </>
         )}
