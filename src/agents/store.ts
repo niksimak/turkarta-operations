@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import type { TranscriptMessage } from "./contracts.js";
 
-export interface Job { id: string; ticket_id: string; kind: "triage" | "review"; through_seq: number; lease_token: string; }
+export interface Job { id: string; ticket_id: string; kind: "triage" | "review" | "topic"; through_seq: number; lease_token: string; }
 export interface Budget { dailyUsd: number; monthlyUsd: number; ticketDailyCalls: number; }
 export class AgentStore {
   constructor(private sql: postgres.Sql) {}

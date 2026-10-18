@@ -383,6 +383,8 @@ export async function setStatus(
       if (status !== "resolved" && t.assigned_operator_id === null) await assignTo(tx, t, me, "assigned", me.id);
       if (status === "resolved") {
         await tx`update support_requests set status = 'resolved', resolved_at = now(), waiting_since = null where id = ${t.id}`;
+        const { enqueueTopicJob } = await import("./topics.js");
+        await enqueueTopicJob(tx, t.id);
       } else {
         await tx`update support_requests set status = ${status} where id = ${t.id}`;
       }

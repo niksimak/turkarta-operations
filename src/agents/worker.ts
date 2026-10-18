@@ -5,13 +5,15 @@ import { AgentStore } from "./store.js";
 import { KnowledgeBase } from "./knowledge.js";
 import { OpenAIModel } from "./openai.js";
 import { SupportEngine } from "./engine.js";
+import { applyAiTopic, listTopics } from "../crm/topics.js";
 
 export const agentStore = new AgentStore(sql);
 const kb = new KnowledgeBase({ file: config.SUPPORT_AI_KB_FILE, api: config.SUPPORT_AI_KB_API });
 const diagnostics = new DiagnosticClient({ url: config.SUPPORT_AI_DIAGNOSTICS_URL, secret: config.SUPPORT_AI_DIAGNOSTICS_SECRET });
 const errorCodes = new Set(["budget_exceeded", "context_limit", "model_rate_limited", "model_unavailable",
   "model_incomplete", "model_refusal", "model_invalid_output", "non_russian_output",
-  "unknown_article_reference", "unknown_message_reference", "unsupported_operator_finding", "duplicate_review_dimension"]);
+  "unknown_article_reference", "unknown_message_reference", "unsupported_operator_finding", "duplicate_review_dimension",
+  "unknown_topic_reference"]);
 
 export async function runAgentJob(): Promise<boolean> {
   if (config.SUPPORT_AI_MODE === "off") return false;
@@ -19,9 +21,6 @@ export async function runAgentJob(): Promise<boolean> {
   if (!job) return false;
   try {
     const transcript = await agentStore.transcript(job);
-    let articles: Awaited<ReturnType<KnowledgeBase["articles"]>> = [];
-    let kbAvailable = true;
-    try { articles = await kb.articles(); } catch { kbAvailable = false; }
     const model = new OpenAIModel({
       apiKey: config.OPENAI_API_KEY!, model: config.SUPPORT_AI_MODEL,
       meter: {
@@ -33,6 +32,17 @@ export async function runAgentJob(): Promise<boolean> {
       },
     });
     const engine = new SupportEngine(model);
+    if (job.kind === "topic") {
+      // Internal labelling only: no KB, nothing reaches the customer.
+      const active = (await listTopics()).filter((t) => !t.archived).map(({ id, name }) => ({ id, name }));
+      const choice = await engine.topic(transcript.messages, active);
+      await agentStore.finish(job, { ...choice, policy_version: "ru-support-v2" });
+      await applyAiTopic(job.ticket_id, choice.topic_id);
+      return true;
+    }
+    let articles: Awaited<ReturnType<KnowledgeBase["articles"]>> = [];
+    let kbAvailable = true;
+    try { articles = await kb.articles(); } catch { kbAvailable = false; }
     const result = job.kind === "triage"
       ? await attachDiagnostics(await engine.triage(transcript.messages, articles), await getTicket(job.ticket_id), diagnostics)
       : await engine.review(transcript.messages, articles, transcript.truncated);

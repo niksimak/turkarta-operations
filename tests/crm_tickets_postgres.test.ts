@@ -194,6 +194,21 @@ test("ticket workflow: take, take-over, assign, status, list, detail", { skip: !
       await assert.rejects(tickets.setStatus("00000000-0000-0000-0000-000000000000", "new", boris), tickets.NotFound);
     });
 
+    await t.test("setStatus resolved queues one AI topic job unless the operator chose a topic", async () => {
+      const a = await ticket();
+      await sql`insert into support_messages (ticket_id, sender, body, actor_type) values (${a}, 'user', 'help', 'customer')`;
+      await tickets.setStatus(a, "resolved", anna, { onResolved: async () => {} });
+      const jobs = await sql`select kind from support_agent_jobs where ticket_id = ${a} and kind = 'topic'`;
+      assert.equal(jobs.length, 1);
+
+      const b = await ticket();
+      const [topic] = await sql`select id from crm_topics order by position limit 1`;
+      await sql`update support_requests set topic_id = ${topic!.id}, topic_source = 'operator' where id = ${b}`;
+      await tickets.setStatus(b, "resolved", anna, { onResolved: async () => {} });
+      const none = await sql`select 1 from support_agent_jobs where ticket_id = ${b} and kind = 'topic'`;
+      assert.equal(none.length, 0);
+    });
+
     await t.test("list queue orders by queued_at asc and counts", async () => {
       await reset();
       const a = await ticket({ queued_at: sql`now() - interval '3 minutes'` });
