@@ -97,7 +97,8 @@ export async function rateCsat(id: string, who: CsatWho, rating: Rating):
   });
   if (!res.ok) return res;
   if (res.changed) await publish({ type: "ticket.updated", ticketId: res.ticketId });
-  return { ok: true, askComment: rating === "down" };
+  // Only a new 👎 asks for a comment: a repeated one would send a second prompt.
+  return { ok: true, askComment: rating === "down" && res.changed };
 }
 
 export async function commentCsat(id: string, who: CsatWho, comment: string):

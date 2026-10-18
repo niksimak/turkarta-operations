@@ -186,7 +186,8 @@ test("CSAT: ask after a CRM resolve, rate, comment, lookups", { skip: !url }, as
       assert.deepEqual(ev[0]!.payload, { rating: "down" });
       assert.equal(ev[0]!.actor_operator_id, null);
 
-      assert.deepEqual(await csat.rateCsat(tgCsat, { userTg: 7001 }, "down"), { ok: true, askComment: true });
+      assert.deepEqual(await csat.rateCsat(tgCsat, { userTg: 7001 }, "down"), { ok: true, askComment: false },
+        "a repeated 👎 asks for no second comment");
       ev = await csatEvents(tgTicket);
       assert.equal(ev.length, 1, "a repeated tap logs no second event");
 

@@ -100,6 +100,12 @@ test("CSAT channels: Telegram buttons and comment reply, web API, retry keeps th
       assert.equal((ask?.payload.reply_markup as { force_reply?: boolean }).force_reply, true);
       promptId = ask!.messageId!;
       assert.equal(Number(row.comment_prompt_tg_id), promptId);
+
+      // A repeated 👎 tap sends no second comment prompt.
+      calls.length = 0;
+      await tap(userTg, userTg, `csat:${tgCsat}:down`);
+      assert.equal(calls.filter((c) => c.method === "sendMessage").length, 0);
+      assert.equal(Number((await csatRow(tgCsat)).comment_prompt_tg_id), promptId);
     });
 
     await t.test("a reply to the comment prompt is the comment, not a new question", async () => {
