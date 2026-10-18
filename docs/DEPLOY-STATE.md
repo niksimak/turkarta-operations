@@ -1,6 +1,23 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-10-17_
+_Last updated: 2026-10-18_
+
+## Status: CRM topics live, image `crm-e26b858` — 2026-10-18
+
+- Live image `registry.fly.io/turkarta-operations:crm-e26b858` (main `e26b858`, ops v8), PRs since `crm-f0aa27e`:
+  #22 stats count video replies (v6 `crm-0a6dd45`); #23 stats: time to resolution, one-reply share,
+  messages per ticket, «Когда пишут клиенты» heatmap (v7 `crm-7acf716`); #24 topics (contact reasons).
+- #24: migration `0019_crm_topics.sql` on boot (verified on prod: 10 seeded topics, `topic` in
+  `crm_ticket_events_type_check`, `support_agent_jobs_kind_check`, new `support_requests_topic_source_check`).
+  On a CRM resolve the agent worker runs a `topic` job (shadow mode, internal only): own allowance
+  3 calls/ticket/UTC day, shared $1/day / $20/month caps. Operator choice (incl. clearing) always wins.
+- Tripwire after the first resolves: `select status, error_code, count(*) from support_agent_jobs where kind='topic' group by 1,2`
+  must show `completed`; repeated `model_unavailable` = the strict schema was refused (topics stay manual).
+- Rollback: `update support_agent_jobs set status='superseded', finished_at=now() where kind='topic' and status in ('pending','running')`
+  (the old worker would run a topic job as a review), then
+  `fly deploy --image registry.fly.io/turkarta-operations:crm-7acf716 -a turkarta-operations`; schema is additive.
+- Spec + plans: `docs/superpowers/specs/2026-10-18-crm-quality-design.md`, `docs/superpowers/plans/2026-10-18-crm-{stats-resolution,topics}.md`.
+  Next: CSAT (ops + Turkarta web widget), «Качество» page (owner only) + template suggestions, Monday summary.
 
 ## Status: PWA push + video replies live, image `crm-f0aa27e` — 2026-10-17 night
 
@@ -13,8 +30,7 @@ _Last updated: 2026-10-17_
   (generated on the owner's Mac, never printed). Subject = `PUBLIC_BASE_URL`.
 - Schema on boot: `0017_crm_push.sql` (table `crm_push_subscriptions`), `0018_support_video.sql`
   (kind / media / size checks widened in place; verified on prod after boot).
-- Web customers: the video player ships in Turkarta webapp #1090 (merged to main, not on prod yet);
-  until then a video reply shows as a broken image in the web chat, Telegram is fine.
+- Web customers: the video player shipped in Turkarta webapp #1090 (prod webapp v33 `prodweb-32a84930`, 2026-10-18).
 - Rollback: `fly deploy --image registry.fly.io/turkarta-operations:crm-de7997e -a turkarta-operations`
   (old code runs on the widened schema); push off: `fly secrets unset CRM_VAPID_PUBLIC_KEY CRM_VAPID_PRIVATE_KEY`.
 
