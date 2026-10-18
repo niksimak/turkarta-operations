@@ -14,6 +14,10 @@ import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
 import { classifyTelegram, recordUserMessage, type InboundPart, type RecordedMessage } from "../crm/inbound.js";
 import { publish } from "../crm/events.js";
+import {
+  commentCsat, csatByCommentPrompt, rateCsat, setCommentPrompt,
+  CSAT_ASK_COMMENT, CSAT_CLOSED, CSAT_COMMENT_THANKS, CSAT_THANKS,
+} from "../crm/csat.js";
 import { getSettings } from "../crm/settings.js";
 import { sequencePrivateMessages } from "../telegram_sequence.js";
 import { greetCustomer } from "../topic-greeting-runtime.js";
@@ -576,6 +580,20 @@ supportBot.callbackQuery(/^resolve_do:(.+)$/, async (ctx) => {
   }
 });
 
+// ---- customer: CSAT after a CRM resolve -----------------------------------
+
+supportBot.callbackQuery(/^csat:([0-9a-f-]{36}):(up|down)$/, async (ctx) => {
+  const [, id, rating] = ctx.match!;
+  const res = await rateCsat(id!, { userTg: ctx.from.id }, rating as "up" | "down");
+  if (!res.ok) return ctx.answerCallbackQuery({ text: CSAT_CLOSED });
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(CSAT_THANKS).catch(() => {});
+  if (res.askComment) {
+    const m = await ctx.reply(CSAT_ASK_COMMENT, { reply_markup: { force_reply: true } });
+    await setCommentPrompt(id!, m.message_id);
+  }
+});
+
 // ---- end-user DM: guided intake + relay ----------------------------------
 
 supportBot.on("message", async (ctx, next) => {
@@ -583,6 +601,17 @@ supportBot.on("message", async (ctx, next) => {
   if (!isRelayable(ctx)) return;
   const user = ctx.from;
   const text = ctx.message.text?.trim();
+
+  // A reply to the CSAT comment prompt is feedback, not a new question.
+  const replyTo = ctx.message.reply_to_message?.message_id;
+  if (replyTo && text) {
+    const csatId = await csatByCommentPrompt(user.id, replyTo);
+    if (csatId && (await commentCsat(csatId, { userTg: user.id }, text)).ok) {
+      await ctx.reply(CSAT_COMMENT_THANKS);
+      return;
+    }
+  }
+
   const ticket = await db.ticketByUser(user.id);
   const part: InboundPart = classifyTelegram(ctx.message) ?? { kind: "text", body: contentLabel(ctx) };
   const tgMeta = { authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}` };

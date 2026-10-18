@@ -19,6 +19,7 @@ import { flushDeliveryConfirmations } from "./bitrix_delivery.js";
 import { validTelegramPhotoRequest } from "./telegram_media.js";
 import { createAgentRoutes } from "./agents/routes.js";
 import { crmRoutes } from "./crm/routes.js";
+import { commentCsat, csatForWeb, rateCsat } from "./crm/csat.js";
 import { readiness } from "./agents/readiness.js";
 import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
@@ -358,7 +359,7 @@ app.get("/api/support/web/messages", async (c) => {
   }
 
   const ticket = await db.latestTicketByWebUser(webUserId);
-  if (!ticket) return c.json({ ticketId: null, status: null, messages: [], cursor: since ?? 0 });
+  if (!ticket) return c.json({ ticketId: null, status: null, messages: [], cursor: since ?? 0, csat: null });
   const messages = await db.messagesSince(ticket.id, since);
   return c.json({
     ticketId: ticket.id,
@@ -367,7 +368,35 @@ app.get("/api/support/web/messages", async (c) => {
     messages: serializeMessages(messages),
     // Convenience: the cursor to pass as `since` on the next poll.
     cursor: messages.length ? messages[messages.length - 1]!.seq : (since ?? 0),
+    csat: ticket.status === "resolved" ? await csatForWeb(ticket.id) : null,
   });
+});
+
+// Web user answers «Мы смогли вам помочь?» (and, after 👎, an optional comment).
+const WebCsatPayload = z.object({
+  csat_id: z.string().uuid(),
+  web_user_id: z.string().min(1),
+  rating: z.enum(["up", "down"]).optional(),
+  comment: z.string().max(1000).optional(),
+}).refine((p) => p.rating !== undefined || p.comment !== undefined);
+
+app.post("/api/support/web/csat", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const parsed = WebCsatPayload.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid" }, 422);
+  const { csat_id, web_user_id, rating, comment } = parsed.data;
+  const who = { webUserId: web_user_id };
+  const fail = (reason: "not_found" | "closed" | "invalid") =>
+    c.json({ error: reason }, reason === "not_found" ? 404 : reason === "closed" ? 409 : 422);
+  if (rating) {
+    const r = await rateCsat(csat_id, who, rating);
+    if (!r.ok) return fail(r.reason);
+  }
+  if (comment !== undefined) {
+    const r = await commentCsat(csat_id, who, comment);
+    if (!r.ok) return fail(r.reason);
+  }
+  return c.json({ ok: true });
 });
 
 // ---- Bitrix24 local application: install + handler ------------------------

@@ -265,7 +265,9 @@ export async function retryDelivery(messageId: string, me: Operator, deps: Reply
     returning ticket_id`;
   if (!claimed) return (await crmMessage(messageId))!;
   const ticket = await getTicket(claimed.ticket_id);
-  await deliver(messageId, ticket!, deps);
+  // A CSAT prompt keeps its buttons. Lazy import: csat.ts imports this module.
+  const { csatPromptExtra } = await import("./csat.js");
+  await deliver(messageId, ticket!, deps, await csatPromptExtra(messageId));
   await publish({ type: "message.created", ticketId: claimed.ticket_id, messageId });
   return (await crmMessage(messageId))!;
 }

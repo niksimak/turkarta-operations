@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import { sql, type Ticket } from "../db.js";
 import { publish } from "./events.js";
-import { sendSystemText, type ReplyDeps } from "./reply.js";
+import { sendSystemText, type ReplyDeps, type TgExtra } from "./reply.js";
 import { logEvent } from "./tickets.js";
 
 export type Rating = "up" | "down";
@@ -29,6 +29,20 @@ async function humanAnswered(ticketId: string): Promise<boolean> {
   return r?.ok === true;
 }
 
+/** The 👍/👎 buttons of a survey prompt. */
+function csatExtra(id: string): TgExtra {
+  return { reply_markup: { inline_keyboard: [[
+    { text: CSAT_UP, callback_data: `csat:${id}:up` },
+    { text: CSAT_DOWN, callback_data: `csat:${id}:down` },
+  ]] } };
+}
+
+/** Send options for retrying a message: the survey's buttons when it is a CSAT prompt. */
+export async function csatPromptExtra(messageId: string): Promise<TgExtra | undefined> {
+  const [r] = await sql<{ id: string }[]>`select id from crm_csat where prompt_message_id = ${messageId}`;
+  return r ? csatExtra(r.id) : undefined;
+}
+
 /** Asks once per resolution. Returns the survey id, or null when it is not asked. */
 export async function askCsat(ticket: Ticket, text: string, deps: ReplyDeps = {}): Promise<string | null> {
   if (ticket.status !== "resolved" || !ticket.resolved_at || !(await humanAnswered(ticket.id))) return null;
@@ -42,11 +56,7 @@ export async function askCsat(ticket: Ticket, text: string, deps: ReplyDeps = {}
     on conflict (ticket_id, resolved_at) do nothing
     returning id`;
   if (!row) return null;
-  const keyboard = { inline_keyboard: [[
-    { text: CSAT_UP, callback_data: `csat:${row.id}:up` },
-    { text: CSAT_DOWN, callback_data: `csat:${row.id}:down` },
-  ]] };
-  const messageId = await sendSystemText(ticket, text, deps, { reply_markup: keyboard });
+  const messageId = await sendSystemText(ticket, text, deps, csatExtra(row.id));
   await sql`update crm_csat set prompt_message_id = ${messageId} where id = ${row.id}`;
   return row.id;
 }
