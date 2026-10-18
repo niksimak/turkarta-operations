@@ -15,6 +15,9 @@ const C = "00000000-0000-0000-0000-00000000000c";
 const D = "00000000-0000-0000-0000-00000000000d";
 const E = "00000000-0000-0000-0000-00000000000e";
 const F = "00000000-0000-0000-0000-00000000000f";
+const G = "00000000-0000-0000-0000-000000000010";
+const H = "00000000-0000-0000-0000-000000000011";
+const I = "00000000-0000-0000-0000-000000000012";
 
 const admin = {
   id: 1, name: "Anna", email: null, role: "admin", is_lead: false, auto_assign_enabled: true, on_shift: true,
@@ -97,23 +100,54 @@ test("stats: resolution time, one-reply share, messages per ticket, heatmap", { 
     await ticket(E, "web-onboarding", "resolved", msk("10-04T09:00:00"));
     await resolve(E, 1, msk("10-04T10:00:00"));
 
+    // G (bot): closed before the CRM (legacy resolve, no status_changed event): customer 09-29 10:00, Bitrix-era
+    // agent reply 10:05 (actor unknown, no author). Reopened in CRM mode 10-04 15:00 with a customer message at the
+    // same instant; Boris text 15:05, resolves 15:15. The cycle starts at the reopening: 900 s, 1 reply, 2 messages.
+    await ticket(G, "bot", "resolved", msk("09-29T10:00:00"));
+    await user(G, msk("09-29T10:00:00"));
+    await msg(G, "agent", "text", "unknown", null, msk("09-29T10:05:00"));
+    await reopened(G, msk("10-04T15:00:00"));
+    await user(G, msk("10-04T15:00:00"));
+    await msg(G, "agent", "text", "human", "crm:2", msk("10-04T15:05:00"));
+    await resolve(G, 2, msk("10-04T15:15:00"));
+
+    // H (bot): customer 08:00, cutover close 08:30 (no actor), reopened + customer message 09:00, Anna text 09:10,
+    // Anna resolves 09:20. Bounded by the cutover close, not 08:00: 1200 s, 1 reply, 2 messages.
+    await ticket(H, "bot", "resolved", msk("10-04T08:00:00"));
+    await user(H, msk("10-04T08:00:00"));
+    await resolve(H, null, msk("10-04T08:30:00"), { from: "new", to: "resolved", reason: "cutover_backlog" });
+    await reopened(H, msk("10-04T09:00:00"));
+    await user(H, msk("10-04T09:00:00"));
+    await msg(H, "agent", "text", "human", "crm:1", msk("10-04T09:10:00"));
+    await resolve(H, 1, msk("10-04T09:20:00"));
+
+    // I (bot): customer before the range, Anna resolves exactly at `to` (10-05 00:00): half-open range excludes it.
+    await ticket(I, "bot", "resolved", msk("09-30T20:00:00"));
+    await user(I, msk("09-30T20:00:00"));
+    await msg(I, "agent", "text", "human", "crm:1", msk("09-30T20:05:00"));
+    await resolve(I, 1, msk("10-05T00:00:00"));
+
     const s = await mod.stats({ from: FROM, to: TO }, admin, DEFAULT_SETTINGS);
 
-    assert.equal(s.team.resolution_median_s, 1800); // [1200, 1800, 2400]
-    assert.equal(s.team.one_reply_pct, 33.3); // A of {A, F, B}
-    assert.equal(s.team.messages_per_ticket, 2.3); // (2 + 3 + 2) / 3
+    // Cycles: A 1200, F 1800, B 2400, G 900, H 1200 (I is at `to`, excluded).
+    assert.equal(s.team.resolution_median_s, 1200); // sorted [900, 1200, 1200, 1800, 2400], middle = 1200
+    assert.equal(s.team.one_reply_pct, 60); // A, G, H are one-reply and not reopened (B reopened, F two replies): 3 / 5
+    assert.equal(s.team.messages_per_ticket, 2.2); // (2 + 3 + 2 + 2 + 2) / 5 = 11 / 5
     assert.deepEqual(s.team.heatmap, [
       { dow: 4, hour: 10, n: 1 }, // A
       { dow: 6, hour: 12, n: 1 }, // B (first customer message, not created_at 08:00)
       { dow: 6, hour: 23, n: 1 }, // C, Moscow hour
-    ]); // F's first customer message is 09-30, D's too; E has none
+      { dow: 7, hour: 8, n: 1 }, // H: 10-04 is Sunday (10-01 Thu + 3 days), first customer message 08:00
+    ]); // F's first customer message is 09-30, D's and I's too, G's is 09-29; E has none
 
     const pick = (id: number) => {
       const o = s.operators.find((r) => r.operator_id === id)!;
       return { resolution_median_s: o.resolution_median_s, one_reply_pct: o.one_reply_pct };
     };
-    assert.deepEqual(pick(1), { resolution_median_s: 1800, one_reply_pct: 50 }); // A 1200, B 2400; A yes, B reopened
-    assert.deepEqual(pick(2), { resolution_median_s: 1800, one_reply_pct: 0 }); // F 1800, two replies
+    // Anna: A 1200, B 2400, H 1200 -> median 1200; one-reply A and H yes, B reopened: 2 / 3 = 66.7
+    assert.deepEqual(pick(1), { resolution_median_s: 1200, one_reply_pct: 66.7 });
+    // Boris: F 1800, G 900 -> median (900 + 1800) / 2 = 1350; one-reply G yes, F two replies: 1 / 2 = 50
+    assert.deepEqual(pick(2), { resolution_median_s: 1350, one_reply_pct: 50 });
 
     // Empty range: no cycles, no heatmap.
     const empty = await mod.stats({ from: new Date("2026-01-01T00:00:00+03:00"), to: new Date("2026-01-02T00:00:00+03:00") },

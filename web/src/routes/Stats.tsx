@@ -120,7 +120,7 @@ export function Stats() {
             <Block title="Новые обращения по дням">
               <StatsChart days={stats.data.team.new_per_day} />
             </Block>
-            <Block title="Когда пишут клиенты" aside={<span className="text-sm text-text-muted">Новые обращения по дням недели и часам, МСК.</span>}>
+            <Block title="Когда пишут клиенты" aside={<span className="text-sm text-text-muted">По первому сообщению клиента, МСК.</span>}>
               <StatsHeatmap cells={stats.data.team.heatmap} />
             </Block>
             <Block

@@ -51,6 +51,9 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
            (select max(p.created_at) from public.crm_ticket_events p
              where p.ticket_id = e.ticket_id and p.type = 'status_changed' and p.payload->>'to' = 'resolved'
                and (p.created_at, p.id) < (e.created_at, e.id)) as prev_resolved_at,
+           -- Tickets closed before the CRM have no status_changed event; the latest reopen bounds their cycle.
+           (select max(o.created_at) from public.crm_ticket_events o
+             where o.ticket_id = e.ticket_id and o.type = 'reopened' and o.created_at <= e.created_at) as reopened_at,
            exists (select 1 from public.crm_ticket_events o
                     where o.ticket_id = e.ticket_id and o.type = 'reopened' and o.created_at > e.created_at
                       and (nx.created_at is null or o.created_at < nx.created_at)) as reopened
@@ -79,10 +82,11 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
           from public.support_messages
          where ticket_id = r.ticket_id and created_at <= r.resolved_at
            and (r.prev_resolved_at is null or created_at > r.prev_resolved_at)
+           and (r.reopened_at is null or created_at >= r.reopened_at)
       ) m
      where m.first_user_at is not null`;
 
-  const days = await sql`
+  const daysQ = sql`
     select to_char(d, 'YYYY-MM-DD') as day,
            count(r.id) filter (where r.source = 'bot')::int as bot,
            count(r.id) filter (where r.source = 'miniapp')::int as miniapp,
@@ -95,18 +99,18 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
        and (r.created_at at time zone 'Europe/Moscow')::date = d::date
      group by d order by d`;
 
-  const [now] = await sql`
+  const nowQ = sql`
     select count(*)::int as backlog,
            floor(extract(epoch from now() - min(waiting_since)) / 60)::int as oldest
       from public.support_requests
      where status in ('new','allocated','awaiting')`;
 
-  const [teamSla] = await sql`
+  const teamSlaQ = sql`
     select round(100.0 * count(*) filter (where ${inSla})
                  / nullif(count(*) filter (where response_seconds is not null), 0), 1) as pct
       from (${replies}) x`;
 
-  const [teamCycles] = await sql`
+  const teamCyclesQ = sql`
     select round((percentile_cont(0.5) within group (order by resolution_s))::numeric) as res_med,
            round(100.0 * count(*) filter (where replies = 1 and not reopened)
                  / nullif(count(*) filter (where replies >= 1), 0), 1) as one_reply,
@@ -114,7 +118,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       from (${cycles}) c`;
 
   // New tickets by when the customer first wrote (Moscow weekday and hour), not by created_at.
-  const heat = await sql`
+  const heatQ = sql`
     select extract(isodow from f.at at time zone 'Europe/Moscow')::int as dow,
            extract(hour from f.at at time zone 'Europe/Moscow')::int as hour,
            count(*)::int as n
@@ -126,7 +130,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
      where f.at >= ${from} and f.at < ${to}
      group by 1, 2 order by 1, 2`;
 
-  const rows = await sql`
+  const rowsQ = sql`
     with ops as (
       select id, name from public.crm_operators where ${seeAll} or id = ${me.id}
     ), ev as (
@@ -171,6 +175,8 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       left join rep rp on rp.author_id = 'crm:' || o.id
       left join cyc cy on cy.op = o.id
      order by o.name, o.id`;
+
+  const [days, [now], [teamSla], [teamCycles], heat, rows] = await Promise.all([daysQ, nowQ, teamSlaQ, teamCyclesQ, heatQ, rowsQ]);
 
   return {
     team: {
