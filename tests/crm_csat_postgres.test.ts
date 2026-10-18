@@ -241,6 +241,30 @@ test("CSAT: ask after a CRM resolve, rate, comment, lookups", { skip: !url }, as
       assert.equal(await csat.csatByCommentPrompt(7001, 1), null);
     });
 
+    await t.test("no second survey without a new operator reply", async () => {
+      sent.length = 0;
+      const id = await ticket({ user_tg: 7004 });
+      await customer(id);
+      await human(id);
+      await resolve(id);
+      assert.equal((await csatRows(id)).length, 1);
+
+      // Back to work without a reopen event, then resolved again with no new reply.
+      await tickets.setStatus(id, "allocated", anna);
+      await resolve(id);
+      assert.equal((await csatRows(id)).length, 1);
+      assert.equal(sent.length, 1);
+      const prompts = await sql`select id from support_messages where ticket_id = ${id} and body = 'Мы смогли вам помочь?'`;
+      assert.equal(prompts.length, 1);
+
+      // A new operator reply makes the next resolve ask again.
+      await tickets.setStatus(id, "allocated", anna);
+      await human(id);
+      await resolve(id);
+      assert.equal((await csatRows(id)).length, 2);
+      assert.equal(sent.length, 2);
+    });
+
     await t.test("resolve never fails because of CSAT", async () => {
       const id = await ticket({ user_tg: 7003 });
       await customer(id);

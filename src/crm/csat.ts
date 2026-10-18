@@ -18,14 +18,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 type Sql = postgres.Sql | postgres.TransactionSql;
 
-/** A human operator answered in the current cycle (after the last reopen). */
+/**
+ * A human operator answered in the current cycle: after the last reopen and after
+ * the previous survey, so a resolve with no new reply never asks twice.
+ * greatest() ignores nulls.
+ */
 async function humanAnswered(ticketId: string): Promise<boolean> {
   const [r] = await sql`
     select exists (
       select 1 from support_messages m
        where m.ticket_id = ${ticketId} and m.actor_type = 'human'
-         and m.created_at > coalesce((select max(e.created_at) from crm_ticket_events e
-                                       where e.ticket_id = ${ticketId} and e.type = 'reopened'), '-infinity'::timestamptz)
+         and m.created_at > coalesce(greatest(
+               (select max(e.created_at) from crm_ticket_events e where e.ticket_id = ${ticketId} and e.type = 'reopened'),
+               (select max(c.asked_at) from crm_csat c where c.ticket_id = ${ticketId})
+             ), '-infinity'::timestamptz)
     ) as ok`;
   return r?.ok === true;
 }
