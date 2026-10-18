@@ -26,7 +26,7 @@
 - **Resolve** = a `crm_ticket_events` row `type='status_changed'`, `payload->>'to'='resolved'`, `actor_operator_id is not null`, `created_at` in `[from, to)`. Attributed to `actor_operator_id`.
 - **Cycle** of a resolve = that ticket's `support_messages` with `created_at` after the ticket's previous resolve event (any actor, any time) and `<=` this resolve. A cycle counts only if it has a customer message (`sender='user'`).
 - **Resolution time** = resolve `created_at` − first customer message of the cycle, seconds.
-- **Replies** in a cycle = `sender='agent' and author_id like 'crm:%' and kind in ('text','photo','video')`.
+- **Replies** in a cycle = `sender='agent' and author_id like 'crm:%' and actor_type='human' and kind in ('text','photo','video')` (the automated resolve message is `crm:system` / `automation`).
 - **Messages** in a cycle = `kind <> 'note'` and (`sender='user'` or (`sender='agent'` and `actor_type not in ('automation','system')`)).
 - **Reopened** = a `reopened` event on the ticket after the resolve and before the ticket's next resolve (same rule the existing reopen-rate uses).
 - **One-reply share** = cycles with `replies = 1` and not reopened ÷ cycles with `replies >= 1`, percent, 1 decimal.
@@ -264,7 +264,7 @@ export interface OperatorStats {
       from (${resolveRows}) r
       cross join lateral (
         select min(created_at) filter (where sender = 'user') as first_user_at,
-               count(*) filter (where sender = 'agent' and author_id like 'crm:%'
+               count(*) filter (where sender = 'agent' and author_id like 'crm:%' and actor_type = 'human'
                                   and kind in ('text','photo','video'))::int as replies,
                count(*) filter (where kind <> 'note' and (sender = 'user'
                                   or (sender = 'agent' and actor_type not in ('automation','system'))))::int as messages
