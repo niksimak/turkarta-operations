@@ -110,6 +110,43 @@ test("topics: seed, list, create, rename, archive, ticket topic by operator and 
       const none = await sql`select 1 from support_agent_jobs where ticket_id = ${id} and kind = 'topic'`;
       assert.equal(none.length, 0);
     });
+
+    await t.test("reserve: topic calls have their own 3-per-ticket-day allowance; $ caps still apply", async () => {
+      const { AgentStore } = await import("../dist/agents/store.js");
+      const store = new AgentStore(sql);
+      const budget = { dailyUsd: 1000, monthlyUsd: 10000, ticketDailyCalls: 12 };
+      let userTg = 780;
+      const job = async (kind: string) => {
+        const [tk] = await sql`insert into support_requests (user_tg, source, status) values (${++userTg}, 'bot', 'resolved') returning id`;
+        const [j] = await sql`insert into support_agent_jobs (ticket_id, kind, through_seq) values (${tk!.id}, ${kind}, 0)
+          returning id, ticket_id, kind, through_seq::int, gen_random_uuid() as lease_token`;
+        return j as unknown as import("../dist/agents/store.js").Job;
+      };
+      const prior = async (j: { id: string; ticket_id: string }, task: string, n: number) => {
+        for (let i = 0; i < n; i++) {
+          await sql`insert into support_agent_calls (job_id, ticket_id, model, task, reserved_usd) values (${j.id}, ${j.ticket_id}, 'm', ${task}, 0)`;
+        }
+      };
+      // 12 triage/review calls today exhaust the shared allowance but not the topic one.
+      const busy = await job("topic");
+      await prior(busy, "classify", 6);
+      await prior(busy, "review", 6);
+      await assert.rejects(store.reserve(busy, "m", "classify", 0, budget), /budget_exceeded/);
+      await store.reserve(busy, "m", "topic", 0, budget);
+      await prior(busy, "topic", 2);
+      await assert.rejects(store.reserve(busy, "m", "topic", 0, budget), /budget_exceeded/); // 3 topic calls today
+      // Topic calls never count against triage.
+      const triage = await job("triage");
+      await prior(triage, "topic", 3);
+      await prior(triage, "classify", 11);
+      await store.reserve(triage, "m", "classify", 0, budget);
+      await assert.rejects(store.reserve(triage, "m", "classify", 0, budget), /budget_exceeded/);
+      // The daily $ cap applies to topic calls too.
+      const fresh = await job("topic");
+      await assert.rejects(store.reserve(fresh, "m", "topic", 0.001, { ...budget, dailyUsd: 0.0001 }), /budget_exceeded/);
+      await assert.rejects(store.reserve(fresh, "m", "topic", 0.001, { ...budget, monthlyUsd: 0.0001 }), /budget_exceeded/);
+      await store.reserve(fresh, "m", "topic", 0.001, budget);
+    });
   } finally {
     await sql.end();
     await (await import("../dist/db.js")).sql.end();
