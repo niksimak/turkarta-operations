@@ -45,9 +45,19 @@ export interface OperatorStats {
   one_reply_pct: number | null;
 }
 
+export interface TopicStats {
+  topic_id: number | null;
+  name: string;
+  resolved: number;
+  prev_resolved: number;
+  share_pct: number | null;
+  resolution_median_s: number | null;
+}
+
 export interface StatsResponse {
   team: TeamStats;
   operators: OperatorStats[];
+  topics: TopicStats[];
 }
 
 export type Preset = "today" | "7d" | "30d" | "custom";
