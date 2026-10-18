@@ -48,7 +48,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const COOKIE_ONLY_GET = new RegExp(`^${BASE}/api/(stream|attachments/[^/]+)$`);
 
 const StatusBody = z.object({ status: z.enum(["new", "allocated", "awaiting", "resolved"]) }).strict();
-const TopicBody = z.object({ topic_id: z.number().int().positive().nullable() }).strict();
+const TopicBody = z.object({ topic_id: z.number().int().positive().max(2147483647).nullable() }).strict();
 const AssignBody = z.object({ operator_id: z.number().int().positive().nullable() }).strict();
 const ShiftBody = z.object({ on: z.boolean() }).strict();
 const PushEndpoint = z.string().url().max(2000).refine((u) => u.startsWith("https://"), "https only");
