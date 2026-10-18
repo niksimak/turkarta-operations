@@ -2,6 +2,19 @@
 
 _Last updated: 2026-10-18_
 
+## Status: CSAT live, image `crm-f3be1ab` — 2026-10-18
+
+- Live image `registry.fly.io/turkarta-operations:crm-f3be1ab` (main `f3be1ab`, ops v9): #26 CSAT. After a CRM resolve
+  with a human reply since the last reopen / previous survey, the customer gets `csat_text` («Мы смогли вам помочь?»).
+  Telegram + Mini App: 👍/👎 buttons, typed «да/нет» counts, 👎 → force-reply comment (once). Ratings in the timeline
+  and Stats («Клиенты довольны», «Довольны» per operator/topic, shown from 5 answers).
+- Schema on boot: `0020_crm_csat.sql` (verified on prod: `crm_csat` exists, event check has `csat` and `topic_changed`).
+- **TEMP (2026-10-18): `csat_web_enabled` = false (default)** — web PWA customers are not asked yet.
+  Flip condition: the Turkarta widget is on prod (it is: backend v88 `prod-92b6262e`, webapp v34 `prodweb-92b6262e`,
+  turkarta#1094/#1095) → owner switches CRM Settings → «Оценка в веб-чате» on. Delete this TEMP line when flipped.
+- Rollback: Settings → «Оценка после решения» off (instant), or
+  `fly deploy --image registry.fly.io/turkarta-operations:crm-e26b858 -a turkarta-operations` (schema additive).
+
 ## Status: CRM topics live, image `crm-e26b858` — 2026-10-18
 
 - Live image `registry.fly.io/turkarta-operations:crm-e26b858` (main `e26b858`, ops v8), PRs since `crm-f0aa27e`:
