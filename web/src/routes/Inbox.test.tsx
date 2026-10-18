@@ -403,7 +403,8 @@ describe("Inbox", () => {
     mockApi(baseRoutes());
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("Нет аккаунта")).toBeTruthy();
+    // The account is its own query, fired when the panel mounts: wait for it, don't assume one tick.
+    expect(await within(panel).findByText("Нет аккаунта")).toBeTruthy();
     fireEvent.click(within(panel).getByRole("button", { name: "5550001. Скопировать TG id" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("5550001"));
     expect(await screen.findByText("Скопировано: TG id")).toBeTruthy();
@@ -479,7 +480,7 @@ describe("Inbox", () => {
     );
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("уровень 2,5")).toBeTruthy();
+    expect(await within(panel).findByText("уровень 2,5")).toBeTruthy();
     expect(within(panel).getByText("•• 4242")).toBeTruthy();
     expect(within(panel).getByText("CSB email")).toBeTruthy();
     expect(within(panel).getByText("u1@cards.turkarta.me")).toBeTruthy();
@@ -562,7 +563,7 @@ describe("Inbox", () => {
     mockApi(baseRoutes(detail({ user: null })));
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
-    expect(within(panel).getByText("Нет данных аккаунта")).toBeTruthy();
+    expect(await within(panel).findByText("Нет данных аккаунта")).toBeTruthy();
   });
 
   it("pings presence while open and shows who else is here", async () => {
