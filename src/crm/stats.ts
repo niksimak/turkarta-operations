@@ -15,6 +15,7 @@ export interface TeamStats {
   one_reply_pct: number | null;
   messages_per_ticket: number | null;
   heatmap: HeatCell[];
+  csat_pct: number | null; csat_answers: number; csat_asked: number;
 }
 export interface OperatorStats {
   operator_id: number; name: string; taken: number; auto_assigned: number; resolved: number; replies: number;
@@ -22,6 +23,7 @@ export interface OperatorStats {
   first_response_median_s: number | null; first_response_p90_s: number | null;
   within_sla_pct: number | null; reopen_rate_pct: number | null;
   resolution_median_s: number | null; one_reply_pct: number | null;
+  csat_pct: number | null; csat_answers: number;
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -29,6 +31,7 @@ const num = (v: unknown): number | null => (v === null || v === undefined ? null
 export interface TopicStats {
   topic_id: number | null; name: string; resolved: number; prev_resolved: number;
   share_pct: number | null; resolution_median_s: number | null;
+  csat_pct: number | null; csat_answers: number;
 }
 
 export async function stats(range: StatsRange, me: Operator, s: Settings): Promise<{ team: TeamStats; operators: OperatorStats[]; topics: TopicStats[] }> {
@@ -204,7 +207,25 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       left join med on med.topic_id is not distinct from k.topic_id
      order by coalesce(cur.n, 0) desc, k.topic_id is null, t.position, k.topic_id`;
 
-  const [days, [now], [teamSla], [teamCycles], heat, rows, topicRows] = await Promise.all([daysQ, nowQ, teamSlaQ, teamCyclesQ, heatQ, rowsQ, topicsQ]);
+  // CSAT: surveys counted by the resolve they belong to (crm_csat.resolved_at), not by when they were answered.
+  const csatTeamQ = sql`
+    select count(*)::int as asked, count(rating)::int as answers,
+           round(100.0 * count(*) filter (where rating = 'up') / nullif(count(rating), 0), 1) as pct
+      from public.crm_csat where resolved_at >= ${from} and resolved_at < ${to}`;
+  const csatOpQ = sql`
+    select operator_id as op, count(rating)::int as answers,
+           round(100.0 * count(*) filter (where rating = 'up') / nullif(count(rating), 0), 1) as pct
+      from public.crm_csat where resolved_at >= ${from} and resolved_at < ${to} and operator_id is not null group by 1`;
+  const csatTopicQ = sql`
+    select s.topic_id, count(c.rating)::int as answers,
+           round(100.0 * count(*) filter (where c.rating = 'up') / nullif(count(c.rating), 0), 1) as pct
+      from public.crm_csat c join public.support_requests s on s.id = c.ticket_id
+     where c.resolved_at >= ${from} and c.resolved_at < ${to} group by 1`;
+
+  const [days, [now], [teamSla], [teamCycles], heat, rows, topicRows, [csatTeam], csatOps, csatTopics] = await Promise.all([
+    daysQ, nowQ, teamSlaQ, teamCyclesQ, heatQ, rowsQ, topicsQ, csatTeamQ, csatOpQ, csatTopicQ]);
+  const csatOp = (id: number) => csatOps.find((c) => Number(c.op) === id);
+  const csatTopic = (id: number | null) => csatTopics.find((c) => (c.topic_id == null ? null : Number(c.topic_id)) === id);
 
   return {
     team: {
@@ -216,6 +237,7 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       one_reply_pct: num(teamCycles!.one_reply),
       messages_per_ticket: num(teamCycles!.msgs),
       heatmap: heat.map((h) => ({ dow: Number(h.dow), hour: Number(h.hour), n: Number(h.n) })),
+      csat_pct: num(csatTeam!.pct), csat_answers: Number(csatTeam!.answers), csat_asked: Number(csatTeam!.asked),
     },
     operators: rows.map((r) => ({
       operator_id: Number(r.id),
@@ -232,12 +254,15 @@ export async function stats(range: StatsRange, me: Operator, s: Settings): Promi
       reopen_rate_pct: num(r.reopen),
       resolution_median_s: num(r.res_med),
       one_reply_pct: num(r.one_reply),
+      csat_pct: num(csatOp(Number(r.id))?.pct), csat_answers: Number(csatOp(Number(r.id))?.answers ?? 0),
     })),
     topics: topicRows.map((r) => ({
       topic_id: r.topic_id == null ? null : Number(r.topic_id),
       name: r.topic_id == null ? "Без темы" : String(r.name),
       resolved: Number(r.resolved), prev_resolved: Number(r.prev_resolved),
       share_pct: num(r.share), resolution_median_s: num(r.res_med),
+      csat_pct: num(csatTopic(r.topic_id == null ? null : Number(r.topic_id))?.pct),
+      csat_answers: Number(csatTopic(r.topic_id == null ? null : Number(r.topic_id))?.answers ?? 0),
     })),
   };
 }

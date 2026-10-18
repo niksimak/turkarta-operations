@@ -54,10 +54,10 @@ test("stats: contact reasons per topic with previous range and «Без темы
 
     const s = await mod.stats({ from: FROM, to: TO }, admin, DEFAULT_SETTINGS);
     assert.deepEqual(s.topics, [
-      { topic_id: topup, name: "Пополнение не пришло", resolved: 3, prev_resolved: 0, share_pct: 60, resolution_median_s: 600 },
-      { topic_id: card, name: "Карта отклонена", resolved: 1, prev_resolved: 2, share_pct: 20, resolution_median_s: 600 },
-      { topic_id: null, name: "Без темы", resolved: 1, prev_resolved: 0, share_pct: 20, resolution_median_s: 600 },
-      { topic_id: kyc, name: "KYC/верификация", resolved: 0, prev_resolved: 1, share_pct: 0, resolution_median_s: null },
+      { topic_id: topup, name: "Пополнение не пришло", resolved: 3, prev_resolved: 0, share_pct: 60, resolution_median_s: 600, csat_pct: null, csat_answers: 0 },
+      { topic_id: card, name: "Карта отклонена", resolved: 1, prev_resolved: 2, share_pct: 20, resolution_median_s: 600, csat_pct: null, csat_answers: 0 },
+      { topic_id: null, name: "Без темы", resolved: 1, prev_resolved: 0, share_pct: 20, resolution_median_s: 600, csat_pct: null, csat_answers: 0 },
+      { topic_id: kyc, name: "KYC/верификация", resolved: 0, prev_resolved: 1, share_pct: 0, resolution_median_s: null, csat_pct: null, csat_answers: 0 },
     ]);
 
     const empty = await mod.stats({ from: new Date(msk("01-01T00:00:00")), to: new Date(msk("01-02T00:00:00")) }, admin, DEFAULT_SETTINGS);

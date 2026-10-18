@@ -10,8 +10,8 @@ const TO = new Date("2026-10-05T00:00:00+03:00");
 const msk = (s: string) => `2026-${s}+03:00`;
 
 // The resolution metrics have their own fixture (crm_stats_resolution_postgres.test.ts).
-const NEW_TEAM = ["resolution_median_s", "one_reply_pct", "messages_per_ticket", "heatmap"];
-const NEW_OP = ["resolution_median_s", "one_reply_pct"];
+const NEW_TEAM = ["resolution_median_s", "one_reply_pct", "messages_per_ticket", "heatmap", "csat_pct", "csat_answers", "csat_asked"];
+const NEW_OP = ["resolution_median_s", "one_reply_pct", "csat_pct", "csat_answers"];
 const omit = (o: object, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
 const T1 = "00000000-0000-0000-0000-000000000001";
