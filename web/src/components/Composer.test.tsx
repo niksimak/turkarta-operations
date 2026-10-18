@@ -50,6 +50,9 @@ const ticket = (over: Partial<TicketListItem> = {}): TicketDetail["ticket"] => (
   device: null,
   category: null,
   web_user_id: null,
+  topic_id: null,
+  topic_name: null,
+  topic_source: null,
   ...over,
 });
 
