@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { useSearchParams } from "react-router-dom";
 import { Segmented } from "../components/Segmented";
 import { Switch } from "../components/Shell";
+import { TopicsSection } from "../components/TopicsSection";
 import { toast } from "../components/Toast";
 import { ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -288,6 +289,7 @@ function TeamTab({ me }: { me: Operator }) {
       )}
 
       <OperatorsSection me={me} />
+      <TopicsSection me={me} />
       {canEdit && <SettingsHistory />}
     </div>
   );
