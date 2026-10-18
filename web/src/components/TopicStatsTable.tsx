@@ -1,3 +1,4 @@
+import { csatText, MIN_CSAT_ANSWERS } from "../lib/csat";
 import { formatDuration, formatPercent, type TopicStats } from "../lib/stats";
 
 const delta = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0");
@@ -7,7 +8,7 @@ export function TopicStatsTable({ rows }: { rows: TopicStats[] }) {
   if (!rows.length) return <p className="text-text-muted">За период решённых обращений нет.</p>;
   return (
     <div className="overflow-x-auto rounded-md bg-surface shadow-[0_0_0_1px_var(--border)]">
-      <table className="w-full min-w-[36rem] border-collapse text-left">
+      <table className="w-full min-w-[42rem] border-collapse text-left">
         <thead>
           <tr className="border-b border-border text-xs text-text-muted">
             <th scope="col" className="h-8 px-4 font-normal">Тема</th>
@@ -15,6 +16,7 @@ export function TopicStatsTable({ rows }: { rows: TopicStats[] }) {
             <th scope="col" className="px-4 text-right font-normal" title="Разница с предыдущим таким же периодом">К прошлому</th>
             <th scope="col" className="px-4 text-right font-normal">Доля</th>
             <th scope="col" className="px-4 text-right font-normal" title="Медиана: от сообщения клиента до решения">Время решения</th>
+            <th scope="col" className="px-4 text-right font-normal" title="Доля 👍 среди оценок клиентов">Довольны</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -26,6 +28,9 @@ export function TopicStatsTable({ rows }: { rows: TopicStats[] }) {
               <td className="num px-4 text-right">{r.share_pct === null ? <span className="text-text-muted">нет</span> : formatPercent(r.share_pct)}</td>
               <td className="num px-4 text-right">
                 {r.resolution_median_s === null ? <span className="text-text-muted">нет</span> : formatDuration(r.resolution_median_s)}
+              </td>
+              <td className={r.csat_answers < MIN_CSAT_ANSWERS ? "num px-4 text-right text-text-muted" : "num px-4 text-right"}>
+                {csatText(r.csat_pct, r.csat_answers)}
               </td>
             </tr>
           ))}

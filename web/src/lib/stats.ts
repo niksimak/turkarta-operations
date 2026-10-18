@@ -25,6 +25,9 @@ export interface TeamStats {
   resolution_median_s: number | null;
   one_reply_pct: number | null;
   messages_per_ticket: number | null;
+  csat_pct: number | null;
+  csat_answers: number;
+  csat_asked: number;
   heatmap: HeatCell[];
 }
 
@@ -43,6 +46,8 @@ export interface OperatorStats {
   reopen_rate_pct: number | null;
   resolution_median_s: number | null;
   one_reply_pct: number | null;
+  csat_pct: number | null;
+  csat_answers: number;
 }
 
 export interface TopicStats {
@@ -52,6 +57,8 @@ export interface TopicStats {
   prev_resolved: number;
   share_pct: number | null;
   resolution_median_s: number | null;
+  csat_pct: number | null;
+  csat_answers: number;
 }
 
 export interface StatsResponse {
