@@ -93,6 +93,7 @@ function mockApi(opts: { detail?: TicketDetail; sendKey?: "enter" | "mod_enter";
     if (method === "GET" && path === "/crm/api/tickets") return jsonResponse(200, { items: [d.ticket], nextCursor: null, counts: { queue: 0, mine: 1, overdue: 0 } });
     if (method === "GET" && path === `/crm/api/tickets/${TID}`) return jsonResponse(200, d);
     if (method === "GET" && path === "/crm/api/operators") return jsonResponse(200, operators);
+    if (method === "GET" && path === "/crm/api/topics") return jsonResponse(200, []);
     if (method === "GET" && path === "/crm/api/settings") return jsonResponse(404, {});
     if (method === "GET" && path === "/crm/api/canned") return jsonResponse(200, canned);
     if (method === "POST" && path === `/crm/api/tickets/${TID}/messages` && opts.send) return opts.send(init, url);
