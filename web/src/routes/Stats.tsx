@@ -5,6 +5,7 @@ import { Segmented } from "../components/Segmented";
 import { StatsChart } from "../components/StatsChart";
 import { StatsHeatmap } from "../components/StatsHeatmap";
 import { TopicStatsTable } from "../components/TopicStatsTable";
+import { csatMuted, csatText } from "../lib/csat";
 import { formatNumber } from "../lib/format";
 import { useMe } from "../lib/queries";
 import { canEditTeamSettings } from "../lib/settings";
@@ -228,9 +229,15 @@ function ResolutionTiles({ data }: { data: StatsResponse }) {
       value: t.messages_per_ticket === null ? none : formatNumber(t.messages_per_ticket),
       muted: t.messages_per_ticket === null,
     },
+    {
+      label: "Клиенты довольны",
+      note: t.csat_asked > 0 ? `ответили ${t.csat_answers} из ${t.csat_asked}` : "оценки 👍",
+      value: csatText(t.csat_pct, t.csat_answers),
+      muted: csatMuted(t.csat_answers),
+    },
   ];
   return (
-    <dl className="grid grid-cols-1 overflow-hidden rounded-md bg-surface shadow-[0_0_0_1px_var(--border)] md:grid-cols-3">
+    <dl className="grid grid-cols-1 overflow-hidden rounded-md bg-surface shadow-[0_0_0_1px_var(--border)] md:grid-cols-4">
       {tiles.map((tile, i) => (
         <div key={tile.label} className={cx("flex flex-col gap-1 border-border px-4 py-3", i > 0 && "max-md:border-t md:border-l")}>
           <dt className="text-sm text-text-muted">
@@ -269,6 +276,7 @@ const COLUMNS: Column[] = [
   { key: "reopen_rate_pct", label: "Переоткрыто", title: "Доля решённых, которые клиент открыл снова", kind: "percent" },
   { key: "resolution_median_s", label: "Решение", title: "Медиана: от сообщения клиента до решения", kind: "duration" },
   { key: "one_reply_pct", label: "Одним ответом", title: "Доля решённых одним ответом без переоткрытия", kind: "percent" },
+  { key: "csat_pct", label: "Довольны", title: "Доля 👍 среди оценок клиентов", kind: "percent" },
 ];
 
 export interface Sort {
@@ -276,12 +284,15 @@ export interface Sort {
   dir: "asc" | "desc";
 }
 
+/** A CSAT percent the UI hides (too few answers) must not order the rows. */
+const sortValue = (r: OperatorStats, key: SortKey) => (key === "csat_pct" && csatMuted(r.csat_answers) ? null : r[key]);
+
 /** Nulls always sink to the bottom, whichever way the column sorts. */
 export function sortOperators(rows: OperatorStats[], sort: Sort): OperatorStats[] {
   const sign = sort.dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
-    const x = a[sort.key];
-    const y = b[sort.key];
+    const x = sortValue(a, sort.key);
+    const y = sortValue(b, sort.key);
     if (x === null && y === null) return 0;
     if (x === null) return 1;
     if (y === null) return -1;
@@ -297,6 +308,11 @@ function cell(col: Column, v: string | number | null): ReactNode {
   if (col.kind === "duration") return formatDuration(v as number);
   if (col.kind === "percent") return formatPercent(v as number);
   return v;
+}
+
+function csatCell(r: OperatorStats): ReactNode {
+  const text = csatText(r.csat_pct, r.csat_answers);
+  return csatMuted(r.csat_answers) ? <span className="text-text-muted">{text}</span> : text;
 }
 
 function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) {
@@ -344,7 +360,7 @@ function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) 
                   </th>
                 ) : (
                   <td key={c.key} className="num whitespace-nowrap px-4 text-right">
-                    {cell(c, r[c.key])}
+                    {c.key === "csat_pct" ? csatCell(r) : cell(c, r[c.key])}
                   </td>
                 ),
               )}

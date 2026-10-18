@@ -71,7 +71,8 @@ export type TicketEventType =
   | "taken_over"
   | "status_changed"
   | "reopened"
-  | "topic_changed";
+  | "topic_changed"
+  | "csat";
 
 export interface TicketEventRow {
   id: number;
@@ -266,6 +267,9 @@ export interface CrmSettings extends SlaSettings {
   tg_ping_no_one_on_shift: boolean;
   resolve_message_enabled: boolean;
   resolve_message_text: string;
+  csat_enabled: boolean;
+  csat_text: string;
+  csat_web_enabled: boolean;
 }
 
 export function useOperators(enabled = true) {

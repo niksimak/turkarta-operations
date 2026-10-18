@@ -121,6 +121,10 @@ export function eventText(e: TicketEventRow): string | null {
       if (!to) return "Тема снята";
       return e.payload.source === "ai" ? `Тема (ИИ): ${to}` : `Тема: ${to}`;
     }
+    case "csat": {
+      if (typeof e.payload.comment === "string" && e.payload.comment) return `Комментарий клиента: ${e.payload.comment}`;
+      return e.payload.rating === "up" ? "Клиент оценил: 👍" : e.payload.rating === "down" ? "Клиент оценил: 👎" : null;
+    }
     default:
       return null;
   }

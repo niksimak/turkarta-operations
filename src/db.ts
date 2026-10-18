@@ -23,7 +23,7 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
 }
 
 // Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql"]
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql"]
   .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
 /** Apply the idempotent CRM migrations on boot. */
@@ -82,6 +82,8 @@ export interface Ticket {
   category: TicketCategory | null;
   intake_step: string | null; // 'email' while the bot is still collecting; null = done
   status: "new" | "allocated" | "awaiting" | "resolved";
+  resolved_at: Date | null;
+  assigned_operator_id: string | null; // bigint: postgres.js returns it as text
   claimed_by: string | null;
   claimed_by_tg: number | null;
   tg_chat_id: number | null;

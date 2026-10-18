@@ -15,6 +15,9 @@ export const SettingsSchema = z.object({
   tg_ping_no_one_on_shift: z.boolean(),
   resolve_message_enabled: z.boolean(),
   resolve_message_text: z.string().trim().min(1).max(1000),
+  csat_enabled: z.boolean(),
+  csat_text: z.string().trim().min(1).max(200),
+  csat_web_enabled: z.boolean(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 type SettingKey = keyof Settings;
@@ -33,6 +36,10 @@ export const DEFAULT_SETTINGS: Settings = {
   tg_ping_no_one_on_shift: true,
   resolve_message_enabled: false,
   resolve_message_text: "Мы закрыли обращение. Если вопрос остался, просто напишите сюда.",
+  csat_enabled: true,
+  csat_text: "Мы смогли вам помочь?",
+  // Off until the web app shows the 👍/👎 buttons.
+  csat_web_enabled: false,
 };
 
 const KEYS = Object.keys(SettingsSchema.shape) as SettingKey[];
@@ -51,6 +58,9 @@ const FIELD_ERRORS: Record<SettingKey, string> = {
   tg_ping_no_one_on_shift: "Выберите да или нет",
   resolve_message_enabled: "Выберите да или нет",
   resolve_message_text: "От 1 до 1000 символов",
+  csat_enabled: "Выберите да или нет",
+  csat_text: "От 1 до 200 символов",
+  csat_web_enabled: "Выберите да или нет",
 };
 
 const PatchSchema = SettingsSchema.partial().strict();

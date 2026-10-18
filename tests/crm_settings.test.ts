@@ -44,5 +44,14 @@ test("defaults match the spec", () => {
   assert.equal(DEFAULT_SETTINGS.offline_after_minutes, 15);
   assert.equal(DEFAULT_SETTINGS.reopen_days, 7);
   assert.equal(DEFAULT_SETTINGS.resolve_message_enabled, false);
+  assert.equal(DEFAULT_SETTINGS.csat_web_enabled, false);
   assert.equal(DEFAULT_SETTINGS.resolve_message_text, "Мы закрыли обращение. Если вопрос остался, просто напишите сюда.");
+});
+
+test("csat_web_enabled must be a boolean", () => {
+  const r = validateSettingsPatch({ csat_web_enabled: "yes" });
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.equal(r.errors.csat_web_enabled, "Выберите да или нет");
+  assert.equal(validateSettingsPatch({ csat_web_enabled: true }).ok, true);
 });

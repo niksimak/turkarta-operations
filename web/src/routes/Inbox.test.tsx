@@ -106,6 +106,7 @@ const settings = {
   tg_ping_no_one_on_shift: true,
   resolve_message_enabled: false,
   resolve_message_text: "Мы закрыли обращение.",
+  csat_enabled: true, csat_text: "Мы смогли вам помочь?", csat_web_enabled: false,
 };
 
 function summary(id: number, name: string, onShift: boolean) {
