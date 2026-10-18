@@ -49,7 +49,7 @@ describe("operator table sort", () => {
   const row = (name: string, med: number | null) => ({
     operator_id: name.length, name, taken: 0, auto_assigned: 0, resolved: 0, replies: 0,
     response_median_s: med, response_p90_s: null, first_response_median_s: null, first_response_p90_s: null,
-    within_sla_pct: null, reopen_rate_pct: null,
+    within_sla_pct: null, reopen_rate_pct: null, resolution_median_s: null, one_reply_pct: null,
   });
   const rows = [row("Борис", 90), row("Аня", null), row("Вера", 30)];
 

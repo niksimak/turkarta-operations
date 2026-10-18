@@ -3,6 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Segmented } from "../components/Segmented";
 import { StatsChart } from "../components/StatsChart";
+import { StatsHeatmap } from "../components/StatsHeatmap";
+import { formatNumber } from "../lib/format";
 import { useMe } from "../lib/queries";
 import { canEditTeamSettings } from "../lib/settings";
 import {
@@ -111,9 +113,15 @@ export function Stats() {
             aria-busy={stats.isFetching || undefined}
             className={cx("flex max-w-[80rem] flex-col gap-8 transition-opacity duration-fast", stats.isPlaceholderData && "opacity-60")}
           >
-            <TeamTiles data={stats.data} />
+            <div className="flex flex-col gap-3">
+              <TeamTiles data={stats.data} />
+              <ResolutionTiles data={stats.data} />
+            </div>
             <Block title="Новые обращения по дням">
               <StatsChart days={stats.data.team.new_per_day} />
+            </Block>
+            <Block title="Когда пишут клиенты" aside={<span className="text-sm text-text-muted">Новые обращения по дням недели и часам, МСК.</span>}>
+              <StatsHeatmap cells={stats.data.team.heatmap} />
             </Block>
             <Block
               title="Операторы"
@@ -194,6 +202,43 @@ function TeamTiles({ data }: { data: StatsResponse }) {
   );
 }
 
+function ResolutionTiles({ data }: { data: StatsResponse }) {
+  const t = data.team;
+  const none = "нет решённых";
+  const tiles: Array<{ label: string; value: string; note: string; muted: boolean }> = [
+    {
+      label: "Время решения",
+      note: "медиана",
+      value: t.resolution_median_s === null ? none : formatDuration(t.resolution_median_s),
+      muted: t.resolution_median_s === null,
+    },
+    {
+      label: "Решено одним ответом",
+      note: "без переоткрытия",
+      value: t.one_reply_pct === null ? none : formatPercent(t.one_reply_pct),
+      muted: t.one_reply_pct === null,
+    },
+    {
+      label: "Сообщений на обращение",
+      note: "в среднем",
+      value: t.messages_per_ticket === null ? none : formatNumber(t.messages_per_ticket),
+      muted: t.messages_per_ticket === null,
+    },
+  ];
+  return (
+    <dl className="grid grid-cols-1 overflow-hidden rounded-md bg-surface shadow-[0_0_0_1px_var(--border)] md:grid-cols-3">
+      {tiles.map((tile, i) => (
+        <div key={tile.label} className={cx("flex flex-col gap-1 border-border px-4 py-3", i > 0 && "max-md:border-t md:border-l")}>
+          <dt className="text-sm text-text-muted">
+            {tile.label} <span className="text-xs">· {tile.note}</span>
+          </dt>
+          <dd className={cx("text-xl font-semibold", tile.muted && "text-text-muted")}>{tile.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 type SortKey = keyof Omit<OperatorStats, "operator_id">;
 type ColKind = "text" | "count" | "duration" | "percent";
 
@@ -218,6 +263,8 @@ const COLUMNS: Column[] = [
   { key: "first_response_p90_s", group: "Первый ответ", label: "p90", title: "9 из 10 первых ответов быстрее", kind: "duration" },
   { key: "within_sla_pct", label: "В срок", title: "Доля ответов в пределах SLA", kind: "percent" },
   { key: "reopen_rate_pct", label: "Переоткрыто", title: "Доля решённых, которые клиент открыл снова", kind: "percent" },
+  { key: "resolution_median_s", label: "Решение", title: "Медиана: от сообщения клиента до решения", kind: "duration" },
+  { key: "one_reply_pct", label: "Одним ответом", title: "Доля решённых одним ответом без переоткрытия", kind: "percent" },
 ];
 
 export interface Sort {
@@ -239,10 +286,12 @@ export function sortOperators(rows: OperatorStats[], sort: Sort): OperatorStats[
   });
 }
 
-function cell(kind: ColKind, v: string | number | null): ReactNode {
-  if (v === null) return <span className="text-text-muted">нет</span>;
-  if (kind === "duration") return formatDuration(v as number);
-  if (kind === "percent") return formatPercent(v as number);
+const NO_RESOLVES: ReadonlySet<SortKey> = new Set(["resolution_median_s", "one_reply_pct"]);
+
+function cell(col: Column, v: string | number | null): ReactNode {
+  if (v === null) return <span className="text-text-muted">{NO_RESOLVES.has(col.key) ? "нет решённых" : "нет"}</span>;
+  if (col.kind === "duration") return formatDuration(v as number);
+  if (col.kind === "percent") return formatPercent(v as number);
   return v;
 }
 
@@ -261,7 +310,7 @@ function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) 
 
   return (
     <div className="overflow-x-auto rounded-md bg-surface shadow-[0_0_0_1px_var(--border)]">
-      <table className="w-full min-w-[56rem] border-collapse text-left">
+      <table className="w-full min-w-[64rem] border-collapse text-left">
         <thead>
           <tr>
             {COLUMNS.map((c, i) => {
@@ -291,7 +340,7 @@ function OperatorTable({ rows, meId }: { rows: OperatorStats[]; meId: number }) 
                   </th>
                 ) : (
                   <td key={c.key} className="num whitespace-nowrap px-4 text-right">
-                    {cell(c.kind, r[c.key])}
+                    {cell(c, r[c.key])}
                   </td>
                 ),
               )}

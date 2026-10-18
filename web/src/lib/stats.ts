@@ -10,11 +10,22 @@ export interface DayCount {
   web: number;
 }
 
+/** New tickets by Moscow ISO weekday (1 = Monday) and hour of the customer's first message. */
+export interface HeatCell {
+  dow: number;
+  hour: number;
+  n: number;
+}
+
 export interface TeamStats {
   new_per_day: DayCount[];
   backlog: number;
   oldest_waiting_minutes: number | null;
   within_sla_pct: number | null;
+  resolution_median_s: number | null;
+  one_reply_pct: number | null;
+  messages_per_ticket: number | null;
+  heatmap: HeatCell[];
 }
 
 export interface OperatorStats {
@@ -30,6 +41,8 @@ export interface OperatorStats {
   first_response_p90_s: number | null;
   within_sla_pct: number | null;
   reopen_rate_pct: number | null;
+  resolution_median_s: number | null;
+  one_reply_pct: number | null;
 }
 
 export interface StatsResponse {
