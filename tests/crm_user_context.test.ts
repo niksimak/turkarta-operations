@@ -127,3 +127,31 @@ test("web key is separate and evicts oldest beyond 500", async () => {
   await userContext({ user_tg: null, web_user_id: "w" }, deps);
   assert.equal(calls.length, 503);
 });
+
+test("parses company and partner blocks and stays compatible without them", async () => {
+  clearUserContextCache();
+  const web = { user_tg: null, web_user_id: "biz:cu1" };
+  const company = {
+    name: "Travelata", role: "owner", member_status: "active", company_status: "active",
+    active_members: 12, cards: 30, card_details_visible_to_admins: false,
+    admin_url: "https://api/admin/companies/c1",
+  };
+  const a = await userContext(web, {
+    fetch: fakeFetch(200, { found: true, user_id: "biz:cu1", name: "Ольга", email: "o@t.ru", company }).f,
+    now: () => 1, api,
+  });
+  assert.equal(a?.company?.name, "Travelata");
+  assert.equal(a?.company?.cards, 30);
+  assert.deepEqual(a?.company, company);
+  clearUserContextCache();
+  const partner = { name: "Агентство", code: "agn", role: "owner", admin_url: null };
+  const b = await userContext(web, {
+    fetch: fakeFetch(200, { found: true, user_id: "biz:cu2", partner }).f, now: () => 1, api,
+  });
+  assert.deepEqual(b?.partner, partner);
+  clearUserContextCache();
+  const old = await userContext(tg, { fetch: fakeFetch(200, { found: true, user_id: "u1" }).f, now: () => 1, api });
+  assert.equal(old?.found, true);
+  assert.equal(old?.company, undefined);
+  assert.equal(old?.partner, undefined);
+});
