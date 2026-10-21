@@ -40,7 +40,7 @@ function fakeSql(strings: TemplateStringsArray, ...values: unknown[]) {
   return Promise.resolve([]);
 }
 fakeSql.notify = async () => {};
-mock.module("../dist/db.js", { namedExports: { sql: fakeSql } });
+mock.module("../dist/db.js", { namedExports: { sql: fakeSql, SEGMENTS: ["business_owner", "business_admin", "corporate_employee", "partner", "retail"] } });
 
 class Conflict extends Error {
   constructor(readonly code: string, readonly assignee?: { id: number; name: string }) { super(code); this.name = "Conflict"; }
@@ -194,11 +194,11 @@ test("ticket topic: forwards (id, topic_id, operator); string and out-of-int4 id
 });
 
 test("ticket list parses filters; detail carries viewers; the account loads on its own", async () => {
-  const list = await req("/crm/api/tickets?view=mine&status=awaiting&channel=web&operator=3&overdue=1&q=ivan&limit=5",
+  const list = await req("/crm/api/tickets?view=mine&status=awaiting&channel=web&operator=3&overdue=1&q=ivan&limit=5&segment=partner",
     { headers: H("tok-support") });
   assert.equal(list.status, 200);
   const q = callsOf("listTickets").at(-1)!.args[1];
-  assert.deepEqual(q, { view: "mine", status: "awaiting", channel: "web", operatorId: 3, overdue: true, q: "ivan", limit: 5 });
+  assert.deepEqual(q, { view: "mine", status: "awaiting", channel: "web", operatorId: 3, overdue: true, q: "ivan", limit: 5, segment: "partner" });
   const d = await (await req(`/crm/api/tickets/${TICKET}`, { headers: H("tok-support") })).json();
   // The Turkarta lookup is a separate call, so opening a ticket never waits on it.
   assert.equal(d.user, undefined);
@@ -208,6 +208,12 @@ test("ticket list parses filters; detail carries viewers; the account loads on i
   assert.equal((await req("/crm/api/tickets/nope/user", { headers: H("tok-support") })).status, 404);
   assert.deepEqual(d.viewers, [{ operatorId: 2, name: "Lena", state: "viewing" }]);
   assert.equal(d.ticket.id, TICKET);
+});
+
+test("ticket list rejects an unknown segment with 422", async () => {
+  const res = await req("/crm/api/tickets?segment=vip", { headers: H("tok-support") });
+  assert.equal(res.status, 422);
+  assert.ok((await res.json()).fields.segment);
 });
 
 const jpeg = (n: number) => new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, n])], `p${n}.jpg`, { type: "image/jpeg" });

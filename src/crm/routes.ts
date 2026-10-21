@@ -10,6 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { z, ZodError } from "zod";
 import { config, legacySurface } from "../config.js";
+import { SEGMENTS } from "../db.js";
 import { MAX_PHOTO_BYTES, MAX_VIDEO_BYTES, validatePhoto, validateVideo, type ValidPhoto } from "../support_media.js";
 import { attachmentResponse } from "./attachments.js";
 import { consumeSso, deleteSession, operatorForSession, requireOperator, SESSION_COOKIE, SESSION_TTL_HOURS } from "./auth.js";
@@ -66,6 +67,7 @@ const ListParams = z.object({
   channel: z.enum(["bot", "miniapp", "web"]).optional(),
   operator: z.coerce.number().int().positive().optional(),
   overdue: z.enum(["1", "0", "true", "false"]).optional(),
+  segment: z.enum(SEGMENTS).optional(),
   q: z.string().max(200).optional(),
   cursor: z.string().max(1000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -278,6 +280,7 @@ export function crmRoutes(opts: { webRoot?: string; pingMs?: number } = {}): Hon
     if (p.channel) q.channel = p.channel;
     if (p.operator !== undefined) q.operatorId = p.operator;
     if (p.overdue !== undefined) q.overdue = p.overdue === "1" || p.overdue === "true";
+    if (p.segment) q.segment = p.segment;
     if (p.q !== undefined) q.q = p.q;
     if (p.cursor !== undefined) q.cursor = p.cursor;
     if (p.limit !== undefined) q.limit = p.limit;

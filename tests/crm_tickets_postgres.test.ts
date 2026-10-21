@@ -276,6 +276,22 @@ test("ticket workflow: take, take-over, assign, status, list, detail", { skip: !
       assert.deepEqual(await q("_"), [ivan]);
     });
 
+    await t.test("list items carry segment and org_name; ?segment filters", async () => {
+      await reset();
+      const biz = await ticket({ source: "web", channel: "web", user_tg: null, web_user_id: "biz:1", segment: "business_owner", org_name: "Travelata" });
+      await ticket({ source: "web", channel: "web", user_tg: null, web_user_id: "biz:2", segment: "retail" });
+      const tg = await ticket({ source: "bot" });
+      const f = await tickets.listTickets(anna, { view: "all", segment: "business_owner" }, s);
+      assert.deepEqual(f.items.map((i) => i.id), [biz]);
+      assert.equal(f.items[0]!.segment, "business_owner");
+      assert.equal(f.items[0]!.org_name, "Travelata");
+      const all = await tickets.listTickets(anna, { view: "all" }, s);
+      const t0 = all.items.find((i) => i.id === tg)!;
+      assert.equal(t0.segment, null);
+      assert.equal(t0.org_name, null);
+      assert.equal((await tickets.ticketDetail(biz))!.ticket.segment, "business_owner");
+    });
+
     await t.test("filters: status, channel, operator", async () => {
       await reset();
       const bot = await ticket({ source: "bot" });
