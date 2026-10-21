@@ -520,6 +520,8 @@ describe("Inbox", () => {
     expect(await within(panel).findByText("Компания")).toBeTruthy();
     expect(within(panel).getByText("Travelata")).toBeTruthy();
     expect(within(panel).getByText("Владелец")).toBeTruthy();
+    expect(within(panel).getByText("Статус участника").nextElementSibling?.textContent).toBe("Активен");
+    expect(within(panel).getByText("Статус компании").nextElementSibling?.textContent).toBe("Активна");
     expect(within(panel).getByText("Сотрудников").nextElementSibling?.textContent).toBe("12");
     expect(within(panel).getByText("Карт").nextElementSibling?.textContent).toBe("30");
     expect(within(panel).getByText("Реквизиты карт админам").nextElementSibling?.textContent).toBe("Нет");
@@ -559,8 +561,23 @@ describe("Inbox", () => {
     renderAt(`/t/${T1.id}?v=queue`);
     const panel = await screen.findByRole("complementary", { name: "Клиент" });
     expect(await within(panel).findByText("Аккаунт Turkarta")).toBeTruthy();
-    expect(within(panel).getByText("Компания")).toBeTruthy();
+    expect(within(panel).getByRole("heading", { name: "Компания" })).toBeTruthy();
     expect(within(panel).getByText("Сотрудник")).toBeTruthy();
+    expect(within(panel).getByText("Travelata")).toBeTruthy();
+    expect(within(panel).getByText("Статус участника").nextElementSibling?.textContent).toBe("Активен");
+    expect(within(panel).queryByText("Статус компании")).toBeNull();
+  });
+
+  it("shows a disabled company member as «Отключен»", async () => {
+    mockApi(
+      baseRoutes(
+        detail({ user: { found: true, user_id: "biz:cu3", company: { name: "Travelata", role: "admin", member_status: "disabled" } } }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Отключен")).toBeTruthy();
+    expect(within(panel).getByText("Администратор")).toBeTruthy();
   });
 
   it("moves with j and opens with Enter, switches views with g m", async () => {

@@ -78,6 +78,16 @@ const MEMBER_ROLE: Record<string, string> = {
   manager: "Менеджер",
 };
 
+const MEMBER_STATUS: Record<string, string> = {
+  active: "Активен",
+  provisioned: "Создан без входа",
+  invited: "Приглашен",
+  disabled: "Отключен",
+  removed: "Удален",
+};
+
+const COMPANY_STATUS: Record<string, string> = { active: "Активна", suspended: "Приостановлена" };
+
 const RAIL_LABEL: Record<string, string> = { xhub: "x-hub", bitbanker: "Bitbanker", antarctic: "Antarctic" };
 
 const TOPUP_STATUS: Record<string, string> = {
@@ -202,28 +212,26 @@ function Account({ user, loading }: { user: UserContext | null; loading: boolean
       </Section>
     );
   }
-  const cards = user.cards ?? [];
-  const topups = user.recent_topups ?? [];
   // Cabinet and partner payloads carry no `cards` key: they have no app account.
   const hasApp = user.cards !== undefined;
   return (
     <>
-      {hasApp && (
-        <>
+      {hasApp && <AppAccount user={user} />}
+      {user.company && <CompanySection company={user.company} />}
+      {user.partner && <PartnerSection partner={user.partner} />}
+    </>
+  );
+}
+
+function AppAccount({ user }: { user: UserContext }) {
+  const cards = user.cards ?? [];
+  const topups = user.recent_topups ?? [];
+  return (
+    <>
       <Section
         title="Аккаунт Turkarta"
         aside={
-          user.admin_url ? (
-            <a
-              href={user.admin_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="press hover-surface -mr-1 flex h-7 items-center gap-1 rounded-sm px-1.5 text-sm text-text-muted"
-            >
-              Открыть в админке
-              <Icon name="external" size={13} />
-            </a>
-          ) : undefined
+          user.admin_url ? <AdminLink href={user.admin_url} /> : undefined
         }
       >
         <dl>
@@ -314,10 +322,6 @@ function Account({ user, loading }: { user: UserContext | null; loading: boolean
           <p className="text-sm text-text-muted">Пополнений нет.</p>
         )}
       </Section>
-        </>
-      )}
-      {user.company && <CompanySection company={user.company} />}
-      {user.partner && <PartnerSection partner={user.partner} />}
     </>
   );
 }
@@ -342,6 +346,10 @@ export function CompanySection({ company }: { company: NonNullable<UserContext["
       <dl>
         <Field label="Название">{company.name}</Field>
         <Field label="Роль">{MEMBER_ROLE[company.role] ?? company.role}</Field>
+        <Field label="Статус участника">{MEMBER_STATUS[company.member_status] ?? company.member_status}</Field>
+        {company.company_status && (
+          <Field label="Статус компании">{COMPANY_STATUS[company.company_status] ?? company.company_status}</Field>
+        )}
         {company.active_members != null && (
           <Field label="Сотрудников">
             <span className="num">{formatNumber(company.active_members)}</span>
