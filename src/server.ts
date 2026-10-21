@@ -186,12 +186,18 @@ const serializeMessages = (msgs: db.ThreadMessage[]) =>
     };
   });
 
+// The "who is this" mark. A bad value must never block a support request.
+const SegmentField = z.enum(db.SEGMENTS).nullish().catch(null);
+const OrgNameField = z.string().nullish().transform((v) => v?.trim().slice(0, 128) || null);
+
 // Open (or return the existing open) web ticket.
 const WebOpenPayload = z.object({
   web_user_id: z.string().min(1),
   name: z.string().nullish(),
   email: z.string().nullish(),
   device: z.string().nullish(),
+  segment: SegmentField,
+  org_name: OrgNameField,
   request: z.string().min(1),
   message: z.string().nullish(), // alias for request
 });
@@ -211,6 +217,8 @@ app.post("/api/support/web/open", async (c) => {
     user_name: d.name ?? null,
     email: d.email ?? null,
     device: d.device ?? null,
+    segment: d.segment ?? null,
+    org_name: d.org_name,
     request: d.request,
   });
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
@@ -222,6 +230,8 @@ const WebWelcomePayload = z.object({
   name: z.string().nullish(),
   email: z.string().nullish(),
   device: z.string().nullish(),
+  segment: SegmentField,
+  org_name: OrgNameField,
 });
 
 app.post("/api/support/web/welcome", async (c) => {
@@ -234,6 +244,8 @@ app.post("/api/support/web/welcome", async (c) => {
     user_name: d.name ?? null,
     email: d.email ?? null,
     device: d.device ?? null,
+    segment: d.segment ?? null,
+    org_name: d.org_name,
   });
   return c.json({ ok: true, ticketId: ticket.id });
 });
@@ -278,12 +290,15 @@ app.post("/api/support/web/photo", async (c) => {
   let ticket = (await db.ticketByWebUser(webUserId)) ?? (await reopenableTicket({ webUserId }));
   if (!ticket) {
     const email = typeof form.email === "string" ? form.email.trim() || null : null;
+    const name = typeof form.name === "string" ? form.name.trim() || null : null;
     if (!email) return c.json({ error: "email_required" }, 422);
     ticket = await createWebTicket({
       web_user_id: webUserId,
-      user_name: null,
+      user_name: name,
       email,
       device: typeof form.device === "string" ? form.device.slice(0, 300) : null,
+      segment: SegmentField.parse(form.segment) ?? null,
+      org_name: OrgNameField.parse(form.org_name),
       request: body,
       photo,
     });
