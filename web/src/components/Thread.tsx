@@ -6,7 +6,7 @@ import { Icon } from "./Icon";
 import { Lightbox } from "./Lightbox";
 import { Menu, type MenuItem } from "./Menu";
 import { MessageBubble } from "./MessageBubble";
-import { Avatar, ChannelDot } from "./TicketRow";
+import { Avatar, ChannelDot, SegmentBadge } from "./TicketRow";
 import { toast } from "./Toast";
 import { formatDay, formatTime, sameDay } from "../lib/format";
 import { messageKey, releaseKeys } from "../lib/outbox";
@@ -490,6 +490,7 @@ function ThreadHeader({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <ChannelDot ticket={ticket} />
           <h1 className="min-w-0 truncate text-md font-semibold sm:text-lg">{name}</h1>
+          <SegmentBadge ticket={ticket} />
           {handle && handle !== name && <span className="hidden min-w-0 truncate text-sm text-text-muted sm:inline">{handle}</span>}
         </div>
         {!readOnly && free && !resolved && (

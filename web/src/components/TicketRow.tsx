@@ -8,6 +8,7 @@ import {
   channelOf,
   displayName,
   initials,
+  segmentLabel,
   STATUS_LABEL,
   type ChannelFilter,
   type TicketListItem,
@@ -44,6 +45,11 @@ export function Chip({ children, title }: { children: string; title?: string }) 
       {children}
     </span>
   );
+}
+
+export function SegmentBadge({ ticket }: { ticket: Pick<TicketListItem, "segment" | "org_name"> }) {
+  const label = segmentLabel(ticket);
+  return label ? <Chip title={label}>{label}</Chip> : null;
 }
 
 export function Avatar({ name, size = "sm" }: { name: string; size?: "sm" | "md" }) {
@@ -129,6 +135,7 @@ export const TicketRow = forwardRef<HTMLAnchorElement, Props>(function TicketRow
         <span className="min-w-0 flex-1 truncate text-sm text-text-muted">
           {ticket.last_message_preview || "Без сообщений"}
         </span>
+        <SegmentBadge ticket={ticket} />
         {ticket.status === "resolved" && <Chip>{STATUS_LABEL.resolved}</Chip>}
         {ticket.intake_pending && <Chip title="Клиент ещё не оставил email">ждём email</Chip>}
         {ticket.auto_assigned && <Chip title="Назначено автоматически">авто</Chip>}

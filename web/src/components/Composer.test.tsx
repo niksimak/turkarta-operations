@@ -46,6 +46,8 @@ const ticket = (over: Partial<TicketListItem> = {}): TicketDetail["ticket"] => (
   assigned_operator_name: "Аня Смирнова",
   auto_assigned: false,
   intake_pending: false,
+  segment: null,
+  org_name: null,
   created_at: now,
   device: null,
   category: null,

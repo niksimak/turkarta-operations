@@ -45,11 +45,13 @@ function item(over: Partial<TicketListItem> = {}): TicketListItem {
     auto_assigned: false,
     intake_pending: false,
     created_at: ago(6),
+    segment: null,
+    org_name: null,
     ...over,
   };
 }
 
-const T1 = item();
+const T1 = item({ segment: "business_owner", org_name: "Travelata" });
 const T2 = item({
   id: "22222222-2222-4222-8222-222222222222",
   status: "allocated",
@@ -595,5 +597,27 @@ describe("Inbox", () => {
     mockApi([["GET /crm/api/tickets", page([])], ...baseRoutes()]);
     renderAt("/mine");
     expect(await screen.findByText("У вас нет открытых обращений. Возьмите из очереди: G, затем Q.")).toBeTruthy();
+  });
+
+  it("shows the mark in the row and the header; tickets without one show nothing", async () => {
+    mockApi(baseRoutes());
+    renderAt("/");
+    const list = await screen.findByRole("list", { name: "Обращения" });
+    const rows = within(list).getAllByRole("link");
+    expect(within(rows[0]!).getByText("Владелец · Travelata")).toBeTruthy();
+    expect(rows[1]!.textContent).not.toMatch(/Владелец|Администратор|Корпоративная|Партнер|Клиент приложения/);
+    await act(async () => {
+      fireEvent.click(rows[0]!);
+    });
+    await waitFor(() => expect(screen.getAllByText("Владелец · Travelata")).toHaveLength(2));
+  });
+
+  it("filters by segment through the «Клиент» select", async () => {
+    const { calls } = mockApi(baseRoutes());
+    const { router } = renderAt("/all");
+    await screen.findByRole("list", { name: "Обращения" });
+    fireEvent.change(screen.getByLabelText("Клиент"), { target: { value: "partner" } });
+    await waitFor(() => expect(calls.filter((c) => c.path.startsWith("/crm/api/tickets?")).at(-1)?.path).toContain("segment=partner"));
+    expect(router.state.location.search).toContain("segment=partner");
   });
 });
