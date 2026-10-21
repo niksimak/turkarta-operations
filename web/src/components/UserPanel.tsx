@@ -71,6 +71,13 @@ const CARD_STATUS: Record<string, string> = {
   pending: "выпускается",
 };
 
+const MEMBER_ROLE: Record<string, string> = {
+  owner: "Владелец",
+  admin: "Администратор",
+  employee: "Сотрудник",
+  manager: "Менеджер",
+};
+
 const RAIL_LABEL: Record<string, string> = { xhub: "x-hub", bitbanker: "Bitbanker", antarctic: "Antarctic" };
 
 const TOPUP_STATUS: Record<string, string> = {
@@ -197,8 +204,12 @@ function Account({ user, loading }: { user: UserContext | null; loading: boolean
   }
   const cards = user.cards ?? [];
   const topups = user.recent_topups ?? [];
+  // Cabinet and partner payloads carry no `cards` key: they have no app account.
+  const hasApp = user.cards !== undefined;
   return (
     <>
+      {hasApp && (
+        <>
       <Section
         title="Аккаунт Turkarta"
         aside={
@@ -303,7 +314,63 @@ function Account({ user, loading }: { user: UserContext | null; loading: boolean
           <p className="text-sm text-text-muted">Пополнений нет.</p>
         )}
       </Section>
+        </>
+      )}
+      {user.company && <CompanySection company={user.company} />}
+      {user.partner && <PartnerSection partner={user.partner} />}
     </>
+  );
+}
+
+function AdminLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="press hover-surface -mr-1 flex h-7 items-center gap-1 rounded-sm px-1.5 text-sm text-text-muted"
+    >
+      Открыть в админке
+      <Icon name="external" size={13} />
+    </a>
+  );
+}
+
+export function CompanySection({ company }: { company: NonNullable<UserContext["company"]> }) {
+  return (
+    <Section title="Компания" aside={company.admin_url ? <AdminLink href={company.admin_url} /> : undefined}>
+      <dl>
+        <Field label="Название">{company.name}</Field>
+        <Field label="Роль">{MEMBER_ROLE[company.role] ?? company.role}</Field>
+        {company.active_members != null && (
+          <Field label="Сотрудников">
+            <span className="num">{formatNumber(company.active_members)}</span>
+          </Field>
+        )}
+        {company.cards != null && (
+          <Field label="Карт">
+            <span className="num">{formatNumber(company.cards)}</span>
+          </Field>
+        )}
+        {company.card_details_visible_to_admins != null && (
+          <Field label="Реквизиты карт админам">{company.card_details_visible_to_admins ? "Да" : "Нет"}</Field>
+        )}
+      </dl>
+    </Section>
+  );
+}
+
+export function PartnerSection({ partner }: { partner: NonNullable<UserContext["partner"]> }) {
+  return (
+    <Section title="Партнер" aside={partner.admin_url ? <AdminLink href={partner.admin_url} /> : undefined}>
+      <dl>
+        <Field label="Название">{partner.name}</Field>
+        <Field label="Код">
+          <CopyValue label="код партнера" value={partner.code} />
+        </Field>
+        <Field label="Роль">{MEMBER_ROLE[partner.role] ?? partner.role}</Field>
+      </dl>
+    </Section>
   );
 }
 

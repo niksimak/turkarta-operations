@@ -111,6 +111,18 @@ export interface UserContext {
     antarctic?: { order_id: string; payment_uuid: string | null } | null;
   }>;
   admin_url?: string | null;
+  /** B2B cabinet or app corporate member. Cabinet payloads carry no `cards` key. */
+  company?: {
+    name: string;
+    role: string;
+    member_status: string;
+    company_status?: string;
+    active_members?: number;
+    cards?: number;
+    card_details_visible_to_admins?: boolean;
+    admin_url?: string | null;
+  } | null;
+  partner?: { name: string; code: string; role: string; admin_url?: string | null } | null;
 }
 
 export interface Viewer {

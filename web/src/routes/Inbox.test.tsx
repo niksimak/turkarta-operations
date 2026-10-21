@@ -497,6 +497,72 @@ describe("Inbox", () => {
     expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://admin.example/users/u-1");
   });
 
+  it("shows the company block for a cabinet ticket and no app account", async () => {
+    mockApi(
+      baseRoutes(
+        detail({
+          user: {
+            found: true,
+            user_id: "biz:cu1",
+            name: "Ольга",
+            email: "o@t.ru",
+            company: {
+              name: "Travelata", role: "owner", member_status: "active", company_status: "active",
+              active_members: 12, cards: 30, card_details_visible_to_admins: false,
+              admin_url: "https://api/admin/companies/c1",
+            },
+          },
+        }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Компания")).toBeTruthy();
+    expect(within(panel).getByText("Travelata")).toBeTruthy();
+    expect(within(panel).getByText("Владелец")).toBeTruthy();
+    expect(within(panel).getByText("Сотрудников").nextElementSibling?.textContent).toBe("12");
+    expect(within(panel).getByText("Карт").nextElementSibling?.textContent).toBe("30");
+    expect(within(panel).getByText("Реквизиты карт админам").nextElementSibling?.textContent).toBe("Нет");
+    expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://api/admin/companies/c1");
+    expect(within(panel).queryByText("Аккаунт Turkarta")).toBeNull();
+    expect(within(panel).queryByText("Карт нет.")).toBeNull();
+  });
+
+  it("shows the partner block for a partner ticket", async () => {
+    mockApi(
+      baseRoutes(
+        detail({ user: { found: true, user_id: "biz:cu2", partner: { name: "Агентство Север", code: "agn", role: "owner", admin_url: null } } }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Партнер")).toBeTruthy();
+    expect(within(panel).getByText("Агентство Север")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: /agn.*Скопировать код партнера/ })).toBeTruthy();
+    expect(within(panel).getByText("Владелец")).toBeTruthy();
+    expect(within(panel).queryByText("Аккаунт Turkarta")).toBeNull();
+  });
+
+  it("an app corporate employee shows both the account and the company", async () => {
+    mockApi(
+      baseRoutes(
+        detail({
+          user: {
+            found: true,
+            user_id: "u-9",
+            cards: [],
+            company: { name: "Travelata", role: "employee", member_status: "active" },
+          },
+        }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Аккаунт Turkarta")).toBeTruthy();
+    expect(within(panel).getByText("Компания")).toBeTruthy();
+    expect(within(panel).getByText("Сотрудник")).toBeTruthy();
+  });
+
   it("moves with j and opens with Enter, switches views with g m", async () => {
     mockApi(baseRoutes());
     const { router } = renderAt("/");
