@@ -2,20 +2,18 @@
 
 _Last updated: 2026-10-22_
 
-## Pending release: support segment + org_name (branch `feat/support-segment`) — prepared 2026-10-22
+## Status: support segment + org_name live, image `crm-bc79c32` — 2026-10-22
 
-- Not deployed yet. Ships FIRST in the B2B web support chat rollout (CRM, then the Turkarta API, then the
-  business cabinet / partner portal). Spec: turkarta `docs/superpowers/specs/2026-10-21-business-support-chat-design.md`.
+- Live image `registry.fly.io/turkarta-operations:crm-bc79c32` (main `bc79c32`, ops v10): #28 who-is-this mark for web tickets.
+  Shipped first in the B2B web support chat rollout; Turkarta backend v92 `prod-28bb1baa` and business `prod-28bb1baa` followed.
 - Schema on boot: `0021_web_segment.sql` adds `support_requests.segment` (check: business_owner, business_admin,
-  corporate_employee, partner, retail) and `support_requests.org_name` (≤ 128), both nullable. Additive.
-- `/api/support/web/open`, `/welcome`, `/photo` accept optional `name`, `segment`, `org_name`; stored only when a
-  ticket is created. Unknown segment → null. Old API (no fields) keeps working: tickets get no badge.
-- Ticket list + header: badge «Владелец · X», «Администратор · X», «Корпоративная карта · X», «Партнер · X»,
-  «Клиент приложения»; list filter `?segment=`. UserPanel: «Компания» / «Партнер» sections from the new optional
-  `user-context` keys (zod optional, old API still parses).
+  corporate_employee, partner, retail) and `support_requests.org_name` (≤ 128), both nullable. Boot succeeded, `/health` 200.
+- `/api/support/web/open`, `/welcome`, `/photo` accept optional `name`, `segment`, `org_name`; stored when a ticket is created.
+  Ticket list + header badge («Владелец · X», «Администратор · X», «Корпоративная карта · X», «Партнер · X», «Клиент приложения»),
+  list filter `?segment=`; UserPanel «Компания» / «Партнер» sections from the new optional `user-context` keys.
 - Known gap: AI diagnostics take UUID ids only, so `biz:` / `partner:` tickets show `identity_missing` there.
-- Verify after deploy: boot log shows `0021_web_segment.sql`; an app web ticket still opens (no badge until the API ships).
-- Rollback: redeploy the previous image (`crm-f3be1ab`); 0021 is additive, so the old code ignores the columns.
+- Not verified yet: a signed-in B2B ticket end to end (see Turkarta `docs/DEPLOY-STATE.md` 2026-10-22).
+- Rollback: `fly deploy --image registry.fly.io/turkarta-operations:crm-f3be1ab -a turkarta-operations` (schema additive).
 
 ## Status: CSAT live, image `crm-f3be1ab` — 2026-10-18
 
