@@ -21,6 +21,7 @@ let channel = "telegram";
 const ticket = () => ({ id: "ticket-1", channel, user_tg: 42, web_user_id: channel === "web" ? "user-1" : null });
 
 mock.module("../dist/db.js", { namedExports: {
+  SEGMENTS: ["business_owner", "business_admin", "corporate_employee", "partner", "retail"],
   sql: () => { throw new Error("Unexpected database call in relay test"); },
   getTicket: async () => ticket(),
   addAgentMessageFromBitrix: async (_ticket: string, _text: string, id: string) => {

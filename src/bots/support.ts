@@ -281,6 +281,8 @@ export async function createWebTicket(input: {
   user_name: string | null;
   email: string | null;
   device: string | null;
+  segment: db.Segment | null;
+  org_name: string | null;
   request: string;
   photo?: ValidPhoto | null;
 }): Promise<Ticket> {
@@ -299,6 +301,8 @@ export async function createWebTicket(input: {
     request: input.request,
     email: input.email,
     device: input.device,
+    segment: input.segment,
+    org_name: input.org_name,
   });
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   // CRM mode reached here only without an open ticket, so this one is new.
@@ -333,6 +337,8 @@ export async function createWelcomeTicket(input: {
   user_name: string | null;
   email: string | null;
   device: string | null;
+  segment: db.Segment | null;
+  org_name: string | null;
 }): Promise<Ticket> {
   // Bitrix mode dedupes on the posted card; CRM mode has none, so it looks first.
   if (!legacySurface()) {
@@ -346,6 +352,8 @@ export async function createWelcomeTicket(input: {
     request: WELCOME_REQUEST,
     email: input.email,
     device: input.device,
+    segment: input.segment,
+    org_name: input.org_name,
   });
   if (!legacySurface() || !ticket.tg_message_id) {
     await db.addMessage(ticket.id, "agent", WELCOME_MESSAGE, undefined, {

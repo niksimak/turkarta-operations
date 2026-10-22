@@ -23,7 +23,7 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
 }
 
 // Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql"]
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql", "0021_web_segment.sql"]
   .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
 /** Apply the idempotent CRM migrations on boot. */
@@ -67,6 +67,9 @@ export type TicketCategory = "tech_issue" | "bug_report" | "feature_request";
 
 export type TicketChannel = "telegram" | "web";
 
+export const SEGMENTS = ["business_owner", "business_admin", "corporate_employee", "partner", "retail"] as const;
+export type Segment = typeof SEGMENTS[number];
+
 export interface Ticket {
   id: string;
   channel: TicketChannel;
@@ -74,6 +77,8 @@ export interface Ticket {
   web_user_id: string | null; // the main app's user.id, for web tickets
   user_username: string | null;
   user_name: string | null;
+  segment: Segment | null; // who the web user is, as marked by the main app
+  org_name: string | null;
   source: string | null;
   first_message: string | null; // the user's request text
   first_photo_file_id: string | null; // Telegram photo received during intake
@@ -271,12 +276,14 @@ export async function openWebTicket(t: {
   request: string;
   email?: string | null;
   device?: string | null;
+  segment?: Segment | null;
+  org_name?: string | null;
 }): Promise<Ticket> {
   const [row] = await sql<Ticket[]>`
     insert into support_requests
-      (channel, web_user_id, user_name, source, first_message, email, device, queued_at, last_message_at)
+      (channel, web_user_id, user_name, source, first_message, email, device, segment, org_name, queued_at, last_message_at)
     values ('web', ${t.web_user_id}, ${t.user_name}, ${t.source},
-            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, now(), now())
+            ${t.request}, ${t.email ?? null}, ${t.device ?? null}, ${t.segment ?? null}, ${t.org_name ?? null}, now(), now())
     on conflict (web_user_id)
       where web_user_id is not null and status in ('new','allocated','awaiting')
       do update set first_message = support_requests.first_message

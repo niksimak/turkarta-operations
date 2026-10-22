@@ -33,6 +33,7 @@ function fixture(user: number, fields: Partial<Ticket> = {}): Ticket {
 }
 
 mock.module("../dist/db.js", { namedExports: {
+  SEGMENTS: ["business_owner", "business_admin", "corporate_employee", "partner", "retail"],
   sql: () => { throw new Error("Unexpected database call in album test"); },
   addMessage: async (_ticket: string, _sender: string, _body: string) => ({ id: "stored-message" }),
   ticketByUser: async (id: number) => {

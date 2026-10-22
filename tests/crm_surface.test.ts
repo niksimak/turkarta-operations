@@ -32,7 +32,7 @@ let reopenLookups: Array<{ who: unknown; days: number }> = [];
 function fixture(fields: Partial<Ticket>): Ticket {
   return {
     id: "ticket-x", channel: "telegram", user_tg: null,
-    web_user_id: null, user_username: null, user_name: "Test",
+    web_user_id: null, user_username: null, user_name: "Test", segment: null, org_name: null,
     source: "bot", first_message: "help", first_photo_file_id: null,
     email: null, device: null, category: null, intake_step: null,
     status: "new", claimed_by: null, claimed_by_tg: null,
@@ -54,6 +54,7 @@ const sql = (strings: TemplateStringsArray) => {
 
 mock.module("../dist/db.js", { namedExports: {
   sql,
+  SEGMENTS: ["business_owner", "business_admin", "corporate_employee", "partner", "retail"],
   ticketByUser: track("ticketByUser", async (id: number) => openOf(t => t.user_tg === id)),
   ticketByWebUser: track("ticketByWebUser", async (id: string) => openOf(t => t.web_user_id === id)),
   resolvedTicketWithin: track("resolvedTicketWithin", async (who: unknown, days: number) => {
@@ -69,11 +70,13 @@ mock.module("../dist/db.js", { namedExports: {
     tickets.set(row.id, row);
     return row;
   }),
-  openWebTicket: track("openWebTicket", async (input: { web_user_id: string; request: string; source: string }) => {
+  openWebTicket: track("openWebTicket", async (input: { web_user_id: string; request: string; source: string;
+    user_name?: string | null; segment?: Ticket["segment"]; org_name?: string | null }) => {
     const existing = openOf(t => t.web_user_id === input.web_user_id);
     if (existing) return existing;
     const row = fixture({ id: `web-${input.web_user_id}`, channel: "web", web_user_id: input.web_user_id,
-      first_message: input.request, source: input.source });
+      first_message: input.request, source: input.source, user_name: input.user_name ?? null,
+      segment: input.segment ?? null, org_name: input.org_name ?? null });
     tickets.set(row.id, row);
     return row;
   }),
@@ -277,6 +280,51 @@ test("crm: web and Mini App tickets get no card and no Bitrix mirror", async () 
   assert.deepEqual(toGroup(), []);
   assert.deepEqual(bitrix, []);
   assert.equal(dbCalls.includes("setCard"), false);
+});
+
+test("crm: web open passes segment, org_name and name to the new ticket", async () => {
+  reset();
+  const res = await post("/api/support/web/open", {
+    web_user_id: "biz:cu1", request: "x", name: "Ольга", segment: "business_owner", org_name: "Travelata",
+  });
+  assert.equal(res.status, 200);
+  const t = tickets.get("web-biz:cu1")!;
+  assert.equal(t.segment, "business_owner");
+  assert.equal(t.org_name, "Travelata");
+  assert.equal(t.user_name, "Ольга");
+});
+
+test("crm: an unknown segment opens the ticket with no mark", async () => {
+  reset();
+  const res = await post("/api/support/web/open", {
+    web_user_id: "u7", request: "x", segment: "vip", org_name: "o".repeat(300),
+  });
+  assert.equal(res.status, 200);
+  const t = tickets.get("web-u7")!;
+  assert.equal(t.segment, null);
+  assert.equal(t.org_name, "o".repeat(128));
+});
+
+test("crm: photo-first and welcome carry the mark", async () => {
+  reset();
+  const form = new FormData();
+  form.set("web_user_id", "p1");
+  form.set("segment", "partner");
+  form.set("org_name", "Агентство");
+  form.set("name", "Пётр");
+  form.set("email", "a@b.c");
+  form.set("photo", new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])], "a.jpg", { type: "image/jpeg" }));
+  const res = await app.request("/api/support/web/photo", {
+    method: "POST", headers: { "x-webhook-secret": "test-secret" }, body: form,
+  });
+  assert.equal(res.status, 200);
+  const t = tickets.get("web-p1")!;
+  assert.equal(t.segment, "partner");
+  assert.equal(t.org_name, "Агентство");
+  assert.equal(t.user_name, "Пётр");
+
+  assert.equal((await post("/api/support/web/welcome", { web_user_id: "w8", segment: "retail" })).status, 200);
+  assert.equal(tickets.get("web-w8")!.segment, "retail");
 });
 
 test("crm: web user with no open ticket writes into a recently resolved one", async () => {

@@ -45,11 +45,13 @@ function item(over: Partial<TicketListItem> = {}): TicketListItem {
     auto_assigned: false,
     intake_pending: false,
     created_at: ago(6),
+    segment: null,
+    org_name: null,
     ...over,
   };
 }
 
-const T1 = item();
+const T1 = item({ segment: "business_owner", org_name: "Travelata" });
 const T2 = item({
   id: "22222222-2222-4222-8222-222222222222",
   status: "allocated",
@@ -495,6 +497,89 @@ describe("Inbox", () => {
     expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://admin.example/users/u-1");
   });
 
+  it("shows the company block for a cabinet ticket and no app account", async () => {
+    mockApi(
+      baseRoutes(
+        detail({
+          user: {
+            found: true,
+            user_id: "biz:cu1",
+            name: "Ольга",
+            email: "o@t.ru",
+            company: {
+              name: "Travelata", role: "owner", member_status: "active", company_status: "active",
+              active_members: 12, cards: 30, card_details_visible_to_admins: false,
+              admin_url: "https://api/admin/companies/c1",
+            },
+          },
+        }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Компания")).toBeTruthy();
+    expect(within(panel).getByText("Travelata")).toBeTruthy();
+    expect(within(panel).getByText("Владелец")).toBeTruthy();
+    expect(within(panel).getByText("Статус участника").nextElementSibling?.textContent).toBe("Активен");
+    expect(within(panel).getByText("Статус компании").nextElementSibling?.textContent).toBe("Активна");
+    expect(within(panel).getByText("Сотрудников").nextElementSibling?.textContent).toBe("12");
+    expect(within(panel).getByText("Карт").nextElementSibling?.textContent).toBe("30");
+    expect(within(panel).getByText("Реквизиты карт админам").nextElementSibling?.textContent).toBe("Нет");
+    expect(within(panel).getByRole("link", { name: /Открыть в админке/ }).getAttribute("href")).toBe("https://api/admin/companies/c1");
+    expect(within(panel).queryByText("Аккаунт Turkarta")).toBeNull();
+    expect(within(panel).queryByText("Карт нет.")).toBeNull();
+  });
+
+  it("shows the partner block for a partner ticket", async () => {
+    mockApi(
+      baseRoutes(
+        detail({ user: { found: true, user_id: "biz:cu2", partner: { name: "Агентство Север", code: "agn", role: "owner", admin_url: null } } }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Партнер")).toBeTruthy();
+    expect(within(panel).getByText("Агентство Север")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: /agn.*Скопировать код партнера/ })).toBeTruthy();
+    expect(within(panel).getByText("Владелец")).toBeTruthy();
+    expect(within(panel).queryByText("Аккаунт Turkarta")).toBeNull();
+  });
+
+  it("an app corporate employee shows both the account and the company", async () => {
+    mockApi(
+      baseRoutes(
+        detail({
+          user: {
+            found: true,
+            user_id: "u-9",
+            cards: [],
+            company: { name: "Travelata", role: "employee", member_status: "active" },
+          },
+        }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Аккаунт Turkarta")).toBeTruthy();
+    expect(within(panel).getByRole("heading", { name: "Компания" })).toBeTruthy();
+    expect(within(panel).getByText("Сотрудник")).toBeTruthy();
+    expect(within(panel).getByText("Travelata")).toBeTruthy();
+    expect(within(panel).getByText("Статус участника").nextElementSibling?.textContent).toBe("Активен");
+    expect(within(panel).queryByText("Статус компании")).toBeNull();
+  });
+
+  it("shows a disabled company member as «Отключен»", async () => {
+    mockApi(
+      baseRoutes(
+        detail({ user: { found: true, user_id: "biz:cu3", company: { name: "Travelata", role: "admin", member_status: "disabled" } } }),
+      ),
+    );
+    renderAt(`/t/${T1.id}?v=queue`);
+    const panel = await screen.findByRole("complementary", { name: "Клиент" });
+    expect(await within(panel).findByText("Отключен")).toBeTruthy();
+    expect(within(panel).getByText("Администратор")).toBeTruthy();
+  });
+
   it("moves with j and opens with Enter, switches views with g m", async () => {
     mockApi(baseRoutes());
     const { router } = renderAt("/");
@@ -595,5 +680,27 @@ describe("Inbox", () => {
     mockApi([["GET /crm/api/tickets", page([])], ...baseRoutes()]);
     renderAt("/mine");
     expect(await screen.findByText("У вас нет открытых обращений. Возьмите из очереди: G, затем Q.")).toBeTruthy();
+  });
+
+  it("shows the mark in the row and the header; tickets without one show nothing", async () => {
+    mockApi(baseRoutes());
+    renderAt("/");
+    const list = await screen.findByRole("list", { name: "Обращения" });
+    const rows = within(list).getAllByRole("link");
+    expect(within(rows[0]!).getByText("Владелец · Travelata")).toBeTruthy();
+    expect(rows[1]!.textContent).not.toMatch(/Владелец|Администратор|Корпоративная|Партнер|Клиент приложения/);
+    await act(async () => {
+      fireEvent.click(rows[0]!);
+    });
+    await waitFor(() => expect(screen.getAllByText("Владелец · Travelata")).toHaveLength(2));
+  });
+
+  it("filters by segment through the «Клиент» select", async () => {
+    const { calls } = mockApi(baseRoutes());
+    const { router } = renderAt("/all");
+    await screen.findByRole("list", { name: "Обращения" });
+    fireEvent.change(screen.getByLabelText("Клиент"), { target: { value: "partner" } });
+    await waitFor(() => expect(calls.filter((c) => c.path.startsWith("/crm/api/tickets?")).at(-1)?.path).toContain("segment=partner"));
+    expect(router.state.location.search).toContain("segment=partner");
   });
 });

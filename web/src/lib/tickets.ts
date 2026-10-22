@@ -10,6 +10,7 @@ import { DEFAULT_SLA, type SlaSettings } from "./sla";
 export type TicketStatus = "new" | "allocated" | "awaiting" | "resolved";
 export type View = "queue" | "mine" | "all";
 export type ChannelFilter = "bot" | "miniapp" | "web";
+export type Segment = "business_owner" | "business_admin" | "corporate_employee" | "partner" | "retail";
 
 export interface TicketListItem {
   id: string;
@@ -29,6 +30,8 @@ export interface TicketListItem {
   auto_assigned: boolean;
   intake_pending: boolean;
   created_at: string;
+  segment: Segment | null;
+  org_name: string | null;
 }
 
 export type TicketDetailItem = TicketListItem & {
@@ -108,6 +111,18 @@ export interface UserContext {
     antarctic?: { order_id: string; payment_uuid: string | null } | null;
   }>;
   admin_url?: string | null;
+  /** B2B cabinet or app corporate member. Cabinet payloads carry no `cards` key. */
+  company?: {
+    name: string;
+    role: string;
+    member_status: string;
+    company_status?: string;
+    active_members?: number;
+    cards?: number;
+    card_details_visible_to_admins?: boolean;
+    admin_url?: string | null;
+  } | null;
+  partner?: { name: string; code: string; role: string; admin_url?: string | null } | null;
 }
 
 export interface Viewer {
@@ -135,6 +150,7 @@ export interface ListFilters {
   channel?: ChannelFilter;
   operator?: number;
   overdue?: boolean;
+  segment?: Segment;
   q?: string;
 }
 
@@ -144,6 +160,29 @@ export const STATUS_LABEL: Record<TicketStatus, string> = {
   awaiting: "Ждём клиента",
   resolved: "Решён",
 };
+
+export const SEGMENT_FILTER_LABEL: Record<Segment, string> = {
+  business_owner: "Владельцы",
+  business_admin: "Администраторы",
+  corporate_employee: "Корпоративные карты",
+  partner: "Партнеры",
+  retail: "Клиенты приложения",
+};
+
+const SEGMENT_MARK: Record<Segment, string> = {
+  business_owner: "Владелец",
+  business_admin: "Администратор",
+  corporate_employee: "Корпоративная карта",
+  partner: "Партнер",
+  retail: "Клиент приложения",
+};
+
+/** The ticket's client mark: «Владелец · Travelata»; null when the ticket has no segment. */
+export function segmentLabel(t: { segment: Segment | null; org_name: string | null }): string | null {
+  if (!t.segment) return null;
+  const mark = SEGMENT_MARK[t.segment];
+  return t.segment !== "retail" && t.org_name ? `${mark} · ${t.org_name}` : mark;
+}
 
 export const CHANNEL_LABEL: Record<ChannelFilter, string> = {
   bot: "Telegram бот",
@@ -184,6 +223,7 @@ export function listPath(f: ListFilters, cursor?: string, limit = 50): string {
   if (f.channel) p.set("channel", f.channel);
   if (f.operator != null) p.set("operator", String(f.operator));
   if (f.overdue) p.set("overdue", "1");
+  if (f.segment) p.set("segment", f.segment);
   if (f.q?.trim()) p.set("q", f.q.trim());
   if (cursor) p.set("cursor", cursor);
   p.set("limit", String(limit));

@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { legacySurface } from "../config.js";
-import { sql, type Ticket } from "../db.js";
+import { sql, type Segment, type Ticket } from "../db.js";
 import { publish, type CrmEvent } from "./events.js";
 import type { ReplyDeps } from "./reply.js";
 import { getSettings, type Settings } from "./settings.js";
@@ -12,6 +12,7 @@ export interface TicketListItem {
   last_message_preview: string; last_message_at: string | null; waiting_since: string | null;
   first_response_at: string | null; assigned_operator_id: number | null; assigned_operator_name: string | null;
   auto_assigned: boolean; intake_pending: boolean; created_at: string;
+  segment: Segment | null; org_name: string | null;
 }
 export type TicketDetailItem = TicketListItem & {
   device: string | null; category: string | null; web_user_id: string | null;
@@ -19,7 +20,7 @@ export type TicketDetailItem = TicketListItem & {
 };
 export interface ListQuery {
   view: "queue" | "mine" | "all"; status?: TicketStatus; channel?: "bot" | "miniapp" | "web"; operatorId?: number;
-  overdue?: boolean; q?: string; cursor?: string; limit?: number;
+  overdue?: boolean; q?: string; cursor?: string; limit?: number; segment?: Segment;
 }
 export interface TicketEventRow { id: number; type: TicketEventType; actor_name: string | null; payload: Record<string, unknown>; created_at: string }
 export interface CrmMessage {
@@ -80,6 +81,8 @@ function toItem(r: Row): TicketListItem {
     auto_assigned: r.auto_assigned === true,
     intake_pending: r.intake_pending === true,
     created_at: iso(r.created_at)!,
+    segment: (r.segment as Segment | null) ?? null,
+    org_name: (r.org_name as string | null) ?? null,
   };
 }
 
@@ -88,7 +91,7 @@ function itemSelect(extra: postgres.PendingQuery<postgres.Row[]>) {
     select r.id, r.status, r.channel, r.source, r.user_name, r.user_username, r.user_tg::text as user_tg, r.email,
            r.last_message_at, r.waiting_since, r.first_response_at, r.assigned_operator_id::text as assigned_operator_id,
            o.name as assigned_operator_name, r.auto_assigned, r.intake_step is not null as intake_pending, r.created_at,
-           p.kind as preview_kind, p.body as preview_body ${extra}
+           r.segment, r.org_name, p.kind as preview_kind, p.body as preview_body ${extra}
       from support_requests r
       left join crm_operators o on o.id = r.assigned_operator_id
       left join lateral (
@@ -139,6 +142,7 @@ export async function listTickets(
   if (q.operatorId != null) conds.push(sql`r.assigned_operator_id = ${q.operatorId}`);
   if (q.channel === "web") conds.push(sql`r.source like 'web%'`);
   else if (q.channel) conds.push(sql`r.source = ${q.channel}`);
+  if (q.segment) conds.push(sql`r.segment = ${q.segment}`);
   if (q.overdue) conds.push(overdueCond(s));
   const text = (q.q ?? "").trim().replace(/^@+/, "");
   if (text) {

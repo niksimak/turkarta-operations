@@ -31,6 +31,15 @@ const UserContextSchema = z.object({
     antarctic: Nullable(z.object({ order_id: z.string(), payment_uuid: z.string().nullable() })),
   })).optional(),
   admin_url: Nullable(z.string()),
+  company: Nullable(z.object({
+    name: z.string(), role: z.string(), member_status: z.string(),
+    company_status: z.string().optional(), active_members: z.number().optional(),
+    cards: z.number().optional(), card_details_visible_to_admins: z.boolean().optional(),
+    admin_url: Nullable(z.string()),
+  })),
+  partner: Nullable(z.object({
+    name: z.string(), code: z.string(), role: z.string(), admin_url: Nullable(z.string()),
+  })),
 });
 
 export type UserContext = z.infer<typeof UserContextSchema>;

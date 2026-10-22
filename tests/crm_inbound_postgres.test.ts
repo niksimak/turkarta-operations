@@ -49,6 +49,15 @@ test("inbound capture: albums, timers, reopen, idempotent retries, events", { sk
       }
     });
 
+    await t.test("openWebTicket stores segment and org_name; a second open keeps the first mark", async () => {
+      const a = await db.openWebTicket({ web_user_id: "biz:cu1", user_name: "Ольга", source: "web", request: "q", segment: "business_owner", org_name: "Travelata" });
+      assert.equal(a.segment, "business_owner"); assert.equal(a.org_name, "Travelata");
+      const b = await db.openWebTicket({ web_user_id: "biz:cu1", user_name: null, source: "web", request: "q2", segment: "business_admin", org_name: "Other" });
+      assert.equal(b.id, a.id); assert.equal(b.segment, "business_owner"); assert.equal(b.org_name, "Travelata");
+      const legacy = await db.openWebTicket({ web_user_id: "u-old", user_name: null, source: "web", request: "q" });
+      assert.equal(legacy.segment, null);
+    });
+
     await t.test("(a) 3-part album within 10 s → 1 message, 3 attachments at positions 0..2", async () => {
       const tk = await ticket();
       const res = [];

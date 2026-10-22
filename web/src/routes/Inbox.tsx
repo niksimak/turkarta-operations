@@ -12,6 +12,7 @@ import { useMe } from "../lib/queries";
 import {
   CHANNEL_LABEL,
   displayName,
+  SEGMENT_FILTER_LABEL,
   STATUS_LABEL,
   useOperators,
   useSlaSettings,
@@ -19,6 +20,7 @@ import {
   useTicketList,
   type ChannelFilter,
   type ListFilters,
+  type Segment,
   type TicketDetail,
   type TicketStatus,
   type View,
@@ -28,7 +30,7 @@ const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(
 
 export const VIEW_PATH: Record<View, string> = { queue: "/", mine: "/mine", all: "/all" };
 const VIEW_TITLE: Record<View, string> = { queue: "Очередь", mine: "Мои", all: "Все" };
-const FILTER_PARAMS = ["status", "channel", "operator", "overdue", "q"] as const;
+const FILTER_PARAMS = ["status", "channel", "operator", "overdue", "segment", "q"] as const;
 const SEARCH_DEBOUNCE_MS = 300;
 
 function isView(v: string | null): v is View {
@@ -46,6 +48,7 @@ export function viewFor(pathname: string, v: string | null): View {
 function filtersFrom(view: View, sp: URLSearchParams): ListFilters {
   const status = sp.get("status");
   const channel = sp.get("channel");
+  const segment = sp.get("segment");
   const operator = Number(sp.get("operator"));
   return {
     view,
@@ -53,6 +56,7 @@ function filtersFrom(view: View, sp: URLSearchParams): ListFilters {
     channel: channel && channel in CHANNEL_LABEL ? (channel as ChannelFilter) : undefined,
     operator: view === "all" && Number.isInteger(operator) && operator > 0 ? operator : undefined,
     overdue: sp.get("overdue") === "1" || undefined,
+    segment: segment && segment in SEGMENT_FILTER_LABEL ? (segment as Segment) : undefined,
     q: sp.get("q")?.trim() || undefined,
   };
 }
@@ -161,7 +165,7 @@ export function Inbox() {
     setSp(next, { replace: true });
   };
 
-  const empty = filters.overdue && !filters.q && !filters.status && !filters.channel
+  const empty = filters.overdue && !filters.q && !filters.status && !filters.channel && !filters.segment
     ? { text: "Просроченных обращений нет." }
     : hasFilters
       ? { text: "Ничего не найдено.", action: { label: "Сбросить фильтры", onClick: resetFilters } }
@@ -357,6 +361,15 @@ function ListHeader({
             options={[
               { value: "", label: "Все каналы" },
               ...(Object.keys(CHANNEL_LABEL) as ChannelFilter[]).map((c) => ({ value: c, label: CHANNEL_LABEL[c] })),
+            ]}
+          />
+          <Select
+            label="Клиент"
+            value={filters.segment ?? ""}
+            onChange={(v) => setParam("segment", v || undefined)}
+            options={[
+              { value: "", label: "Все клиенты" },
+              ...(Object.keys(SEGMENT_FILTER_LABEL) as Segment[]).map((s) => ({ value: s, label: SEGMENT_FILTER_LABEL[s] })),
             ]}
           />
           {view === "all" && (
