@@ -48,6 +48,7 @@ Strategy: Restrained. Neutrals plus one accent; meaning colours are small
 | `ch-bot` | `#198edb` | `#3198d6` | Telegram bot marker |
 | `ch-miniapp` | `#583bab` | `#8459db` | Mini App marker |
 | `ch-web` | `#128d6f` | `#158561` | Web/PWA marker |
+| `ch-payout` | `#a86a00` | `#c98a12` | «Выплата» ticket marker |
 
 Contrast (WCAG): every text token, SLA and accent colour included, is ≥4.5:1
 on `bg`, `surface` and `surface-2` in both themes; SLA text on its own soft tint

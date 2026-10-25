@@ -82,6 +82,25 @@ async def poll(since: int = 0, user = Depends(current_web_user)):
         params={"web_user_id": str(user.id), "since": since})
 ```
 
+### «Выплата» tickets (payouts to settle)
+
+The API opens one ticket per referral or partner payout request and closes it when
+the payout is paid or rejected (`src/crm/payouts.ts`, migration `0022`). Same
+`X-Webhook-Secret`. The ticket is on channel `payout` with no customer behind it
+(`user_tg` and `web_user_id` null): it never merges into a support chat, has no reply
+box, sends nothing out on resolve (no courtesy message, no CSAT, no AI review), and
+queues like any new ticket (auto-assign, toast, sound, push, group ping).
+
+```
+POST /api/support/payout/open   { payout_key, title, body, who, admin_url }
+                                → { ok, ticketId, created }   (same ticket again for a known payout_key)
+POST /api/support/payout/close  { payout_key, outcome: 'paid'|'rejected', note? }
+                                → { ok }   (404 if no ticket for that payout_key)
+```
+
+`payout_key` is the API's `referral:<id>` / `partner:<id>`; `admin_url` must be http(s)
+and is shown as «Открыть в панели».
+
 ## Operator workflow (support channel)
 
 1. **Take** — first tap wins (race-safe), opens a forum topic for the relay, and

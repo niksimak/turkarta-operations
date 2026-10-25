@@ -23,7 +23,7 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
 }
 
 // Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql", "0021_web_segment.sql"]
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql", "0021_web_segment.sql", "0022_payout_tickets.sql"]
   .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
 /** Apply the idempotent CRM migrations on boot. */
@@ -65,7 +65,7 @@ export interface Lead {
 
 export type TicketCategory = "tech_issue" | "bug_report" | "feature_request";
 
-export type TicketChannel = "telegram" | "web";
+export type TicketChannel = "telegram" | "web" | "payout";
 
 export const SEGMENTS = ["business_owner", "business_admin", "corporate_employee", "partner", "retail"] as const;
 export type Segment = typeof SEGMENTS[number];
@@ -94,6 +94,8 @@ export interface Ticket {
   tg_chat_id: number | null;
   tg_message_id: number | null;
   thread_id: number | null;
+  payout_key: string | null; // «Выплата» tickets: the API's payout id
+  admin_url: string | null; // the admin-panel page that settles that payout
 }
 
 export type LeadInput = Pick<

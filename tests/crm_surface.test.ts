@@ -36,7 +36,7 @@ function fixture(fields: Partial<Ticket>): Ticket {
     source: "bot", first_message: "help", first_photo_file_id: null,
     email: null, device: null, category: null, intake_step: null,
     status: "new", claimed_by: null, claimed_by_tg: null,
-    tg_chat_id: null, tg_message_id: null, thread_id: null, ...fields,
+    tg_chat_id: null, tg_message_id: null, thread_id: null, payout_key: null, admin_url: null, ...fields,
   };
 }
 const openOf = (pred: (t: Ticket) => boolean) =>
@@ -126,6 +126,15 @@ mock.module("../dist/bitrix_app.js", { namedExports: {
   enabled: () => true,
   saveInstall: async () => { bitrix.push("saveInstall"); },
   call: async (method: string) => { bitrix.push(`call:${method}`); return {}; },
+} });
+
+const payoutCalls: Array<{ fn: string; args: unknown[] }> = [];
+mock.module("../dist/crm/payouts.js", { namedExports: {
+  openPayoutTicket: async (...args: unknown[]) => {
+    payoutCalls.push({ fn: "open", args });
+    return { ticket: fixture({ id: "payout-1", channel: "payout" }), created: payoutCalls.length === 1 };
+  },
+  closePayoutTicket: async (...args: unknown[]) => { payoutCalls.push({ fn: "close", args }); return args[0] !== "partner:nope"; },
 } });
 
 const { supportBot } = await import("../dist/bots/support.js");
@@ -410,3 +419,29 @@ test("crm: losing the one-open race on reopen keeps the message on the winning t
   assert.equal((await post("/api/support/web/message", { web_user_id: "w7", body: "и я" })).status, 200);
   assert.deepEqual(recorded.at(-1), { ticket: "open-w7", body: "и я" });
 });
+
+test("payout endpoints: secret required, http(s) panel links only, open and close pass through", async () => {
+  payoutCalls.length = 0;
+  const payout = {
+    payout_key: "referral:p1", title: "Реферальная выплата 5 000 ₽", body: "Способ: на карту", who: "Иван",
+    admin_url: "https://api.turkarta.me/admin/referrals",
+  };
+  const noSecret = await app.request("/api/support/payout/open", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payout),
+  });
+  assert.equal(noSecret.status, 403);
+  for (const admin_url of ["javascript:alert(1)", "data:text/html,x", "not a url"]) {
+    assert.equal((await post("/api/support/payout/open", { ...payout, admin_url })).status, 422, admin_url);
+  }
+  assert.equal(payoutCalls.length, 0);
+
+  const opened = await post("/api/support/payout/open", payout);
+  assert.equal(opened.status, 200);
+  assert.deepEqual(await opened.json(), { ok: true, ticketId: "payout-1", created: true });
+
+  assert.equal((await post("/api/support/payout/close", { payout_key: "referral:p1", outcome: "lost" })).status, 422);
+  assert.equal((await post("/api/support/payout/close", { payout_key: "referral:p1", outcome: "paid", note: "  СБП 1 " })).status, 200);
+  assert.equal((await post("/api/support/payout/close", { payout_key: "partner:nope", outcome: "rejected" })).status, 404);
+  assert.deepEqual(payoutCalls.slice(1).map((c) => c.args), [["referral:p1", "paid", "СБП 1"], ["partner:nope", "rejected", null]]);
+});
+

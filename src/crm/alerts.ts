@@ -11,7 +11,7 @@ export interface Alerts {
 const FIRST_LINE_MAX = 120;
 const SEND_TIMEOUT_MS = 5000;
 
-const CHANNEL_LABEL: Record<string, string> = { bot: "Telegram", miniapp: "Mini App", web: "Web", "web-onboarding": "Web" };
+const CHANNEL_LABEL: Record<string, string> = { bot: "Telegram", miniapp: "Mini App", web: "Web", "web-onboarding": "Web", payout: "Выплата" };
 
 function channelLabel(t: Pick<TicketListItem, "source" | "channel">): string {
   return (t.source ? CHANNEL_LABEL[t.source] : undefined) ?? (t.channel === "web" ? "Web" : "Telegram");

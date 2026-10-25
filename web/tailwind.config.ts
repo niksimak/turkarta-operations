@@ -38,6 +38,7 @@ export default {
       "ch-bot": v("ch-bot"),
       "ch-miniapp": v("ch-miniapp"),
       "ch-web": v("ch-web"),
+      "ch-payout": v("ch-payout"),
       scrim: v("scrim"),
     },
     fontFamily: {
