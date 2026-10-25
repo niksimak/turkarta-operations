@@ -42,6 +42,7 @@
   --ch-bot: #198edb;
   --ch-miniapp: #583bab;
   --ch-web: #128d6f;
+  --ch-payout: #a86a00;
 
   --scrim: rgb(16 18 22 / 0.4);
   --shadow-pop: 0 10px 28px -8px rgb(16 24 40 / 0.18), 0 2px 6px -2px rgb(16 24 40 / 0.1);
@@ -99,6 +100,7 @@
   --ch-bot: #3198d6;
   --ch-miniapp: #8459db;
   --ch-web: #158561;
+  --ch-payout: #c98a12;
   --scrim: rgb(0 0 0 / 0.55);
   --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
 }
@@ -135,6 +137,7 @@
     --ch-bot: #3198d6;
     --ch-miniapp: #8459db;
     --ch-web: #158561;
+    --ch-payout: #c98a12;
     --scrim: rgb(0 0 0 / 0.55);
     --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.4);
   }

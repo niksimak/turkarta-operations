@@ -3,8 +3,10 @@ import { CHANNEL_LABEL, type ChannelFilter } from "../lib/tickets";
 import { formatDayLong, formatDayShort, type DayCount } from "../lib/stats";
 
 // Stack order bottom to top, the same order as every channel list in the app.
-export const SERIES: ChannelFilter[] = ["bot", "miniapp", "web"];
-const COLOR: Record<ChannelFilter, string> = { bot: "var(--ch-bot)", miniapp: "var(--ch-miniapp)", web: "var(--ch-web)" };
+// Customer channels only: «Выплата» tickets are team work, not support load.
+type SupportChannel = Exclude<ChannelFilter, "payout">;
+export const SERIES: SupportChannel[] = ["bot", "miniapp", "web"];
+const COLOR: Record<SupportChannel, string> = { bot: "var(--ch-bot)", miniapp: "var(--ch-miniapp)", web: "var(--ch-web)" };
 
 const HEIGHT = 200;
 const PAD = { top: 8, right: 8, bottom: 24, left: 36 };
@@ -57,7 +59,7 @@ export function StatsChart({ days }: { days: DayCount[] }) {
   const [active, setActive] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
 
-  const sums = Object.fromEntries(SERIES.map((s) => [s, days.reduce((n, d) => n + d[s], 0)])) as Record<ChannelFilter, number>;
+  const sums = Object.fromEntries(SERIES.map((s) => [s, days.reduce((n, d) => n + d[s], 0)])) as Record<SupportChannel, number>;
   const grand = SERIES.reduce((n, s) => n + sums[s], 0);
   const ticks = niceTicks(Math.max(0, ...days.map(total)));
   const yMax = ticks.at(-1)!;

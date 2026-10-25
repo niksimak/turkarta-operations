@@ -7,7 +7,7 @@ import { getSettings, type Settings } from "./settings.js";
 import type { DeliveryStatus, MessageKind, Operator, TicketEventType, TicketStatus } from "./types.js";
 
 export interface TicketListItem {
-  id: string; status: TicketStatus; channel: "telegram" | "web"; source: string | null;
+  id: string; status: TicketStatus; channel: "telegram" | "web" | "payout"; source: string | null;
   user_name: string | null; user_username: string | null; user_tg: number | null; email: string | null;
   last_message_preview: string; last_message_at: string | null; waiting_since: string | null;
   first_response_at: string | null; assigned_operator_id: number | null; assigned_operator_name: string | null;
@@ -17,9 +17,10 @@ export interface TicketListItem {
 export type TicketDetailItem = TicketListItem & {
   device: string | null; category: string | null; web_user_id: string | null;
   topic_id: number | null; topic_name: string | null; topic_source: "ai" | "operator" | null;
+  admin_url: string | null;
 };
 export interface ListQuery {
-  view: "queue" | "mine" | "all"; status?: TicketStatus; channel?: "bot" | "miniapp" | "web"; operatorId?: number;
+  view: "queue" | "mine" | "all"; status?: TicketStatus; channel?: "bot" | "miniapp" | "web" | "payout"; operatorId?: number;
   overdue?: boolean; q?: string; cursor?: string; limit?: number; segment?: Segment;
 }
 export interface TicketEventRow { id: number; type: TicketEventType; actor_name: string | null; payload: Record<string, unknown>; created_at: string }
@@ -66,7 +67,7 @@ function toItem(r: Row): TicketListItem {
   return {
     id: r.id as string,
     status: r.status as TicketStatus,
-    channel: r.channel as "telegram" | "web",
+    channel: r.channel as "telegram" | "web" | "payout",
     source: (r.source as string | null) ?? null,
     user_name: (r.user_name as string | null) ?? null,
     user_username: (r.user_username as string | null) ?? null,
@@ -224,7 +225,7 @@ export async function crmMessage(id: string): Promise<CrmMessage | null> {
 
 export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailItem; messages: CrmMessage[]; events: TicketEventRow[] } | null> {
   if (!UUID_RE.test(id)) return null;
-  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id, r.topic_id, r.topic_source,
+  const [r] = await sql`${itemSelect(sql`, r.device, r.category, r.web_user_id, r.topic_id, r.topic_source, r.admin_url,
     (select name from crm_topics where id = r.topic_id) as topic_name`)} where r.id = ${id}`;
   if (!r) return null;
   const msgs = await sql`${messageSelect()} where m.ticket_id = ${id} order by m.seq`;
@@ -243,6 +244,7 @@ export async function ticketDetail(id: string): Promise<{ ticket: TicketDetailIt
       topic_id: num(r.topic_id),
       topic_name: (r.topic_name as string | null) ?? null,
       topic_source: (r.topic_source as "ai" | "operator" | null) ?? null,
+      admin_url: (r.admin_url as string | null) ?? null,
     },
     messages: msgs.map(toMessage),
     events: evs.map((e) => ({
@@ -410,7 +412,8 @@ export async function setStatus(
     const [row] = await tx<Ticket[]>`select * from support_requests where id = ${t.id}`;
     return { resolved: row! };
   });
-  if (!effects?.resolved) return;
+  // A payout ticket has no customer: no courtesy message, no survey.
+  if (!effects?.resolved || effects.resolved.channel === "payout") return;
   const s = await getSettings();
   if (s.resolve_message_enabled) {
     try {

@@ -74,7 +74,7 @@ type DetailFixture = TicketDetail & { user: UserContext | null };
 
 function detail(over: Partial<DetailFixture> = {}): DetailFixture {
   return {
-    ticket: { ...T1, device: "iPhone", category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null },
+    ticket: { ...T1, device: "iPhone", category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null, admin_url: null },
     messages: [
       { id: "m1", sender: "user", kind: "text", body: "Не пришёл код", unsupported_type: null, author_name: null, created_at: ago(30), delivery_status: null, delivery_error: null, attachments: [] },
       { id: "m2", sender: "user", kind: "photo", body: "", unsupported_type: null, author_name: null, created_at: ago(29), delivery_status: null, delivery_error: null, attachments: [{ id: "a1", media_type: "image/jpeg", position: 0 }, { id: "a2", media_type: "image/png", position: 1 }] },
@@ -329,7 +329,7 @@ describe("Inbox", () => {
     const theirs = { ...T1, status: "allocated" as const, assigned_operator_id: 9, assigned_operator_name: "Олег" };
     const { calls } = mockApi([
       ["POST /crm/api/tickets/*", ok({ ok: true, ticket: theirs })],
-      ["GET /crm/api/tickets/*", ok(detail({ ticket: { ...theirs, device: null, category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null } }))],
+      ["GET /crm/api/tickets/*", ok(detail({ ticket: { ...theirs, device: null, category: null, web_user_id: null, topic_id: null, topic_name: null, topic_source: null, admin_url: null } }))],
       ...baseRoutes(),
     ]);
     renderAt(`/t/${T1.id}?v=queue`);

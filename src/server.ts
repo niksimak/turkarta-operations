@@ -20,6 +20,7 @@ import { validTelegramPhotoRequest } from "./telegram_media.js";
 import { createAgentRoutes } from "./agents/routes.js";
 import { crmRoutes } from "./crm/routes.js";
 import { commentCsat, csatForWeb, rateCsat } from "./crm/csat.js";
+import { closePayoutTicket, openPayoutTicket } from "./crm/payouts.js";
 import { readiness } from "./agents/readiness.js";
 import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
@@ -222,6 +223,42 @@ app.post("/api/support/web/open", async (c) => {
     request: d.request,
   });
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+});
+
+// «Выплата» tickets (crm/payouts.ts): the API opens one per payout request and
+// closes it when the payout is settled. Opening twice returns the same ticket.
+const PayoutOpenPayload = z.object({
+  payout_key: z.string().min(1).max(64),
+  title: z.string().min(1).max(200),
+  body: z.string().min(1).max(4000),
+  who: z.string().min(1).max(128),
+  // Rendered as a link for operators: http(s) only, never javascript: or data:.
+  admin_url: z.string().url().max(500).refine((u) => /^https?:\/\//i.test(u)),
+});
+
+app.post("/api/support/payout/open", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const parsed = PayoutOpenPayload.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const { ticket, created } = await openPayoutTicket(parsed.data);
+  return c.json({ ok: true, ticketId: ticket.id, created });
+});
+
+const PayoutClosePayload = z.object({
+  payout_key: z.string().min(1).max(64),
+  outcome: z.enum(["paid", "rejected"]),
+  note: z.string().max(500).nullish(),
+});
+
+app.post("/api/support/payout/close", async (c) => {
+  if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
+  const parsed = PayoutClosePayload.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "bad payload" }, 422);
+  const d = parsed.data;
+  if (!(await closePayoutTicket(d.payout_key, d.outcome, d.note?.trim() || null))) {
+    return c.json({ error: "not found" }, 404);
+  }
+  return c.json({ ok: true });
 });
 
 // Proactive onboarding welcome: open a ticket seeded with a support greeting.

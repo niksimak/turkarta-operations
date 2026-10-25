@@ -22,6 +22,7 @@ export const CHANNEL_DOT: Record<ChannelFilter, string> = {
   bot: "bg-ch-bot",
   miniapp: "bg-ch-miniapp",
   web: "bg-ch-web",
+  payout: "bg-ch-payout",
 };
 
 export function ChannelDot({ ticket, className }: { ticket: Pick<TicketListItem, "channel" | "source">; className?: string }) {

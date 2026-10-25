@@ -258,6 +258,8 @@ function ThreadView({
   const photos = usePhotoDraft();
   const input = useRef<HTMLTextAreaElement>(null);
   const readOnly = me.surface === "bitrix";
+  // «Выплата» tickets have no customer to write to: the work happens in the admin panel.
+  const payout = ticket.channel === "payout";
   const locked = ticket.assigned_operator_id !== null && ticket.assigned_operator_id !== me.id && ticket.status !== "new";
   const dropBlock: DropBlock = ticket.status === "resolved" ? "resolved" : locked && mode === "reply" ? "locked" : null;
   // The whole pane takes dropped photos, not just the composer.
@@ -290,7 +292,7 @@ function ThreadView({
     });
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" {...(readOnly ? {} : drop.handlers)}>
+    <div className="relative flex min-h-0 flex-1 flex-col" {...(readOnly || payout ? {} : drop.handlers)}>
       <ThreadHeader
         ticket={ticket}
         me={me}
@@ -345,7 +347,8 @@ function ThreadView({
           })}
         </ol>
       </div>
-      {!readOnly && (
+      {payout && <PayoutBar href={ticket.admin_url} />}
+      {!readOnly && !payout && (
         <Composer
           ticket={ticket}
           me={me}
@@ -609,6 +612,26 @@ function ThreadSkeleton({ backHref }: { backHref: string }) {
         <div className="h-16 w-1/2 self-end rounded-md bg-hover" />
         <div className="h-10 w-3/5 rounded-md bg-hover" />
       </div>
+    </div>
+  );
+}
+
+/** In place of the composer on a «Выплата» ticket: the admin-panel page that settles it. */
+function PayoutBar({ href }: { href: string | null }) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface px-4 py-3 lg:px-6">
+      <p className="text-sm text-text-muted">Выплату проводят в админ-панели. Тикет закроется сам.</p>
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="press inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm bg-accent px-3 text-sm font-semibold text-accent-fg hover:bg-accent-hover"
+        >
+          Открыть в панели
+          <Icon name="external" size={13} />
+        </a>
+      )}
     </div>
   );
 }

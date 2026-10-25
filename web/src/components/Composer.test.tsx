@@ -55,6 +55,7 @@ const ticket = (over: Partial<TicketListItem> = {}): TicketDetail["ticket"] => (
   topic_id: null,
   topic_name: null,
   topic_source: null,
+  admin_url: null,
   ...over,
 });
 

@@ -64,7 +64,7 @@ const JsonReply = z.object({ kind: ReplyKind.default("reply"), body: z.string().
 const ListParams = z.object({
   view: z.enum(["queue", "mine", "all"]).default("all"),
   status: z.enum(["new", "allocated", "awaiting", "resolved"]).optional(),
-  channel: z.enum(["bot", "miniapp", "web"]).optional(),
+  channel: z.enum(["bot", "miniapp", "web", "payout"]).optional(),
   operator: z.coerce.number().int().positive().optional(),
   overdue: z.enum(["1", "0", "true", "false"]).optional(),
   segment: z.enum(SEGMENTS).optional(),

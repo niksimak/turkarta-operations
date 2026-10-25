@@ -9,13 +9,13 @@ import { DEFAULT_SLA, type SlaSettings } from "./sla";
 // Mirrors src/crm/tickets.ts (TicketListItem, TicketDetailItem, CrmMessage, TicketEventRow).
 export type TicketStatus = "new" | "allocated" | "awaiting" | "resolved";
 export type View = "queue" | "mine" | "all";
-export type ChannelFilter = "bot" | "miniapp" | "web";
+export type ChannelFilter = "bot" | "miniapp" | "web" | "payout";
 export type Segment = "business_owner" | "business_admin" | "corporate_employee" | "partner" | "retail";
 
 export interface TicketListItem {
   id: string;
   status: TicketStatus;
-  channel: "telegram" | "web";
+  channel: "telegram" | "web" | "payout";
   source: string | null;
   user_name: string | null;
   user_username: string | null;
@@ -41,6 +41,8 @@ export type TicketDetailItem = TicketListItem & {
   topic_id: number | null;
   topic_name: string | null;
   topic_source: "ai" | "operator" | null;
+  /** «Выплата» tickets: the admin-panel page that settles the payout. */
+  admin_url: string | null;
 };
 
 export interface Attachment {
@@ -188,10 +190,12 @@ export const CHANNEL_LABEL: Record<ChannelFilter, string> = {
   bot: "Telegram бот",
   miniapp: "Mini App",
   web: "Web",
+  payout: "Выплаты",
 };
 
-/** The list filter's channel for a ticket; `source` is "bot", "miniapp" or "web…". */
+/** The list filter's channel for a ticket; `source` is "bot", "miniapp", "web…" or "payout". */
 export function channelOf(t: Pick<TicketListItem, "channel" | "source">): ChannelFilter {
+  if (t.channel === "payout") return "payout";
   if (t.source === "miniapp") return "miniapp";
   if (t.source?.startsWith("web") || t.channel === "web") return "web";
   return "bot";
