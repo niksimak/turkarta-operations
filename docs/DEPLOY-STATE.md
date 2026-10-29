@@ -2,7 +2,18 @@
 
 _Last updated: 2026-10-29_
 
-## Status: client videos — branch `feat/crm-client-video`, NOT deployed — 2026-10-29
+## Status: client videos LIVE, image `crm-2bc7659` — 2026-10-29
+
+- Live image `registry.fly.io/turkarta-operations:crm-2bc7659` (main `2bc7659`, #31, ops v13, deployed 08:39Z).
+  Verified: /health 200, clean boot, `/api/support/web/video` 403 without secret, prod schema has `storage_key` +
+  widened `support_attachments_source_check`, size check still 20 MB.
+- Not verified yet: a real client video end to end (Telegram, and web once turkarta#1207 ships). The bucket has not had a
+  first write from the app yet.
+- Turkarta side: draft PR turkarta#1207 (`feat/web-support-client-video`); needs merge + release. Until then the web chat
+  has no video button; Telegram videos already work.
+- Rollback: `fly deploy --image registry.fly.io/turkarta-operations:crm-08277fc -a turkarta-operations` (schema additive).
+
+### Details (written before deploy)
 
 - Code: Telegram videos, round notes and videos sent as files land in the CRM as playable videos (by `tg_file_id`,
   ranges forwarded to Telegram). Over 20 MB (bot download cap) the bot answers «Видео больше 20 МБ…» and the CRM shows
