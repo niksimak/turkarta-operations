@@ -1,6 +1,19 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-10-22_
+_Last updated: 2026-10-29_
+
+## Status: client videos — branch `feat/crm-client-video`, NOT deployed — 2026-10-29
+
+- Code: Telegram videos, round notes and videos sent as files land in the CRM as playable videos (by `tg_file_id`,
+  ranges forwarded to Telegram). Over 20 MB (bot download cap) the bot answers «Видео больше 20 МБ…» and the CRM shows
+  «Видео больше 20 МБ, клиента попросили прислать короче». Web chat: `POST /api/support/web/video` (≤ 20 MB, mp4/mov/webm,
+  magic bytes checked) writes to a Tigris bucket, row keeps `storage_key`. Owner decision: one 20 MB cap everywhere.
+- Schema on boot: `0023_client_video.sql` adds `support_attachments.storage_key` and widens `support_attachments_source_check`.
+  Additive; old image keeps working against it.
+- Before deploy: `fly storage create -a turkarta-operations` (sets BUCKET_NAME + AWS_* secrets, restarts the machine).
+  Without the bucket the web video endpoint answers 503; Telegram videos work without it.
+- Turkarta side (web chat upload button, proxy, Range passthrough): separate PR in the turkarta repo. Ship ops first.
+- Rollback: redeploy the previous image (schema additive). Tigris bucket can stay; delete with `fly storage destroy` if abandoned.
 
 ## Status: support segment + org_name live, image `crm-bc79c32` — 2026-10-22
 
