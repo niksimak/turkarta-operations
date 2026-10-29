@@ -1,6 +1,22 @@
 # Deploy State — turkarta-operations
 
-_Last updated: 2026-10-22_
+_Last updated: 2026-10-29_
+
+## Status: client videos — branch `feat/crm-client-video`, NOT deployed — 2026-10-29
+
+- Code: Telegram videos, round notes and videos sent as files land in the CRM as playable videos (by `tg_file_id`,
+  ranges forwarded to Telegram). Over 20 MB (bot download cap) the bot answers «Видео больше 20 МБ…» and the CRM shows
+  «Видео больше 20 МБ, клиента попросили прислать короче». Web chat: `POST /api/support/web/video` (≤ 20 MB, mp4/mov/webm,
+  magic bytes checked) writes to a Tigris bucket, row keeps `storage_key`. Owner decision: one 20 MB cap everywhere.
+- Schema on boot: `0023_client_video.sql` adds `support_attachments.storage_key` and widens `support_attachments_source_check`.
+  Additive; old image keeps working against it.
+- DONE 2026-10-29 08:34Z: Tigris bucket `turkarta-ops-media` (org personal, private) created with
+  `fly storage create -a turkarta-operations -n turkarta-ops-media`; secrets BUCKET_NAME, AWS_ENDPOINT_URL_S3, AWS_REGION,
+  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY set → machine restarted to v12 on the unchanged image `crm-08277fc`, /health 200.
+  The live image ignores these vars until this branch ships.
+- Turkarta side (web chat upload button, proxy, Range passthrough): separate PR in the turkarta repo. Ship ops first.
+- Rollback: redeploy the previous image (schema additive). Bucket can stay; if abandoned: `fly storage destroy turkarta-ops-media`
+  + `fly secrets unset BUCKET_NAME AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_ENDPOINT_URL_S3 AWS_REGION -a turkarta-operations`.
 
 ## Status: support segment + org_name live, image `crm-bc79c32` — 2026-10-22
 

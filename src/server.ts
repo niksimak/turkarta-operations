@@ -7,6 +7,7 @@ import {
   supportBot,
   createAppTicket,
   createWebTicket,
+  type WebMedia,
   createWelcomeTicket,
   pushWebUserMessage,
   reopenableTicket,
@@ -26,9 +27,13 @@ import { agentStore } from "./agents/worker.js";
 import { operationsStore } from "./agents/operations-runtime.js";
 import {
   MAX_PHOTO_BYTES,
+  MAX_VIDEO_BYTES,
   validSupportPhotoRequest,
   validatePhoto,
+  validateVideo,
 } from "./support_media.js";
+import { parseRange } from "./crm/attachments.js";
+import { storeVideo, storedVideoResponse, videoStorageConfigured } from "./video_storage.js";
 
 export const app = new Hono();
 app.route("/api/internal/support-ai", createAgentRoutes(agentStore, config.SUPPORT_AI_ADMIN_SECRET, operationsStore, config.SUPPORT_AI_MODE, () => readiness(config)));
@@ -305,25 +310,25 @@ app.post("/api/support/web/message", async (c) => {
   return c.json({ ok: true });
 });
 
-// One durable photo message. The app backend authenticates the user and sends
-// multipart here over the shared-secret boundary; browsers never call ops directly.
-app.post("/api/support/web/photo", async (c) => {
+type WebUpload = { form: Record<string, string | File>; webUserId: string; body: string; file: File };
+
+/** The shared part of a photo or video upload: auth, multipart, user id, caption and the file field. */
+async function webUpload(c: Context, field: "photo" | "video", fallbackBody: string): Promise<WebUpload | Response> {
   if (!appAuthed(c)) return c.json({ error: "forbidden" }, 403);
-  const form = await c.req.parseBody().catch(() => null);
+  const form = (await c.req.parseBody().catch(() => null)) as Record<string, string | File> | null;
   if (!form) return c.json({ error: "bad multipart payload" }, 422);
   const webUserId = typeof form.web_user_id === "string" ? form.web_user_id.trim() : "";
   const rawBody = typeof form.body === "string" ? form.body.trim() : "";
-  const body = rawBody || "📷 Фото";
-  const file = form.photo;
+  const body = rawBody || fallbackBody;
+  const file = form[field];
   if (!webUserId || body.length > 4000 || !(file instanceof File)) {
     return c.json({ error: "bad payload" }, 422);
   }
-  if (file.size <= 0 || file.size > MAX_PHOTO_BYTES) {
-    return c.json({ error: "photo_too_large" }, 413);
-  }
-  const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
-  if (!photo) return c.json({ error: "unsupported_photo" }, 415);
+  return { form, webUserId, body, file };
+}
 
+/** Put the upload into the user's open ticket, reopening or opening one as needed. */
+async function deliverWebUpload(c: Context, { form, webUserId, body }: WebUpload, media: WebMedia): Promise<Response> {
   let ticket = (await db.ticketByWebUser(webUserId)) ?? (await reopenableTicket({ webUserId }));
   if (!ticket) {
     const email = typeof form.email === "string" ? form.email.trim() || null : null;
@@ -337,34 +342,90 @@ app.post("/api/support/web/photo", async (c) => {
       segment: SegmentField.parse(form.segment) ?? null,
       org_name: OrgNameField.parse(form.org_name),
       request: body,
-      photo,
+      media,
     });
   } else {
-    const took = await pushWebUserMessage(ticket, body, photo);
+    const took = await pushWebUserMessage(ticket, body, media);
     if (ticket.status === "resolved") ticket = (await db.getTicket(took.id)) ?? took;
   }
   return c.json({ ok: true, ticketId: ticket.id, status: ticket.status });
+}
+
+// One durable photo message. The app backend authenticates the user and sends
+// multipart here over the shared-secret boundary; browsers never call ops directly.
+app.post("/api/support/web/photo", async (c) => {
+  const upload = await webUpload(c, "photo", "📷 Фото");
+  if (upload instanceof Response) return upload;
+  const { file } = upload;
+  if (file.size <= 0 || file.size > MAX_PHOTO_BYTES) {
+    return c.json({ error: "photo_too_large" }, 413);
+  }
+  const photo = validatePhoto(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
+  if (!photo) return c.json({ error: "unsupported_photo" }, 415);
+  return deliverWebUpload(c, upload, photo);
+});
+
+// One video message (up to 20 MB, the same cap as Telegram). The bytes go to the bucket first; the row keeps only the key.
+app.post("/api/support/web/video", async (c) => {
+  const upload = await webUpload(c, "video", "🎬 Видео");
+  if (upload instanceof Response) return upload;
+  if (!videoStorageConfigured()) return c.json({ error: "video_storage_unavailable" }, 503);
+  const { file } = upload;
+  if (file.size <= 0 || file.size > MAX_VIDEO_BYTES) {
+    return c.json({ error: "video_too_large" }, 413);
+  }
+  const video = validateVideo(new Uint8Array(await file.arrayBuffer()), file.type, file.name);
+  if (!video) return c.json({ error: "unsupported_video" }, 415);
+  let stored;
+  try {
+    stored = await storeVideo(video);
+  } catch (err) {
+    console.error(`[video-storage] put failed code=${(err as { name?: string }).name ?? "error"}`);
+    return c.json({ error: "video_storage_unavailable" }, 503);
+  }
+  return deliverWebUpload(c, upload, stored);
 });
 
 function attachmentResponse(
   attachment: db.SupportAttachment,
   head = false,
   cacheControl = "private, max-age=300",
-): Response {
+  range?: string,
+): Response | Promise<Response> {
+  const headers = {
+    "content-disposition": `inline; filename="${attachment.filename}"`,
+    "cache-control": cacheControl,
+    "x-content-type-options": "nosniff",
+  };
+  // Web chat videos live in the bucket; only the web user's own route passes a range here.
+  if (attachment.storage_key && !head) {
+    return storedVideoResponse(attachment.storage_key, attachment.media_type, range, headers);
+  }
   if (attachment.content === null || attachment.size_bytes === null) {
     return new Response(JSON.stringify({ error: "not found" }), {
       status: 404,
       headers: { "content-type": "application/json" },
     });
   }
+  const typed = { ...headers, "content-type": attachment.media_type, "accept-ranges": "bytes" };
+  // Safari plays an operator's video reply only when byte ranges work.
+  const part = range ? parseRange(range, attachment.content.length) : null;
+  if (part === "invalid") {
+    return new Response(null, { status: 416, headers: { ...typed, "content-range": `bytes */${attachment.content.length}` } });
+  }
+  if (part) {
+    const slice = attachment.content.subarray(part.start, part.end + 1);
+    return new Response(head ? null : slice, {
+      status: 206,
+      headers: {
+        ...typed,
+        "content-length": String(slice.length),
+        "content-range": `bytes ${part.start}-${part.end}/${attachment.content.length}`,
+      },
+    });
+  }
   return new Response(head ? null : attachment.content, {
-    headers: {
-      "content-type": attachment.media_type,
-      "content-length": String(attachment.size_bytes),
-      "content-disposition": `inline; filename="${attachment.filename}"`,
-      "cache-control": cacheControl,
-      "x-content-type-options": "nosniff",
-    },
+    headers: { ...typed, "content-length": String(attachment.size_bytes) },
   });
 }
 
@@ -396,7 +457,9 @@ app.get("/api/support/web/attachment/:id", async (c) => {
   const webUserId = c.req.query("web_user_id") ?? "";
   if (!webUserId) return c.json({ error: "web_user_id required" }, 422);
   const attachment = await db.supportAttachmentForWebUser(c.req.param("id"), webUserId);
-  return attachment ? attachmentResponse(attachment) : c.json({ error: "not found" }, 404);
+  return attachment
+    ? attachmentResponse(attachment, false, undefined, c.req.header("range"))
+    : c.json({ error: "not found" }, 404);
 });
 
 // Web app polls for new messages + ticket status.

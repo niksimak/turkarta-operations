@@ -21,6 +21,7 @@ const dbCalls: string[] = [];
 const bitrix: string[] = [];
 const sent: Array<{ method: string; payload: Record<string, unknown> }> = [];
 const recorded: Array<{ ticket: string; body: string }> = [];
+const parts: Array<Record<string, unknown>> = [];
 const published: Array<{ type: string; ticketId?: string }> = [];
 let reopenable: Ticket | null = null;
 // Simulates losing the one-open-ticket race: recording on this ticket fails with 23505
@@ -98,8 +99,12 @@ mock.module("../dist/db.js", { namedExports: {
   getBitrixTokens: async () => null,
 } });
 mock.module("../dist/crm/inbound.js", { namedExports: {
-  classifyTelegram: (m: { text?: string; caption?: string }) => ({ kind: "text", body: m.text ?? m.caption ?? "" }),
+  classifyTelegram: (m: { text?: string; caption?: string; video?: { file_size?: number } }) =>
+    (m.video?.file_size ?? 0) > 20 * 1024 * 1024
+      ? { kind: "unsupported", body: m.caption ?? "", unsupportedType: "video_too_large" }
+      : { kind: "text", body: m.text ?? m.caption ?? "" },
   recordUserMessage: async (ticket: Ticket, part: { body: string }) => {
+    parts.push(part);
     if (raceOn === ticket.id) {
       raceOn = null;
       tickets.set(raceWinner!.id, raceWinner!);
@@ -150,6 +155,7 @@ supportBot.api.config.use(async (_prev, method, payload) => {
 await supportBot.init();
 const { app } = await import("../dist/server.js");
 const { config } = await import("../dist/config.js");
+const { setVideoStore } = await import("../dist/video_storage.js");
 
 let sequence = 0;
 function dm(user: number, content: object) {
@@ -162,7 +168,7 @@ function dm(user: number, content: object) {
 }
 const photo = (id: string) => ({ photo: [{ file_id: id, file_unique_id: id, width: 9, height: 9 }] });
 function reset() {
-  tickets.clear(); dbCalls.length = 0; bitrix.length = 0; sent.length = 0; recorded.length = 0;
+  tickets.clear(); dbCalls.length = 0; bitrix.length = 0; sent.length = 0; recorded.length = 0; parts.length = 0;
   published.length = 0; reopenable = null; reopenLookups = []; raceOn = null; raceWinner = null;
   config.SUPPORT_SURFACE = "crm";
 }
@@ -445,3 +451,73 @@ test("payout endpoints: secret required, http(s) panel links only, open and clos
   assert.deepEqual(payoutCalls.slice(1).map((c) => c.args), [["referral:p1", "paid", "СБП 1"], ["partner:nope", "rejected", null]]);
 });
 
+
+const BIG_VIDEO_REPLY = "Видео больше 20 МБ, оно до нас не дошло. Пришлите, пожалуйста, видео покороче или ссылку на него.";
+
+test("crm: a Telegram video over 20 MB is recorded as a note and the client is asked for a shorter one", async () => {
+  reset();
+  tickets.set("tg-9", fixture({ id: "tg-9", user_tg: 9, status: "allocated" }));
+  await dm(9, { video: { file_id: "v", file_unique_id: "v", width: 1, height: 1, duration: 90, file_size: 30 * 1024 * 1024 } });
+  assert.deepEqual(toUser(9), [BIG_VIDEO_REPLY]);
+  assert.equal(parts[0]!.unsupportedType, "video_too_large");
+  await dm(9, { text: "вот ссылка" });
+  assert.deepEqual(toUser(9), [BIG_VIDEO_REPLY], "only the oversized video gets the reply");
+});
+
+const ftypMp4 = () => new Uint8Array([0, 0, 0, 0x18, ...Buffer.from("ftypisom"), 0, 0, 0, 0]);
+function videoForm(webUserId: string, file: File) {
+  const form = new FormData();
+  form.set("web_user_id", webUserId);
+  form.set("email", "a@b.c");
+  form.set("video", file);
+  return app.request("/api/support/web/video", { method: "POST", headers: { "x-webhook-secret": "test-secret" }, body: form });
+}
+
+test("crm: web video upload needs the bucket, checks the bytes, stores the key", async () => {
+  reset();
+  const clip = new File([ftypMp4()], "Экран.mp4", { type: "video/mp4" });
+  assert.equal((await videoForm("v1", clip)).status, 503, "no bucket configured yet");
+
+  const put: Array<{ key: string; size: number; type: string }> = [];
+  setVideoStore({
+    async put(key, bytes, type) { put.push({ key, size: bytes.length, type }); },
+    async get() { throw new Error("unused"); },
+  });
+  Object.assign(config, { BUCKET_NAME: "b", AWS_ENDPOINT_URL_S3: "https://fly.storage.tigris.dev", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s" });
+  try {
+    const fake = new File([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])], "x.mp4", { type: "video/mp4" });
+    assert.equal((await videoForm("v1", fake)).status, 415);
+    assert.equal(put.length, 0);
+
+    const res = await videoForm("v1", clip);
+    assert.equal(res.status, 200);
+    assert.equal(put.length, 1);
+    assert.match(put[0]!.key, /^support\/video\/[0-9a-f-]{36}\/video\.mp4$/);
+    assert.deepEqual({ size: put[0]!.size, type: put[0]!.type }, { size: 16, type: "video/mp4" });
+    assert.deepEqual(recorded, [{ ticket: "web-v1", body: "🎬 Видео" }]);
+    const part = parts[0] as { kind: string; webVideo: { storageKey: string; sizeBytes: number } };
+    assert.equal(part.kind, "video");
+    assert.equal(part.webVideo.storageKey, put[0]!.key);
+    assert.equal(part.webVideo.sizeBytes, 16);
+  } finally {
+    Object.assign(config, { BUCKET_NAME: undefined, AWS_ENDPOINT_URL_S3: undefined, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined });
+  }
+});
+
+test("crm: web video over 20 MB is refused before anything is stored", async () => {
+  reset();
+  Object.assign(config, { BUCKET_NAME: "b", AWS_ENDPOINT_URL_S3: "https://fly.storage.tigris.dev", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s" });
+  let stored = 0;
+  setVideoStore({ async put() { stored++; }, async get() { throw new Error("unused"); } });
+  try {
+    const big = new Uint8Array(20 * 1024 * 1024 + 1);
+    big.set(ftypMp4());
+    const res = await videoForm("v2", new File([big], "big.mp4", { type: "video/mp4" }));
+    assert.equal(res.status, 413);
+    assert.deepEqual(await res.json(), { error: "video_too_large" });
+    assert.equal(stored, 0);
+    assert.deepEqual(recorded, []);
+  } finally {
+    Object.assign(config, { BUCKET_NAME: undefined, AWS_ENDPOINT_URL_S3: undefined, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined });
+  }
+});

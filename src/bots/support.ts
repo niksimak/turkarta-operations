@@ -12,6 +12,7 @@ import { operationsOptions, operationsStore } from "../agents/operations-runtime
 import { registerOperationsHandlers } from "../agents/operations-telegram.js";
 
 import { supportPhotoUrl, type ValidPhoto } from "../support_media.js";
+import type { StoredVideo } from "../video_storage.js";
 import { classifyTelegram, recordUserMessage, type InboundPart, type RecordedMessage } from "../crm/inbound.js";
 import { publish } from "../crm/events.js";
 import {
@@ -34,6 +35,9 @@ const ASK_EMAIL = "📧 Оставьте email для связи (или отп�
 const QUEUED = "Принято! Подключаем оператора…";
 
 const MOVED_TO_CRM = "Поддержка переехала в CRM. Откройте обращение там.";
+
+const VIDEO_TOO_LARGE =
+  "Видео больше 20 МБ, оно до нас не дошло. Пришлите, пожалуйста, видео покороче или ссылку на него.";
 
 async function acknowledgeTopic(ticketId: string, messageId: string) {
   await greetCustomer(ticketId, messageId, async (userId, text) => {
@@ -284,13 +288,13 @@ export async function createWebTicket(input: {
   segment: db.Segment | null;
   org_name: string | null;
   request: string;
-  photo?: ValidPhoto | null;
+  media?: WebMedia | null;
 }): Promise<Ticket> {
   if (!legacySurface()) {
     const { open, reopen } = await crmExistingTicket({ webUserId: input.web_user_id });
     if (open) return open;
     if (reopen) {
-      const ticket = await pushWebUserMessage(reopen, input.request, input.photo);
+      const ticket = await pushWebUserMessage(reopen, input.request, input.media);
       return (await db.getTicket(ticket.id)) ?? ticket;
     }
   }
@@ -307,7 +311,7 @@ export async function createWebTicket(input: {
   // New ticket (no card yet): post the ops card and seed the chat log with the request.
   // CRM mode reached here only without an open ticket, so this one is new.
   if (!legacySurface() || !ticket.tg_message_id) {
-    const first = await recordUserMessage(ticket, webPart(input.request, input.photo), {
+    const first = await recordUserMessage(ticket, webPart(input.request, input.media), {
       authorId: `web:${input.web_user_id}`, sourceId: `web-first:${ticket.id}`,
     });
     await acknowledgeTopic(ticket.id, first.messageId);
@@ -365,8 +369,12 @@ export async function createWelcomeTicket(input: {
   return ticket;
 }
 
-function webPart(body: string, photo?: ValidPhoto | null): InboundPart {
-  return photo ? { kind: "photo", body, webPhoto: photo } : { kind: "text", body };
+/** What a web user can attach: a photo kept in Postgres or a video already in the bucket. */
+export type WebMedia = ValidPhoto | StoredVideo;
+
+function webPart(body: string, media?: WebMedia | null): InboundPart {
+  if (!media) return { kind: "text", body };
+  return "storageKey" in media ? { kind: "video", body, webVideo: media } : { kind: "photo", body, webPhoto: media };
 }
 
 function bitrixStoredPhoto(attachment: RecordedMessage["attachment"]): Array<{ url: string; name: string }> {
@@ -391,12 +399,13 @@ function bitrixStoredPhoto(attachment: RecordedMessage["attachment"]): Array<{ u
 export async function pushWebUserMessage(
   target: Ticket,
   body: string,
-  photo?: ValidPhoto | null,
+  media?: WebMedia | null,
 ): Promise<Ticket> {
-  const { ticket, message } = await recordReopening(target, webPart(body, photo), { authorId: `web:${target.web_user_id}` });
+  const { ticket, message } = await recordReopening(target, webPart(body, media), { authorId: `web:${target.web_user_id}` });
   await acknowledgeTopic(ticket.id, message.messageId);
   if (!legacySurface()) return ticket;
-  const files = bitrixStoredPhoto(message.attachment);
+  // The legacy mirror only knows photos; a video reaches it as its text label.
+  const files = media && "storageKey" in media ? [] : bitrixStoredPhoto(message.attachment);
   await openlines.sendUserMessage(ticket, body, message.messageId, files);
   if (ticket.thread_id != null) {
     const who = ticket.user_name || "Web user";
@@ -649,6 +658,8 @@ supportBot.on("message", async (ctx, next) => {
   const ticket = await db.ticketByUser(user.id);
   const part: InboundPart = classifyTelegram(ctx.message) ?? { kind: "text", body: contentLabel(ctx) };
   const tgMeta = { authorId: `tg:${user.id}`, sourceId: `tg:${ctx.chat.id}:${ctx.message.message_id}` };
+  // The operator sees a note in the CRM; the client learns right away why the video did not arrive.
+  if (part.unsupportedType === "video_too_large") await ctx.reply(VIDEO_TOO_LARGE).catch(() => {});
 
   // CRM mode: a short yes/no to the open survey is the rating, not a new question.
   if (!ticket && !legacySurface() && text && (await typedRating(ctx, user.id, text))) return;

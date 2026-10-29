@@ -1,5 +1,5 @@
 export type MessageKind = "text" | "photo" | "video" | "note" | "unsupported";
-export type UnsupportedType = "video" | "animation" | "voice" | "document" | "sticker" | "video_note" | "audio";
+export type UnsupportedType = "video" | "animation" | "voice" | "document" | "sticker" | "video_note" | "audio" | "video_too_large";
 export type TicketStatus = "new" | "allocated" | "awaiting" | "resolved";
 export type DeliveryStatus = "pending" | "sent" | "failed";
 export type CrmRole = "admin" | "support";

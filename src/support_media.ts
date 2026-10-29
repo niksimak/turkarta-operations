@@ -64,7 +64,8 @@ function safeBase(filename: string): string {
     .slice(0, 64);
 }
 
-// Operator video replies: one per message, kept in Postgres like photos, so the cap stays modest.
+// One cap for every video: operator replies (kept in Postgres), web chat uploads (kept in the bucket)
+// and Telegram client videos (a bot cannot download more than 20 MB from Telegram).
 export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 export const VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 

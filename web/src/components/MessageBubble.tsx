@@ -14,6 +14,7 @@ export const UNSUPPORTED_TEXT: Record<string, string> = {
   sticker: "Стикер",
   video_note: "🎥 Кружок не поддерживается",
   audio: "🎵 Аудио не поддерживается",
+  video_too_large: "🎥 Видео больше 20 МБ, клиента попросили прислать короче",
 };
 
 export function unsupportedText(type: string | null): string {

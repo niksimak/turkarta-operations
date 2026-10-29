@@ -89,6 +89,13 @@ const Env = z.object({
   SUPPORT_AI_MAX_REMINDERS: z.coerce.number().int().min(1).max(10).default(3),
   SUPPORT_AI_DIGEST_HOUR_UTC: z.coerce.number().int().min(0).max(23).default(4),
 
+  // Tigris bucket for web chat videos (the ops Neon DB is on the free plan); `fly storage create` sets all five. Unset = web video upload is off (503).
+  BUCKET_NAME: z.string().min(1).optional(),
+  AWS_ENDPOINT_URL_S3: z.string().url().optional(),
+  AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  AWS_REGION: z.string().default("auto"),
+
   ROSTER: z
     .string()
     .default("[]")
