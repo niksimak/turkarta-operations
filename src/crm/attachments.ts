@@ -1,7 +1,8 @@
 import { config } from "../config.js";
 import { sql } from "../db.js";
+import { storedVideoResponse } from "../video_storage.js";
 
-type Row = { media_type: string; content: Buffer | null; tg_file_id: string | null };
+type Row = { media_type: string; content: Buffer | null; tg_file_id: string | null; storage_key?: string | null };
 
 export type AttachmentDeps = {
   getFile?: (fileId: string) => Promise<{ file_path?: string }>;
@@ -17,7 +18,7 @@ const CACHE = "private, max-age=86400";
 async function loadRow(id: string): Promise<Row | null> {
   if (!UUID.test(id)) return null;
   const [row] = await sql<Row[]>`
-    select media_type, content, tg_file_id
+    select media_type, content, tg_file_id, storage_key
     from public.support_attachments where id = ${id}`;
   return row ?? null;
 }
@@ -77,6 +78,7 @@ export async function attachmentResponse(
   if (!row) return Response.json({ error: "not_found" }, { status: 404 });
 
   if (row.content) return storedResponse({ ...row, content: row.content }, deps.range);
+  if (row.storage_key) return storedVideoResponse(row.storage_key, row.media_type, deps.range, { "cache-control": CACHE });
   if (!row.tg_file_id) return Response.json({ error: "not_found" }, { status: 404 });
 
   const getFile = deps.getFile ?? defaultGetFile;
@@ -89,18 +91,34 @@ export async function attachmentResponse(
   }
   if (!file.file_path) return unavailable(id, "nopath");
 
+  const video = row.media_type.startsWith("video/");
   let upstream: Response;
   try {
     upstream = await doFetch(
       `https://api.telegram.org/file/bot${config.SUPPORT_BOT_TOKEN}/${file.file_path}`,
-      { signal: AbortSignal.timeout(20_000) },
+      {
+        // A 20 MB video needs longer than a photo; Range lets the browser seek without the whole file.
+        signal: AbortSignal.timeout(video ? 60_000 : 20_000),
+        ...(video && deps.range ? { headers: { range: deps.range } } : {}),
+      },
     );
   } catch {
     return unavailable(id, "fetch");
   }
   if (!upstream.ok || !upstream.body) return unavailable(id, upstream.status);
-
-  return new Response(upstream.body, {
-    headers: { "content-type": "image/jpeg", "cache-control": CACHE },
-  });
+  if (!video) {
+    return new Response(upstream.body, {
+      headers: { "content-type": "image/jpeg", "cache-control": CACHE },
+    });
+  }
+  if (upstream.status === 206) {
+    const headers: Record<string, string> = { "content-type": row.media_type, "cache-control": CACHE, "accept-ranges": "bytes" };
+    for (const h of ["content-range", "content-length"]) {
+      const v = upstream.headers.get(h);
+      if (v) headers[h] = v;
+    }
+    return new Response(upstream.body, { status: 206, headers });
+  }
+  // Telegram answered with the whole file (at most 20 MB): slice it here so ranges still work.
+  return storedResponse({ ...row, content: Buffer.from(await upstream.arrayBuffer()) }, deps.range);
 }

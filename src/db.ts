@@ -23,7 +23,7 @@ export async function ensureSupportPhotoSchema(): Promise<void> {
 }
 
 // Applied in this order on every boot; each file is idempotent (the same files `pnpm migrate` runs).
-const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql", "0021_web_segment.sql", "0022_payout_tickets.sql"]
+const CRM_MIGRATIONS = ["0016_support_crm.sql", "0017_crm_push.sql", "0018_support_video.sql", "0019_crm_topics.sql", "0020_crm_csat.sql", "0021_web_segment.sql", "0022_payout_tickets.sql", "0023_client_video.sql"]
   .map((f) => fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)));
 
 /** Apply the idempotent CRM migrations on boot. */
@@ -437,11 +437,12 @@ export interface SupportAttachment {
   filename: string;
   size_bytes: number | null;
   content: Uint8Array | null;
+  storage_key: string | null;
 }
 
 export async function supportAttachment(id: string): Promise<SupportAttachment | null> {
   const rows = await sql<SupportAttachment[]>`
-    select id, media_type, filename, size_bytes, content
+    select id, media_type, filename, size_bytes, content, storage_key
       from support_attachments where id = ${id}`;
   return rows[0] ?? null;
 }
@@ -451,7 +452,7 @@ export async function supportAttachmentForWebUser(
   webUserId: string,
 ): Promise<SupportAttachment | null> {
   const rows = await sql<SupportAttachment[]>`
-    select a.id, a.media_type, a.filename, a.size_bytes, a.content
+    select a.id, a.media_type, a.filename, a.size_bytes, a.content, a.storage_key
       from support_attachments a
       join support_messages m on m.id = a.message_id
       join support_requests r on r.id = m.ticket_id

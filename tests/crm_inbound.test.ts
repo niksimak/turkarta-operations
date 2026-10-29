@@ -64,13 +64,43 @@ test("sticker keeps its emoji in the label", () => {
   assert.equal(legacyLabel(part!), "😀 [стикер]");
 });
 
-test("other unsupported kinds keep caption and legacy labels", () => {
-  const video = classifyTelegram(msg({ video: { file_id: "vd", file_unique_id: "u", width: 1, height: 1, duration: 1 }, caption: "смотрите" }));
-  assert.deepEqual(video, { kind: "unsupported", body: "смотрите", unsupportedType: "video" });
+test("video keeps its Telegram file, type and caption", () => {
+  const video = classifyTelegram(msg({
+    video: { file_id: "vd", file_unique_id: "u-vd", width: 1, height: 1, duration: 1, mime_type: "video/quicktime", file_size: 5_000_000 },
+    caption: "смотрите", media_group_id: "g2",
+  }));
+  assert.deepEqual(video, {
+    kind: "video", body: "смотрите", mediaGroupId: "g2",
+    tgVideo: { fileId: "vd", fileUniqueId: "u-vd", mediaType: "video/quicktime", filename: "video.mov" },
+  });
   assert.equal(legacyLabel(video!), "смотрите");
-  const note = classifyTelegram(msg({ video_note: { file_id: "vn", file_unique_id: "u", length: 1, duration: 1 } }));
-  assert.equal(note!.unsupportedType, "video_note");
+});
+
+test("round video note and a video sent as a file are videos too", () => {
+  const note = classifyTelegram(msg({ video_note: { file_id: "vn", file_unique_id: "u-vn", length: 1, duration: 1 } }));
+  assert.equal(note!.kind, "video");
+  assert.deepEqual(note!.tgVideo, { fileId: "vn", fileUniqueId: "u-vn", mediaType: "video/mp4", filename: "video.mp4" });
   assert.equal(legacyLabel(note!), "🎬 [видео]");
+  const asFile = classifyTelegram(msg({ document: { ...doc, mime_type: "video/mp4", file_size: 100 } }));
+  assert.equal(asFile!.kind, "video");
+  assert.equal(asFile!.tgVideo!.fileId, "doc");
+  const unknownType = classifyTelegram(msg({ video: { file_id: "v2", file_unique_id: "u", width: 1, height: 1, duration: 1, mime_type: "video/x-matroska" } }));
+  assert.equal(unknownType!.tgVideo!.mediaType, "video/mp4", "the attachment check allows only mp4/mov/webm");
+});
+
+test("video over 20 MB cannot be downloaded by the bot, so it is flagged instead", () => {
+  const big = classifyTelegram(msg({
+    video: { file_id: "big", file_unique_id: "u", width: 1, height: 1, duration: 60, file_size: 20 * 1024 * 1024 + 1 },
+  }));
+  assert.deepEqual(big, { kind: "unsupported", body: "", unsupportedType: "video_too_large" });
+  assert.equal(legacyLabel(big!), "🎬 [видео больше 20 МБ, не загрузилось]");
+  const edge = classifyTelegram(msg({
+    video: { file_id: "edge", file_unique_id: "u", width: 1, height: 1, duration: 60, file_size: 20 * 1024 * 1024 },
+  }));
+  assert.equal(edge!.kind, "video");
+});
+
+test("other unsupported kinds keep caption and legacy labels", () => {
   const file = classifyTelegram(msg({ document: doc }));
   assert.equal(file!.unsupportedType, "document");
   assert.equal(legacyLabel(file!), "📎 [файл]");

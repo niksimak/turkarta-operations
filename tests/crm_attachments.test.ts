@@ -11,6 +11,7 @@ Object.assign(process.env, {
 });
 
 const { attachmentResponse } = await import("../dist/crm/attachments.js");
+const { setVideoStore } = await import("../dist/video_storage.js");
 
 const stored = { media_type: "image/png", content: Buffer.from([1, 2, 3]), tg_file_id: null };
 const tg = { media_type: "image/jpeg", content: null, tg_file_id: "FILE1" };
@@ -87,4 +88,65 @@ test("stored video honours byte ranges so browsers can stream and seek", async (
   const bad = await attachmentResponse("v1", { load: async () => clip, range: "bytes=9-12" });
   assert.equal(bad.status, 416);
   assert.equal(bad.headers.get("content-range"), "bytes */5");
+});
+
+const tgClip = { media_type: "video/mp4", content: null, tg_file_id: "VID1" };
+
+test("telegram video forwards the range and passes the 206 through", async () => {
+  let sentRange: string | null = null;
+  const res = await attachmentResponse("tv1", {
+    load: async () => tgClip,
+    getFile: async () => ({ file_path: "videos/file_1.mp4" }),
+    range: "bytes=0-1",
+    fetch: (async (_url: string, init: RequestInit) => {
+      sentRange = new Headers(init.headers).get("range");
+      return new Response("ab", { status: 206, headers: { "content-range": "bytes 0-1/10", "content-length": "2" } });
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(sentRange, "bytes=0-1");
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-type"), "video/mp4");
+  assert.equal(res.headers.get("content-range"), "bytes 0-1/10");
+  assert.equal(res.headers.get("accept-ranges"), "bytes");
+  assert.equal(await res.text(), "ab");
+});
+
+test("telegram video sent whole is sliced here so Safari can still seek", async () => {
+  const res = await attachmentResponse("tv2", {
+    load: async () => tgClip,
+    getFile: async () => ({ file_path: "videos/file_2.mp4" }),
+    range: "bytes=2-4",
+    fetch: (async () => new Response(new Uint8Array([0, 1, 2, 3, 4, 5]), { status: 200 })) as unknown as typeof fetch,
+  });
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-range"), "bytes 2-4/6");
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from([2, 3, 4]));
+});
+
+test("bucket video streams with the bucket's range answer", async () => {
+  const asked: Array<{ key: string; range?: string }> = [];
+  setVideoStore({
+    async put() {},
+    async get(key, range) {
+      asked.push({ key, range });
+      return { status: 206, body: new Response("xyz").body!, length: 3, contentRange: "bytes 5-7/50" };
+    },
+  });
+  const res = await attachmentResponse("bv1", {
+    load: async () => ({ media_type: "video/quicktime", content: null, tg_file_id: null, storage_key: "support/video/k/clip.mov" }),
+    range: "bytes=5-7",
+  });
+  assert.deepEqual(asked, [{ key: "support/video/k/clip.mov", range: "bytes=5-7" }]);
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-type"), "video/quicktime");
+  assert.equal(res.headers.get("content-range"), "bytes 5-7/50");
+  assert.equal(await res.text(), "xyz");
+});
+
+test("bucket failure gives 502", async () => {
+  setVideoStore({ async put() {}, async get() { throw new Error("down"); } });
+  const res = await attachmentResponse("bv2", {
+    load: async () => ({ media_type: "video/mp4", content: null, tg_file_id: null, storage_key: "k" }),
+  });
+  assert.equal(res.status, 502);
 });
